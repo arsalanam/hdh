@@ -181,3 +181,40 @@ def test_instrumented_graph_records_every_step_and_retry(tmp_path):
     assert [s["attempt"] for s in steps if s["stage"] == "tool-executor"] == [1, 2]
     # every step carries token usage; the daily total matches the state total
     assert store.daily_usage() == (state["usage"]["input_tokens"], state["usage"]["output_tokens"])
+
+
+def test_selective_tool_exposure_by_intent():
+    from hdh.modules.agent.tools import build_tools
+
+    scoped = build_tools(None, include={"get_risk_scores", "query_database", "search_patients"})
+    assert {t.name for t in scoped} == {"get_risk_scores", "query_database", "search_patients"}
+    everything = build_tools(None)
+    assert len(everything) == 6
+
+
+def test_selective_schema_revealing():
+    from hdh.modules.agent.tools import build_tools
+
+    scoped = build_tools(None, tables=("patients", "visits"))
+    sql_tool = next(t for t in scoped if t.name == "query_database")
+    desc = sql_tool.to_dict()["description"]
+    assert "patients(" in desc and "visits(" in desc
+    assert "lab_results(" not in desc and "prescriptions(" not in desc
+
+
+def test_tool_result_clipping():
+    from hdh.modules.agent.tools import clip_tool_results
+
+    response = {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "a", "content": "x" * 10_000},
+            {"type": "tool_result", "tool_use_id": "b", "content": "short"},
+        ],
+    }
+    clipped = clip_tool_results(response, cap=6_000)
+    big, small = clipped["content"]
+    assert len(big["content"]) < 6_300
+    assert "truncated 4,000 chars" in big["content"]
+    assert small["content"] == "short"
+    assert clip_tool_results(None, cap=10) is None

@@ -6,6 +6,7 @@ these as tool results. All data is synthetic; there is no PHI here.
 """
 
 import json
+from collections.abc import Mapping
 from datetime import date
 
 from sqlalchemy import func, text
@@ -13,16 +14,70 @@ from sqlalchemy import func, text
 from hdh.core.models import Base, ChronicCondition, Patient
 
 
-def _schema_summary() -> str:
-    """One line per table from the live ORM metadata — never drifts from models.py."""
+def _schema_summary(tables: tuple[str, ...] | None = None) -> str:
+    """One line per table from the live ORM metadata — never drifts from models.py.
+
+    ``tables`` limits the summary to the named tables (selective schema
+    revealing: the executor only sees what its intent needs).
+    """
     lines = [
-        f"  {table.name}({', '.join(c.name for c in table.columns)})" for table in Base.metadata.sorted_tables
+        f"  {table.name}({', '.join(c.name for c in table.columns)})"
+        for table in Base.metadata.sorted_tables
+        if tables is None or table.name in tables
     ]
     return "\n".join(lines)
 
 
-def build_tools(session):
-    """Build the agent's tool functions bound to an open DB session."""
+def clip_tool_results(tool_response: Mapping | None, cap: int) -> Mapping | None:
+    """Truncate oversized tool results before they re-enter model context.
+
+    Mutates the runner's pending tool-result message in place: each result
+    longer than ``cap`` characters is cut and annotated so the model knows to
+    fetch less next time. This bounds the context growth of long tool loops.
+    """
+    if tool_response is None:
+        return None
+    blocks = tool_response.get("content") or []
+    if isinstance(blocks, str):
+        return tool_response
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("content"), str):
+            text = block["content"]
+            if len(text) > cap:
+                block["content"] = (
+                    text[:cap] + f"\n...[truncated {len(text) - cap:,} chars — request fewer rows/fields "
+                    "or refine the query instead of re-fetching]"
+                )
+    return tool_response
+
+
+def _sql_tool_description(tables: tuple[str, ...] | None) -> str:
+    """The query_database tool description, with an intent-scoped schema."""
+    return f"""Run a read-only SQL SELECT against the synthetic SQLite database.
+
+        Schema (one line per table):
+{_schema_summary(tables)}
+
+        Joins: visits.patient_id -> patients.id; chronic_conditions.patient_id
+        -> patients.id; vitals, diagnoses, prescriptions, and lab_results join
+        via visit_id -> visits.id. Enum columns store names: visits.visit_type
+        in ('ACUTE','FOLLOW_UP','PREVENTIVE','URGENT'), lab_results.status in
+        ('NORMAL','HIGH','LOW','CRITICAL'), patients.sex in ('MALE','FEMALE').
+        chronic_conditions.controlled is 0/1. Dates are ISO 'YYYY-MM-DD' text
+        (julianday()/strftime() work). Results are capped at 200 rows.
+
+        Args:
+            sql: A single SELECT statement (no writes, no multiple statements).
+        """
+
+
+def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str] | None = None):
+    """Build the agent's tool functions bound to an open DB session.
+
+    ``tables`` narrows the schema embedded in query_database's description;
+    ``include`` narrows which tools are returned. Both default to everything
+    (the simple engine uses the full set).
+    """
     from anthropic import beta_tool
 
     @beta_tool
@@ -127,22 +182,7 @@ def build_tools(session):
             return f"SQL error: {e}"
         return json.dumps(rows, indent=2, default=str) if rows else "Query returned no rows."
 
-    query_database.__doc__ = f"""Run a read-only SQL SELECT against the synthetic SQLite database.
-
-        Schema (one line per table):
-{_schema_summary()}
-
-        Joins: visits.patient_id -> patients.id; chronic_conditions.patient_id
-        -> patients.id; vitals, diagnoses, prescriptions, and lab_results join
-        via visit_id -> visits.id. Enum columns store names: visits.visit_type
-        in ('ACUTE','FOLLOW_UP','PREVENTIVE','URGENT'), lab_results.status in
-        ('NORMAL','HIGH','LOW','CRITICAL'), patients.sex in ('MALE','FEMALE').
-        chronic_conditions.controlled is 0/1. Dates are ISO 'YYYY-MM-DD' text
-        (julianday()/strftime() work). Results are capped at 200 rows.
-
-        Args:
-            sql: A single SELECT statement (no writes, no multiple statements).
-        """
+    query_database.__doc__ = _sql_tool_description(tables)
     query_database = beta_tool(query_database)
 
     @beta_tool
@@ -159,4 +199,14 @@ def build_tools(session):
         }
         return json.dumps(stats, indent=2)
 
-    return [get_patient_chart, search_patients, get_care_gaps, get_risk_scores, query_database, dataset_stats]
+    all_tools: list = [
+        get_patient_chart,
+        search_patients,
+        get_care_gaps,
+        get_risk_scores,
+        query_database,
+        dataset_stats,
+    ]
+    if include is None:
+        return all_tools
+    return [tool for tool in all_tools if tool.name in include]

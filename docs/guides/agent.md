@@ -75,6 +75,27 @@ Stages (see `src/hdh/modules/agent/pipeline/`):
 Every dependency is injected (`PipelineDeps`), so the full graph — including
 the retry loop — runs offline in `tests/test_pipeline.py` with fake LLMs.
 
+### Token economy in the executor
+
+The executor is where the tokens go, so it only gets the context it needs:
+
+1. **Selective tool exposure** — the intent decides which tools are offered
+   (e.g. `cohort_search` → `search_patients`, `get_care_gaps`,
+   `query_database`); fewer schemas, less distraction (`INTENT_TOOLS`).
+2. **Selective schema revealing** — the SQL tool's description embeds only
+   the tables relevant to the intent (`INTENT_TABLES`).
+3. **Result capping** — any tool result over `tool_result_cap` (6,000 chars)
+   is truncated *before* it re-enters context, annotated so the model fetches
+   less next time. This bounds the context growth of long tool loops.
+4. **Economy prompt** — small limits, targeted WHERE clauses, no re-fetching.
+
+On a **validation-failure retry the full toolset and schema come back** —
+the validator said evidence was missing, so the executor's reach widens.
+
+Measured on the same question, traced before/after (`hdh trace runs`):
+87,052 → **6,933 input tokens (−92%)** and 5 → 2 tool calls, still
+validated on the first attempt.
+
 ## Traceability (`hdh trace`)
 
 Every pipeline execution is recorded in a trace database (`runs` → `turns` →

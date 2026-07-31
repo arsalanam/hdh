@@ -66,6 +66,32 @@ INTENT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Token economy: per intent, only the relevant tools are exposed and only the
+# relevant tables appear in the SQL tool's schema description. Unknown intents
+# (and every retry after a failed validation) fall back to the full set.
+INTENT_TOOLS: dict[str, set[str]] = {
+    "patient_lookup": {"get_patient_chart", "search_patients", "query_database"},
+    "cohort_search": {"search_patients", "query_database", "get_care_gaps"},
+    "risk": {"get_risk_scores", "query_database", "search_patients"},
+    "care_gaps": {"get_care_gaps", "query_database", "get_patient_chart"},
+    "stats": {"dataset_stats", "query_database"},
+    "sql": {"query_database", "dataset_stats"},
+}
+
+INTENT_TABLES: dict[str, tuple[str, ...]] = {
+    "patient_lookup": ("patients", "chronic_conditions", "visits", "prescriptions"),
+    "cohort_search": ("patients", "chronic_conditions", "visits", "prescriptions"),
+    "risk": ("patients", "chronic_conditions", "visits", "vitals", "lab_results"),
+    "care_gaps": ("patients", "chronic_conditions", "visits", "prescriptions"),
+}
+
+ECONOMY_PROMPT = (
+    "Be economical with tool calls: request only the rows and fields you "
+    "need (small limits, targeted WHERE clauses), prefer one precise SQL "
+    "query over several broad ones, and never re-fetch data already in "
+    "context. Oversized results get truncated."
+)
+
 
 def _usage_of(message) -> dict:
     """Extract {input_tokens, output_tokens} from an API response."""
@@ -122,8 +148,7 @@ class Gateway:
         """
         import anthropic
 
-        from hdh.modules.agent.tools import build_tools
-
+        self.db_session = db_session
         self.config = PipelineConfig(
             model=model or os.environ.get("HDH_AGENT_MODEL", DEFAULT_MODEL),
             guard_model=os.environ.get("HDH_GUARD_MODEL", "claude-haiku-4-5"),
@@ -132,7 +157,6 @@ class Gateway:
             daily_output_tokens=int(os.environ.get("HDH_QUOTA_OUTPUT_TOKENS", 100_000)),
         )
         self.client = anthropic.Anthropic()
-        self.tools = build_tools(db_session)
         self.trace_store = TraceStore(default_trace_url())
         self.run_id = self.trace_store.start_run(
             source=source,
@@ -191,11 +215,33 @@ class Gateway:
         )
         return _first_json(_text_of(message)) or {"intent": "other"}, _usage_of(message)
 
+    def _select_tools(self, intent: dict, feedback: str) -> list:
+        """Intent-scoped tool subset and schema; the full set on retries.
+
+        First attempt: only the tools and tables the classified intent needs
+        (fewer tokens, less distraction). After a failed validation the
+        executor gets everything back — the validator said evidence was
+        missing, so don't constrain where it can look.
+        """
+        from hdh.modules.agent.tools import build_tools
+
+        intent_name = (intent or {}).get("intent", "other")
+        if feedback:
+            return build_tools(self.db_session)
+        return build_tools(
+            self.db_session,
+            tables=INTENT_TABLES.get(intent_name),
+            include=INTENT_TOOLS.get(intent_name),
+        )
+
     def _run_tools(
         self, question: str, intent: dict, feedback: str, history: list[str]
     ) -> tuple[str, list[dict], dict]:
-        """The executor: main model + all tools, aware of retry feedback."""
-        parts = [SYSTEM_PROMPT]
+        """The executor: main model + intent-scoped tools, aware of retry feedback."""
+        from hdh.modules.agent.tools import clip_tool_results
+
+        tools = self._select_tools(intent, feedback)
+        parts = [SYSTEM_PROMPT, ECONOMY_PROMPT]
         if intent:
             parts.append(f"Intent analysis of this request: {json.dumps(intent)}")
         if history:
@@ -206,11 +252,12 @@ class Gateway:
                 f"{feedback}\nGather the evidence needed to fix that — verify every "
                 "specific value with tools this time."
             )
+        self._trace("tool-executor", f"tools exposed: {', '.join(t.name for t in tools)}")
         runner = self.client.beta.messages.tool_runner(
             model=self.config.model,
             max_tokens=16000,
             system="\n\n".join(parts),
-            tools=self.tools,
+            tools=tools,
             messages=[{"role": "user", "content": question}],
         )
         findings, evidence, usage = "", [], {"input_tokens": 0, "output_tokens": 0}
@@ -223,7 +270,11 @@ class Gateway:
             texts = [b.text for b in message.content if b.type == "text"]
             if texts:
                 findings = "\n".join(texts)
-            tool_response = runner.generate_tool_call_response()
+            # Cap oversized results before the runner feeds them back into
+            # context — the single biggest token lever in long tool loops.
+            tool_response = clip_tool_results(
+                runner.generate_tool_call_response(), self.config.tool_result_cap
+            )
             if tool_response is not None:
                 blocks = tool_response.get("content") or []
                 results: list[dict] = (

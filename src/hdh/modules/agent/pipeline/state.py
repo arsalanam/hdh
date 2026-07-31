@@ -46,6 +46,7 @@ class PipelineConfig:
     allowed_topics: tuple[str, ...] = DEFAULT_ALLOWED_TOPICS
     daily_input_tokens: int = 500_000
     daily_output_tokens: int = 100_000
+    tool_result_cap: int = 6_000  # chars of any one tool result kept in context
 
 
 @dataclass(frozen=True)
