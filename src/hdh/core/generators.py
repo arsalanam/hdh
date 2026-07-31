@@ -7,12 +7,12 @@ import string
 from datetime import date, timedelta
 from faker import Faker
 
-from models import Patient, Visit, Vital, Diagnosis, Prescription, LabResult, ChronicCondition
-from disease_engine import (
+from .models import Patient, Visit, Vital, Diagnosis, Prescription, LabResult, ChronicCondition
+from .disease_engine import (
     CONDITIONS, pick_condition, comorbidity_seeds,
     LabSpec,
 )
-from models import LabStatus
+from .models import LabStatus
 
 fake = Faker("en_US")
 Faker.seed(42)
@@ -305,7 +305,7 @@ def build_dataset(session, n_patients: int = 10_000,
     """
     Generate n_patients patients with full visit histories and commit to DB.
     """
-    from models import ChronicCondition
+    from .models import ChronicCondition
 
     CHUNK = 500
     total_visits = 0

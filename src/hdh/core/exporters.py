@@ -8,7 +8,7 @@ from datetime import datetime, date
 from pathlib import Path
 from sqlalchemy.orm import Session
 
-from models import Patient, Visit, Vital, Diagnosis, Prescription, LabResult
+from .models import Patient, Visit, Vital, Diagnosis, Prescription, LabResult
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

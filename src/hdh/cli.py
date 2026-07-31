@@ -1,31 +1,35 @@
 """
-CLI Maintenance Tool for the Family Medicine synthetic dataset.
+CLI for the Family Medicine synthetic dataset (Health Data Hub).
 
-Usage:
-  python cli.py generate   --patients 10000 --years 4
-  python cli.py stats
-  python cli.py export     --format json|fhir|text  [--limit N] [--output-dir path]
-  python cli.py advance    --months 6
-  python cli.py add-spike  --condition influenza --multiplier 3.0 --month 12 --n 200
-  python cli.py show       --mrn MRN12345678
+Core commands:
+  hdh generate   --patients 10000 --years 4
+  hdh stats
+  hdh export     --format json|fhir|text  [--limit N] [--output-dir path]
+  hdh advance    --months 6
+  hdh add-spike  --condition influenza --multiplier 3.0 --month 12 --n 200
+  hdh show       --mrn MRN12345678
+
+Feature modules (hdh.modules.*) register additional subcommands, e.g.:
+  hdh care-gaps / hdh risk / hdh agent / hdh narrative / hdh serve
 """
 
 import argparse
+import importlib
 import sys
 from datetime import date, timedelta
 import random
 
-from models import get_engine, get_session, Patient, Visit, ChronicCondition
-from generators import build_dataset, generate_patient, generate_visit_history
-from exporters import export_json, export_fhir, export_text, patient_to_text
-from disease_engine import CONDITIONS
+from hdh.core.models import get_engine, get_session, Patient, Visit, ChronicCondition
+from hdh.core.generators import build_dataset, generate_patient, generate_visit_history
+from hdh.core.exporters import export_json, export_fhir, export_text, patient_to_text
+from hdh.core.disease_engine import CONDITIONS
 
 
 # ─── Stats ────────────────────────────────────────────────────────────────────
 
 def cmd_stats(session):
     from sqlalchemy import func
-    from models import Visit, Diagnosis, Prescription, LabResult
+    from hdh.core.models import Visit, Diagnosis, Prescription, LabResult
 
     n_patients  = session.query(func.count(Patient.id)).scalar()
     n_visits    = session.query(func.count(Visit.id)).scalar()
@@ -107,15 +111,15 @@ def cmd_advance(session, months: int):
         cutoff = today - timedelta(days=months * 30)
         new_visits = [(v, cp, cn) for v, cp, cn in visit_tuples if v.visit_date >= cutoff]
 
-        from generators import generate_vital, generate_lab
-        from models import Diagnosis, Prescription, LabResult
+        from hdh.core.generators import generate_vital, generate_lab
+        from hdh.core.models import Diagnosis, Prescription, LabResult
 
         for visit, cprofile, cname in new_visits[:2]:  # cap at 2 new visits per advance
             visit.patient_id = p.id
             session.add(visit)
             session.flush()
 
-            from generators import generate_vital
+            from hdh.core.generators import generate_vital
             vital = generate_vital(visit.id, p.age, p.sex, p.bmi_baseline, cprofile)
             session.add(vital)
 
@@ -158,8 +162,8 @@ def cmd_add_spike(session, condition_name: str, multiplier: float,
         print("❌ No patients in the database.")
         return
 
-    from generators import generate_vital, generate_lab
-    from models import Diagnosis, Prescription, LabResult
+    from hdh.core.generators import generate_vital, generate_lab
+    from hdh.core.models import Diagnosis, Prescription, LabResult
 
     # Pick a random day in the requested month (current or last year)
     year = date.today().year if month <= date.today().month else date.today().year - 1
@@ -216,13 +220,19 @@ def cmd_show(session, mrn: str):
     if not p:
         print(f"❌ Patient MRN '{mrn}' not found.")
         return
-    from exporters import patient_to_text
+    from hdh.core.exporters import patient_to_text
     print(patient_to_text(p))
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    # Windows consoles default to legacy code pages that can't print the
+    # box-drawing and status characters used in CLI output.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="Family Medicine Synthetic Dataset CLI"
     )
@@ -264,6 +274,15 @@ def main():
     # list-conditions
     sub.add_parser("list-conditions", help="List all available condition codes")
 
+    # Feature-module subcommands (each module defers heavy imports to run time)
+    from hdh.modules import CLI_MODULES
+    for mod_path in CLI_MODULES:
+        try:
+            mod = importlib.import_module(mod_path)
+        except ImportError:
+            continue
+        mod.register_cli(sub)
+
     args = parser.parse_args()
 
     engine  = get_engine(args.db)
@@ -303,6 +322,9 @@ def main():
         for k, v in CONDITIONS.items():
             print(f"  {k:<30} [{v.icd10_code}] {v.description}")
 
+    elif hasattr(args, "func"):
+        args.func(session, args)
+
     else:
         parser.print_help()
 
@@ -310,5 +332,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from generators import generate_lab   # ensure import available in spike
     main()
