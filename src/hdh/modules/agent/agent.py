@@ -26,7 +26,7 @@ being given to real people.
 """
 
 
-def run_agent(session, question: str, model: str = None, verbose: bool = True) -> str:
+def run_agent(session, question: str, model: str | None = None, verbose: bool = True) -> str:
     """Ask the agent one question (fresh conversation); returns the answer text."""
     from .chat import ChatSession
 

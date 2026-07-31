@@ -8,8 +8,12 @@ Thanks for your interest in contributing!
 git clone <repo-url> && cd hdh
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[all]"
-pytest
+just qa        # tests + coverage + ruff lint/format + mypy + security scan
 ```
+
+The [`just`](https://github.com/casey/just) recipes are the source of truth
+for quality gates; `just build` runs them all and then builds the Docker
+image. Run `just format` to auto-fix style before committing.
 
 Generate a small working database for local development:
 

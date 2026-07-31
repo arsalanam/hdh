@@ -4,14 +4,15 @@ Exporters: JSON (per-patient), FHIR R4 Bundle, plain-text clinical notes.
 
 import json
 import uuid
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
+
 from sqlalchemy.orm import Session
 
-from .models import Patient, Visit, Vital, Diagnosis, Prescription, LabResult
-
+from .models import Patient
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _date_str(d) -> str:
     if isinstance(d, (date, datetime)):
@@ -25,6 +26,7 @@ def _lab_status_text(status) -> str:
 
 
 # ─── 1. JSON Exporter ─────────────────────────────────────────────────────────
+
 
 def patient_to_json(patient: Patient) -> dict:
     """Serialize one patient + full visit history to a JSON-serializable dict."""
@@ -56,37 +58,48 @@ def patient_to_json(patient: Patient) -> dict:
             }
 
         diagnoses = [
-            {"icd10": dx.icd10_code, "description": dx.description,
-             "primary": dx.is_primary}
+            {"icd10": dx.icd10_code, "description": dx.description, "primary": dx.is_primary}
             for dx in v.diagnoses
         ]
 
         prescriptions = [
-            {"drug": rx.drug_name, "class": rx.drug_class, "dose": rx.dose,
-             "frequency": rx.frequency, "duration_days": rx.duration_days,
-             "refills": rx.refills, "new_rx": rx.is_new}
+            {
+                "drug": rx.drug_name,
+                "class": rx.drug_class,
+                "dose": rx.dose,
+                "frequency": rx.frequency,
+                "duration_days": rx.duration_days,
+                "refills": rx.refills,
+                "new_rx": rx.is_new,
+            }
             for rx in v.prescriptions
         ]
 
         labs = [
-            {"test": lr.test_name, "value": lr.value, "unit": lr.unit,
-             "ref_range": f"{lr.reference_low}–{lr.reference_high}",
-             "status": str(lr.status).split(".")[-1],
-             "loinc": lr.loinc_code}
+            {
+                "test": lr.test_name,
+                "value": lr.value,
+                "unit": lr.unit,
+                "ref_range": f"{lr.reference_low}–{lr.reference_high}",
+                "status": str(lr.status).split(".")[-1],
+                "loinc": lr.loinc_code,
+            }
             for lr in v.lab_results
         ]
 
-        visits_out.append({
-            "visit_date": _date_str(v.visit_date),
-            "visit_type": str(v.visit_type).split(".")[-1],
-            "chief_complaint": v.chief_complaint,
-            "provider": v.provider_name,
-            "follow_up_days": v.follow_up_days,
-            "vitals": vitals_dict,
-            "diagnoses": diagnoses,
-            "prescriptions": prescriptions,
-            "labs": labs,
-        })
+        visits_out.append(
+            {
+                "visit_date": _date_str(v.visit_date),
+                "visit_type": str(v.visit_type).split(".")[-1],
+                "chief_complaint": v.chief_complaint,
+                "provider": v.provider_name,
+                "follow_up_days": v.follow_up_days,
+                "vitals": vitals_dict,
+                "diagnoses": diagnoses,
+                "prescriptions": prescriptions,
+                "labs": labs,
+            }
+        )
 
     return {
         "patient_id": patient.id,
@@ -117,8 +130,7 @@ def patient_to_json(patient: Patient) -> dict:
     }
 
 
-def export_json(session: Session, output_dir: str = "exports/json",
-                limit: int = None):
+def export_json(session: Session, output_dir: str = "exports/json", limit: int | None = None):
     """Export each patient to a separate JSON file."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -137,8 +149,9 @@ def export_json(session: Session, output_dir: str = "exports/json",
     return len(patients)
 
 
-def export_json_bulk(session: Session, output_file: str = "exports/all_patients.json",
-                     limit: int = None):
+def export_json_bulk(
+    session: Session, output_file: str = "exports/all_patients.json", limit: int | None = None
+):
     """Export all patients to a single JSON array file."""
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     query = session.query(Patient)
@@ -153,27 +166,28 @@ def export_json_bulk(session: Session, output_file: str = "exports/all_patients.
 
 # ─── 2. FHIR R4 Exporter ─────────────────────────────────────────────────────
 
+
 def patient_to_fhir_bundle(patient: Patient) -> dict:
     """Generate a FHIR R4 Bundle for one patient."""
     bundle_id = str(uuid.uuid4())
-    entries   = []
+    entries = []
 
     # ── Patient resource
     fhir_patient = {
         "resourceType": "Patient",
         "id": patient.mrn,
         "identifier": [{"system": "urn:family-medicine-mrn", "value": patient.mrn}],
-        "name": [{"use": "official",
-                  "family": patient.last_name,
-                  "given": [patient.first_name]}],
+        "name": [{"use": "official", "family": patient.last_name, "given": [patient.first_name]}],
         "gender": "male" if str(patient.sex).endswith("MALE") or str(patient.sex).endswith("M") else "female",
         "birthDate": _date_str(patient.date_of_birth),
-        "address": [{
-            "line": [patient.address],
-            "city": patient.city,
-            "state": patient.state,
-            "postalCode": patient.zip_code,
-        }],
+        "address": [
+            {
+                "line": [patient.address],
+                "city": patient.city,
+                "state": patient.state,
+                "postalCode": patient.zip_code,
+            }
+        ],
         "telecom": [{"system": "phone", "value": patient.phone}],
     }
     entries.append({"resource": fhir_patient})
@@ -195,12 +209,9 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
             "status": "finished",
             "class": {"code": visit_type_map.get(vtype, "AMB")},
             "subject": {"reference": f"Patient/{patient.mrn}"},
-            "period": {"start": _date_str(v.visit_date),
-                       "end":   _date_str(v.visit_date)},
+            "period": {"start": _date_str(v.visit_date), "end": _date_str(v.visit_date)},
             "reasonCode": [{"text": v.chief_complaint}],
-            "participant": [{
-                "individual": {"display": v.provider_name}
-            }],
+            "participant": [{"individual": {"display": v.provider_name}}],
         }
         entries.append({"resource": enc})
 
@@ -209,12 +220,12 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
             vt = v.vitals
             observations = [
                 ("55284-4", "BP", f"{vt.bp_systolic}/{vt.bp_diastolic}", "mm[Hg]"),
-                ("8867-4",  "Heart rate", vt.heart_rate, "/min"),
-                ("9279-1",  "Respiratory rate", vt.respiratory_rate, "/min"),
-                ("8310-5",  "Body temperature", vt.temperature_f, "degF"),
+                ("8867-4", "Heart rate", vt.heart_rate, "/min"),
+                ("9279-1", "Respiratory rate", vt.respiratory_rate, "/min"),
+                ("8310-5", "Body temperature", vt.temperature_f, "degF"),
                 ("59408-5", "SpO2", vt.oxygen_sat, "%"),
                 ("29463-7", "Body weight", vt.weight_kg, "kg"),
-                ("8302-2",  "Body height", vt.height_cm, "cm"),
+                ("8302-2", "Body height", vt.height_cm, "cm"),
                 ("39156-5", "BMI", vt.bmi, "kg/m2"),
             ]
             for loinc, display, val, unit in observations:
@@ -222,8 +233,7 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
                     "resourceType": "Observation",
                     "id": str(uuid.uuid4()),
                     "status": "final",
-                    "code": {"coding": [{"system": "http://loinc.org",
-                                         "code": loinc, "display": display}]},
+                    "code": {"coding": [{"system": "http://loinc.org", "code": loinc, "display": display}]},
                     "subject": {"reference": f"Patient/{patient.mrn}"},
                     "encounter": {"reference": f"Encounter/{enc_id}"},
                     "effectiveDateTime": _date_str(v.visit_date),
@@ -237,9 +247,15 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
                 "resourceType": "Condition",
                 "id": str(uuid.uuid4()),
                 "clinicalStatus": {"coding": [{"code": "active"}]},
-                "code": {"coding": [{"system": "http://hl7.org/fhir/sid/icd-10",
-                                     "code": dx.icd10_code,
-                                     "display": dx.description}]},
+                "code": {
+                    "coding": [
+                        {
+                            "system": "http://hl7.org/fhir/sid/icd-10",
+                            "code": dx.icd10_code,
+                            "display": dx.description,
+                        }
+                    ]
+                },
                 "subject": {"reference": f"Patient/{patient.mrn}"},
                 "encounter": {"reference": f"Encounter/{enc_id}"},
                 "recordedDate": _date_str(v.visit_date),
@@ -257,10 +273,12 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
                 "subject": {"reference": f"Patient/{patient.mrn}"},
                 "encounter": {"reference": f"Encounter/{enc_id}"},
                 "authoredOn": _date_str(v.visit_date),
-                "dosageInstruction": [{
-                    "text": f"{rx.dose} {rx.frequency}",
-                    "timing": {"repeat": {"frequency": 1}},
-                }],
+                "dosageInstruction": [
+                    {
+                        "text": f"{rx.dose} {rx.frequency}",
+                        "timing": {"repeat": {"frequency": 1}},
+                    }
+                ],
                 "dispenseRequest": {"numberOfRepeatsAllowed": rx.refills},
                 "note": [{"text": rx.drug_class}],
             }
@@ -272,25 +290,39 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
                 "resourceType": "Observation",
                 "id": str(uuid.uuid4()),
                 "status": "final",
-                "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category",
-                                           "code": "laboratory"}]}],
-                "code": {"coding": [{"system": "http://loinc.org",
-                                     "code": lr.loinc_code,
-                                     "display": lr.test_name}]},
+                "category": [
+                    {
+                        "coding": [
+                            {
+                                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                                "code": "laboratory",
+                            }
+                        ]
+                    }
+                ],
+                "code": {
+                    "coding": [{"system": "http://loinc.org", "code": lr.loinc_code, "display": lr.test_name}]
+                },
                 "subject": {"reference": f"Patient/{patient.mrn}"},
                 "encounter": {"reference": f"Encounter/{enc_id}"},
                 "effectiveDateTime": _date_str(v.visit_date),
                 "valueQuantity": {"value": lr.value, "unit": lr.unit},
-                "referenceRange": [{
-                    "low": {"value": lr.reference_low, "unit": lr.unit},
-                    "high": {"value": lr.reference_high, "unit": lr.unit},
-                }],
-                "interpretation": [{
-                    "coding": [{
-                        "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
-                        "code": str(lr.status).split(".")[-1].upper()[0],
-                    }]
-                }],
+                "referenceRange": [
+                    {
+                        "low": {"value": lr.reference_low, "unit": lr.unit},
+                        "high": {"value": lr.reference_high, "unit": lr.unit},
+                    }
+                ],
+                "interpretation": [
+                    {
+                        "coding": [
+                            {
+                                "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+                                "code": str(lr.status).split(".")[-1].upper()[0],
+                            }
+                        ]
+                    }
+                ],
             }
             entries.append({"resource": lab_obs})
 
@@ -304,8 +336,7 @@ def patient_to_fhir_bundle(patient: Patient) -> dict:
     }
 
 
-def export_fhir(session: Session, output_dir: str = "exports/fhir",
-                limit: int = None):
+def export_fhir(session: Session, output_dir: str = "exports/fhir", limit: int | None = None):
     """Export each patient as a FHIR R4 Bundle JSON file."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -326,6 +357,7 @@ def export_fhir(session: Session, output_dir: str = "exports/fhir",
 
 # ─── 3. Plain-Text Clinical Notes Exporter ────────────────────────────────────
 
+
 def patient_to_text(patient: Patient) -> str:
     """Produce a plain-text chart summary readable by an LLM."""
     lines = []
@@ -333,7 +365,7 @@ def patient_to_text(patient: Patient) -> str:
     sex_label = "Male" if str(patient.sex).endswith("M") or "MALE" in str(patient.sex) else "Female"
     lines += [
         "=" * 70,
-        f"PATIENT CHART SUMMARY",
+        "PATIENT CHART SUMMARY",
         "=" * 70,
         f"MRN          : {patient.mrn}",
         f"Name         : {patient.first_name} {patient.last_name}",
@@ -346,10 +378,14 @@ def patient_to_text(patient: Patient) -> str:
         "-" * 40,
     ]
     fh_items = []
-    if patient.fam_hx_diabetes:     fh_items.append("Type 2 Diabetes")
-    if patient.fam_hx_hypertension: fh_items.append("Hypertension")
-    if patient.fam_hx_heart_disease:fh_items.append("Heart Disease")
-    if patient.fam_hx_cancer:       fh_items.append("Cancer")
+    if patient.fam_hx_diabetes:
+        fh_items.append("Type 2 Diabetes")
+    if patient.fam_hx_hypertension:
+        fh_items.append("Hypertension")
+    if patient.fam_hx_heart_disease:
+        fh_items.append("Heart Disease")
+    if patient.fam_hx_cancer:
+        fh_items.append("Cancer")
     lines.append(", ".join(fh_items) if fh_items else "None reported")
     lines.append(f"Smoker       : {'Yes' if patient.smoker else 'No'}")
     lines.append(f"BMI (baseline): {patient.bmi_baseline}")
@@ -359,7 +395,9 @@ def patient_to_text(patient: Patient) -> str:
         lines += ["ACTIVE CHRONIC CONDITIONS", "-" * 40]
         for cc in patient.chronic_conditions:
             controlled = "Controlled" if cc.controlled else "Uncontrolled"
-            lines.append(f"  [{cc.icd10_code}] {cc.description}  —  Onset: {_date_str(cc.onset_date)}  ({controlled})")
+            lines.append(
+                f"  [{cc.icd10_code}] {cc.description}  —  Onset: {_date_str(cc.onset_date)}  ({controlled})"
+            )
         lines.append("")
 
     lines += [
@@ -396,8 +434,7 @@ def patient_to_text(patient: Patient) -> str:
                 status = "New" if rx.is_new else "Refill"
                 dur = f"{rx.duration_days}d" if rx.duration_days else "Ongoing"
                 lines.append(
-                    f"  Rx [{status}]: {rx.drug_name} {rx.dose} {rx.frequency}  "
-                    f"×{dur}  Refills: {rx.refills}"
+                    f"  Rx [{status}]: {rx.drug_name} {rx.dose} {rx.frequency}  ×{dur}  Refills: {rx.refills}"
                 )
 
         # Labs
@@ -421,8 +458,7 @@ def patient_to_text(patient: Patient) -> str:
     return "\n".join(lines)
 
 
-def export_text(session: Session, output_dir: str = "exports/text",
-                limit: int = None):
+def export_text(session: Session, output_dir: str = "exports/text", limit: int | None = None):
     """Export each patient as a plain-text .txt file."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)

@@ -11,6 +11,7 @@ growth in long conversations while preserving the clinically important facts
 """
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -27,11 +28,11 @@ by topic. Omit pleasantries and tool mechanics. Maximum ~400 words.\
 
 
 def _block_type(block) -> str:
-    return block.get("type") if isinstance(block, dict) else getattr(block, "type", "")
+    return (block.get("type") if isinstance(block, dict) else getattr(block, "type", "")) or ""
 
 
 def _block_text(block) -> str:
-    return block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+    return (block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")) or ""
 
 
 def is_clean_user_message(message) -> bool:
@@ -60,8 +61,8 @@ def render_transcript(messages: list, max_result_chars: int = 400) -> str:
     """Render API messages as a plain-text transcript (for the summarizer)."""
     lines = []
     for m in messages:
-        role = m.get("role") if isinstance(m, dict) else m["role"]
-        content = m.get("content") if isinstance(m, dict) else m["content"]
+        role = str((m.get("role") if isinstance(m, dict) else m["role"]) or "")
+        content = (m.get("content") if isinstance(m, dict) else m["content"]) or ""
         if isinstance(content, str):
             lines.append(f"{role.upper()}: {content}")
             continue
@@ -95,10 +96,10 @@ class ChatSession:
     """A persistent multi-turn conversation with the care-program agent."""
 
     db_session: object
-    model: str = None
-    max_messages: int = 100    # auto-compact once history exceeds this
-    keep_recent: int = 20      # messages kept verbatim after compaction
-    summarizer: object = None  # override: callable(transcript) -> str (default: the model)
+    model: str | None = None
+    max_messages: int = 100  # auto-compact once history exceeds this
+    keep_recent: int = 20  # messages kept verbatim after compaction
+    summarizer: Callable[[str], str] | None = None  # override (default: the model)
     messages: list = field(default_factory=list)
     compactions: list = field(default_factory=list)
 
@@ -111,6 +112,7 @@ class ChatSession:
     def client(self):
         if self._client is None:
             import anthropic
+
             self._client = anthropic.Anthropic()
         return self._client
 
@@ -118,12 +120,13 @@ class ChatSession:
     def tools(self):
         if self._tools is None:
             from .tools import build_tools
+
             self._tools = build_tools(self.db_session)
         return self._tools
 
     # ── Conversation ─────────────────────────────────────────────────────────
 
-    def ask(self, question: str, on_tool=None) -> str:
+    def ask(self, question: str, on_tool=None) -> tuple[str, "CompactionEvent | None"]:
         """Ask a question in this conversation; returns the final answer text.
 
         ``on_tool(tool_use_block)`` is called for each tool invocation so the
@@ -175,7 +178,7 @@ class ChatSession:
             return self.compact()
         return None
 
-    def compact(self, summarizer=None):
+    def compact(self, summarizer: Callable[[str], str] | None = None) -> "CompactionEvent | None":
         """Summarize everything but the most recent turns into one block.
 
         ``summarizer(transcript) -> str`` can be injected (tests, offline
@@ -214,8 +217,9 @@ class ChatSession:
             system=SUMMARIZER_PROMPT,
             messages=[{"role": "user", "content": transcript}],
         )
-        return next((_block_text(b) for b in response.content
-                     if _block_type(b) == "text"), "(summary unavailable)")
+        return next(
+            (_block_text(b) for b in response.content if _block_type(b) == "text"), "(summary unavailable)"
+        )
 
     # ── Introspection for the UI ─────────────────────────────────────────────
 
@@ -224,7 +228,8 @@ class ChatSession:
         falls back to a chars/4 estimate if counting fails."""
         try:
             resp = self.client.messages.count_tokens(
-                model=self.model, system=SYSTEM_PROMPT, messages=self.messages)
+                model=self.model, system=SYSTEM_PROMPT, messages=self.messages
+            )
             return resp.input_tokens
         except Exception:
             return len(render_transcript(self.messages, max_result_chars=10**9)) // 4
@@ -249,7 +254,7 @@ class ChatSession:
                     yield role, _block_text(b)
                 elif btype == "tool_use":
                     name = b.get("name") if isinstance(b, dict) else b.name
-                    args = b.get("input") if isinstance(b, dict) else b.input
+                    args = (b.get("input") if isinstance(b, dict) else b.input) or {}
                     yield "tool", f"{name}({', '.join(f'{k}={v!r}' for k, v in args.items())})"
 
     def to_markdown(self) -> str:

@@ -16,6 +16,16 @@ exports/
 artifacts/
 *.joblib
 
+# QA output
+htmlcov/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Container data volume
+data/
+
 # IDE / OS
 .idea/
 .vscode/

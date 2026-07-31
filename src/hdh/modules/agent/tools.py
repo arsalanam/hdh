@@ -10,7 +10,7 @@ from datetime import date
 
 from sqlalchemy import func, text
 
-from hdh.core.models import Patient, ChronicCondition
+from hdh.core.models import ChronicCondition, Patient
 
 
 def build_tools(session):
@@ -25,14 +25,16 @@ def build_tools(session):
             mrn: The patient's medical record number, e.g. MRN12345678.
         """
         from hdh.core.exporters import patient_to_text
+
         p = session.query(Patient).filter(Patient.mrn == mrn).first()
         if not p:
             return f"No patient found with MRN {mrn}"
         return patient_to_text(p)
 
     @beta_tool
-    def search_patients(name: str = "", min_age: int = 0, max_age: int = 120,
-                        icd10_prefix: str = "", limit: int = 20) -> str:
+    def search_patients(
+        name: str = "", min_age: int = 0, max_age: int = 120, icd10_prefix: str = "", limit: int = 20
+    ) -> str:
         """Search patients by name, age range, and/or chronic-condition ICD-10 code.
 
         Args:
@@ -43,6 +45,7 @@ def build_tools(session):
             limit: Maximum number of patients to return.
         """
         from datetime import timedelta
+
         today = date.today()
         q = session.query(Patient)
         if name:
@@ -53,20 +56,22 @@ def build_tools(session):
             Patient.date_of_birth >= today - timedelta(days=(max_age + 1) * 365),
         )
         if icd10_prefix:
-            q = (q.join(ChronicCondition)
-                 .filter(ChronicCondition.icd10_code.like(f"{icd10_prefix}%"))
-                 .distinct())
+            q = (
+                q.join(ChronicCondition)
+                .filter(ChronicCondition.icd10_code.like(f"{icd10_prefix}%"))
+                .distinct()
+            )
         rows = []
         for p in q.limit(limit).all():
-            rows.append({
-                "mrn": p.mrn,
-                "name": f"{p.first_name} {p.last_name}",
-                "age": p.age,
-                "sex": str(p.sex).split(".")[-1],
-                "chronic_conditions": [
-                    f"[{c.icd10_code}] {c.description}" for c in p.chronic_conditions
-                ],
-            })
+            rows.append(
+                {
+                    "mrn": p.mrn,
+                    "name": f"{p.first_name} {p.last_name}",
+                    "age": p.age,
+                    "sex": str(p.sex).split(".")[-1],
+                    "chronic_conditions": [f"[{c.icd10_code}] {c.description}" for c in p.chronic_conditions],
+                }
+            )
         return json.dumps(rows, indent=2) if rows else "No matching patients."
 
     @beta_tool
@@ -78,6 +83,7 @@ def build_tools(session):
             limit: Maximum number of gaps to return, ranked by severity.
         """
         from hdh.modules.caregaps import detect_gaps
+
         gaps = detect_gaps(session, mrn=mrn or None, limit=limit)
         return json.dumps([g.to_dict() for g in gaps], indent=2) if gaps else "No care gaps found."
 
@@ -91,10 +97,10 @@ def build_tools(session):
         """
         try:
             from hdh.modules.risk import model as risk_model
+
             rows = risk_model.score(session, mrn=mrn or None, top=top)
         except FileNotFoundError:
-            return ("No trained risk model found. Ask the operator to run "
-                    "`hdh risk train` first.")
+            return "No trained risk model found. Ask the operator to run `hdh risk train` first."
         except ImportError:
             return "Risk module not installed (pip install hdh[risk])."
         return json.dumps(rows, indent=2) if rows else "No results."
@@ -112,7 +118,7 @@ def build_tools(session):
         try:
             result = session.execute(text(stripped))
             cols = list(result.keys())
-            rows = [dict(zip(cols, r)) for r in result.fetchmany(200)]
+            rows = [dict(zip(cols, r, strict=False)) for r in result.fetchmany(200)]
         except Exception as e:
             return f"SQL error: {e}"
         return json.dumps(rows, indent=2, default=str) if rows else "Query returned no rows."
@@ -120,7 +126,8 @@ def build_tools(session):
     @beta_tool
     def dataset_stats() -> str:
         """Get overall dataset statistics: patient, visit, diagnosis, prescription, and lab counts."""
-        from hdh.core.models import Visit, Diagnosis, Prescription, LabResult
+        from hdh.core.models import Diagnosis, LabResult, Prescription, Visit
+
         stats = {
             "patients": session.query(func.count(Patient.id)).scalar(),
             "visits": session.query(func.count(Visit.id)).scalar(),
@@ -130,5 +137,4 @@ def build_tools(session):
         }
         return json.dumps(stats, indent=2)
 
-    return [get_patient_chart, search_patients, get_care_gaps,
-            get_risk_scores, query_database, dataset_stats]
+    return [get_patient_chart, search_patients, get_care_gaps, get_risk_scores, query_database, dataset_stats]

@@ -5,7 +5,10 @@ from datetime import date
 
 
 def register_cli(subparsers):
-    p = subparsers.add_parser("care-gaps", help="Detect care gaps (overdue preventive care, missed follow-ups, uncontrolled chronic conditions)")
+    p = subparsers.add_parser(
+        "care-gaps",
+        help="Detect care gaps (overdue preventive care, missed follow-ups, uncontrolled chronic conditions)",
+    )
     p.add_argument("--mrn", help="Check a single patient")
     p.add_argument("--limit", type=int, default=25, help="Max gaps to show (default 25)")
     p.add_argument("--as-of", help="Reference date YYYY-MM-DD (default: latest visit in DB)")
@@ -28,8 +31,7 @@ def run(session, args):
     print(f"{'MRN':<14}{'Patient':<26}{'Age':>4}  {'Severity':<9}{'Type':<22}Description")
     print("-" * 100)
     for g in gaps:
-        print(f"{g.mrn:<14}{g.patient_name:<26}{g.age:>4}  {g.severity:<9}"
-              f"{g.gap_type:<22}{g.description}")
+        print(f"{g.mrn:<14}{g.patient_name:<26}{g.age:>4}  {g.severity:<9}{g.gap_type:<22}{g.description}")
     if not gaps:
         print("  No care gaps found 🎉")
     print()

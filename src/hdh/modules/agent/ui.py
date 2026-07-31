@@ -41,26 +41,39 @@ def run_ui(chat, compact_after: int):
         # (e.g. Git Bash / mintty on Windows, piped stdin).
         from prompt_toolkit import PromptSession
         from prompt_toolkit.history import FileHistory
+
         history_dir = Path.home() / ".hdh"
         history_dir.mkdir(exist_ok=True)
-        _prompt = PromptSession(history=FileHistory(str(history_dir / "agent_prompt_history")))
-        read_line = lambda: _prompt.prompt("you> ")
-    except Exception:
-        read_line = lambda: input("you> ")
+        _prompt: PromptSession = PromptSession(history=FileHistory(str(history_dir / "agent_prompt_history")))
 
-    console.print(Panel(
-        f"[bold]hdh care-program agent[/bold] — model [cyan]{chat.model}[/cyan]\n"
-        f"Conversation is remembered across questions; beyond "
-        f"[cyan]{compact_after}[/cyan] messages, older turns are auto-summarized.\n"
-        f"Type [cyan]/help[/cyan] for commands, [cyan]/exit[/cyan] to quit.",
-        title="🩺 interactive chat", border_style="cyan"))
+        def read_line():
+            return _prompt.prompt("you> ")
+    except Exception:
+
+        def read_line():
+            return input("you> ")
+
+    console.print(
+        Panel(
+            f"[bold]hdh care-program agent[/bold] — model [cyan]{chat.model}[/cyan]\n"
+            f"Conversation is remembered across questions; beyond "
+            f"[cyan]{compact_after}[/cyan] messages, older turns are auto-summarized.\n"
+            f"Type [cyan]/help[/cyan] for commands, [cyan]/exit[/cyan] to quit.",
+            title="🩺 interactive chat",
+            border_style="cyan",
+        )
+    )
 
     def show_compaction(event):
-        console.print(Panel(
-            f"Context compacted at {event.at}: "
-            f"[bold]{event.messages_before} → {event.messages_after}[/bold] messages.\n"
-            f"Older turns replaced by this summary:\n\n{event.summary}",
-            title="🗜  context compaction", border_style="yellow"))
+        console.print(
+            Panel(
+                f"Context compacted at {event.at}: "
+                f"[bold]{event.messages_before} → {event.messages_after}[/bold] messages.\n"
+                f"Older turns replaced by this summary:\n\n{event.summary}",
+                title="🗜  context compaction",
+                border_style="yellow",
+            )
+        )
 
     def show_history():
         if not chat.messages:
@@ -68,16 +81,13 @@ def run_ui(chat, compact_after: int):
             return
         for kind, text in chat.display_events():
             if kind == "user":
-                console.print(Panel(text, title="you", title_align="left",
-                                    border_style="green"))
+                console.print(Panel(text, title="you", title_align="left", border_style="green"))
             elif kind == "assistant":
-                console.print(Panel(Markdown(text), title="agent", title_align="left",
-                                    border_style="blue"))
+                console.print(Panel(Markdown(text), title="agent", title_align="left", border_style="blue"))
             elif kind == "tool":
                 console.print(f"  [dim]🔧 {text}[/dim]")
             elif kind == "summary":
-                console.print(Panel(text, title="earlier conversation (summarized)",
-                                    border_style="yellow"))
+                console.print(Panel(text, title="earlier conversation (summarized)", border_style="yellow"))
 
     def show_context():
         with console.status("[dim]counting tokens...[/dim]"):
@@ -86,7 +96,8 @@ def run_ui(chat, compact_after: int):
             f"  messages in context : [bold]{len(chat.messages)}[/bold] "
             f"(auto-compacts beyond {chat.max_messages})\n"
             f"  input tokens        : [bold]{tokens:,}[/bold]\n"
-            f"  compactions so far  : [bold]{len(chat.compactions)}[/bold]")
+            f"  compactions so far  : [bold]{len(chat.compactions)}[/bold]"
+        )
         for e in chat.compactions:
             console.print(f"    [dim]{e.at}  {e.messages_before} → {e.messages_after} messages[/dim]")
 
@@ -109,7 +120,7 @@ def run_ui(chat, compact_after: int):
             else:
                 console.print("[dim]Nothing to compact yet — need a longer conversation.[/dim]")
         elif cmd == "/save":
-            path = Path(arg.strip() or f"chat_transcript.md")
+            path = Path(arg.strip() or "chat_transcript.md")
             path.write_text(chat.to_markdown(), encoding="utf-8")
             console.print(f"[green]Transcript saved → {path}[/green]")
         elif cmd == "/clear":
@@ -145,7 +156,8 @@ def run_ui(chat, compact_after: int):
             continue
         if compacted:
             show_compaction(compacted)
-        console.print(Panel(Markdown(answer or "(no answer)"), title="agent",
-                            title_align="left", border_style="blue"))
+        console.print(
+            Panel(Markdown(answer or "(no answer)"), title="agent", title_align="left", border_style="blue")
+        )
 
     console.print("[dim]bye 👋[/dim]")

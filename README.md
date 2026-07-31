@@ -124,9 +124,38 @@ pre-built copy from your release artifacts.
   [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
   [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md)
 
+## Build pipeline
+
+The project uses [`just`](https://github.com/casey/just) as its command runner.
+`just build` produces the Docker image **only after every quality gate passes**:
+
+```bash
+just              # list all recipes
+just test         # unit tests
+just coverage     # tests + coverage report (HTML in htmlcov/)
+just lint         # ruff linting
+just format-check # ruff formatting (just format to apply)
+just typecheck    # mypy
+just security     # security scan (trivy/pip-audit if installed; OWASP slot)
+just qa           # all of the above, in order
+just build        # qa → docker build -t hdh:latest
+```
+
+Container usage:
+
+```bash
+just docker-generate 1000   # generate a dataset into ./data
+just docker-serve           # FHIR API on :8000 against ./data
+docker run --rm -v "$PWD/data:/data" hdh:latest stats
+```
+
+The `security` recipe is the extension point for OWASP tooling — it runs
+trivy or pip-audit when available today, and the justfile comments show where
+to wire OWASP Dependency-Check or a ZAP baseline scan.
+
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run tests with `pytest`.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run `just qa` before submitting.
 
 ## License
 

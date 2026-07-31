@@ -1,0 +1,8 @@
+# Whitelist: only what the image build needs goes into the context
+# (keeps the ~87 MB database and .venv out).
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+src/**/__pycache__/

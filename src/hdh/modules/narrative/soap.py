@@ -58,16 +58,18 @@ def _plan(visit: Visit) -> str:
 
 def visit_to_soap(visit: Visit, patient: Patient) -> str:
     """Render one visit as a SOAP note."""
-    return "\n".join([
-        f"SOAP NOTE — {visit.visit_date}  ({visit.provider_name})",
-        f"S: {_subjective(visit, patient)}",
-        f"O: {_objective(visit)}",
-        f"A: {_assessment(visit)}",
-        f"P: {_plan(visit)}",
-    ])
+    return "\n".join(
+        [
+            f"SOAP NOTE — {visit.visit_date}  ({visit.provider_name})",
+            f"S: {_subjective(visit, patient)}",
+            f"O: {_objective(visit)}",
+            f"A: {_assessment(visit)}",
+            f"P: {_plan(visit)}",
+        ]
+    )
 
 
-def patient_soap_notes(patient: Patient, last_n: int = None) -> list[str]:
+def patient_soap_notes(patient: Patient, last_n: int | None = None) -> list[str]:
     """SOAP notes for a patient's visits (chronological); last_n limits to the most recent."""
     visits = patient.visits[-last_n:] if last_n else patient.visits
     return [visit_to_soap(v, patient) for v in visits]
@@ -81,9 +83,11 @@ def polish_with_llm(note: str, model: str = "claude-opus-5") -> str:
     response = client.messages.create(
         model=model,
         max_tokens=2048,
-        system=("You rewrite templated SOAP notes from a SYNTHETIC dataset as natural, "
-                "realistic clinical prose. Keep the S/O/A/P structure, all clinical "
-                "values, codes, and dates exactly as given. Output only the note."),
+        system=(
+            "You rewrite templated SOAP notes from a SYNTHETIC dataset as natural, "
+            "realistic clinical prose. Keep the S/O/A/P structure, all clinical "
+            "values, codes, and dates exactly as given. Output only the note."
+        ),
         messages=[{"role": "user", "content": note}],
     )
     if response.stop_reason == "refusal":

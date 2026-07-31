@@ -8,8 +8,8 @@ Endpoints:
   GET /Patient/{mrn}/$everything   — full per-patient Bundle (core exporter)
 """
 
-from hdh.core.models import Patient, get_engine, get_session
 from hdh.core.exporters import patient_to_fhir_bundle
+from hdh.core.models import Patient, get_engine, get_session
 
 
 def _fhir_patient(p: Patient) -> dict:
@@ -20,8 +20,10 @@ def _fhir_patient(p: Patient) -> dict:
 def create_app(db_path: str = "family_medicine.db"):
     from fastapi import FastAPI, HTTPException
 
-    app = FastAPI(title="hdh FHIR R4 API",
-                  description="Read-only FHIR R4 facade over the synthetic family-medicine dataset")
+    app = FastAPI(
+        title="hdh FHIR R4 API",
+        description="Read-only FHIR R4 facade over the synthetic family-medicine dataset",
+    )
     engine = get_engine(db_path)
 
     def db():
@@ -35,14 +37,18 @@ def create_app(db_path: str = "family_medicine.db"):
             "kind": "instance",
             "fhirVersion": "4.0.1",
             "format": ["json"],
-            "rest": [{
-                "mode": "server",
-                "resource": [{
-                    "type": "Patient",
-                    "interaction": [{"code": "read"}, {"code": "search-type"}],
-                    "operation": [{"name": "everything", "definition": "Patient-everything"}],
-                }],
-            }],
+            "rest": [
+                {
+                    "mode": "server",
+                    "resource": [
+                        {
+                            "type": "Patient",
+                            "interaction": [{"code": "read"}, {"code": "search-type"}],
+                            "operation": [{"name": "everything", "definition": "Patient-everything"}],
+                        }
+                    ],
+                }
+            ],
         }
 
     @app.get("/Patient/{mrn}")

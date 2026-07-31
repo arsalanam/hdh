@@ -2,12 +2,13 @@
 
 Sources: README.md and ARCHITECTURE.md.
 """
+
 from docx import Document
-from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 
 # ---- palette --------------------------------------------------------------
 NAVY = RGBColor(0x1F, 0x3A, 0x5F)
@@ -94,7 +95,7 @@ def add_bullets(items):
 
 
 def feature(title, what, value):
-    h = doc.add_heading(title, level=3)
+    doc.add_heading(title, level=3)
     p = doc.add_paragraph()
     p.add_run("What it does:  ").bold = True
     p.add_run(what)
@@ -183,12 +184,14 @@ doc.add_paragraph(
     "without touching real patient data."
 )
 doc.add_heading("Who it's for", level=3)
-add_bullets([
-    "AI/ML engineers building or evaluating agentic care programs.",
-    "Healthcare integration developers testing FHIR R4 pipelines.",
-    "Data scientists prototyping risk-stratification or care-gap models.",
-    "Anyone needing realistic clinical data without privacy or compliance overhead.",
-])
+add_bullets(
+    [
+        "AI/ML engineers building or evaluating agentic care programs.",
+        "Healthcare integration developers testing FHIR R4 pipelines.",
+        "Data scientists prototyping risk-stratification or care-gap models.",
+        "Anyone needing realistic clinical data without privacy or compliance overhead.",
+    ]
+)
 
 # ===========================================================================
 # 2. KEY FEATURES
@@ -197,9 +200,15 @@ doc.add_heading("2.  Key Features at a Glance", level=1)
 add_table(
     ["Feature", "Description"],
     [
-        ["Realistic generation", "Age/sex/season-weighted disease probability engine with comorbidity seeding."],
+        [
+            "Realistic generation",
+            "Age/sex/season-weighted disease probability engine with comorbidity seeding.",
+        ],
         ["30 conditions", "Coverage spanning pediatric, adolescent, adult, and senior care."],
-        ["Full clinical detail", "Vitals, ICD-10 diagnoses, formulary-accurate prescriptions, and LOINC-coded labs."],
+        [
+            "Full clinical detail",
+            "Vitals, ICD-10 diagnoses, formulary-accurate prescriptions, and LOINC-coded labs.",
+        ],
         ["Three export formats", "Per-patient JSON, FHIR R4 Bundles, and LLM-ready plain-text charts."],
         ["Maintenance CLI", "Generate, inspect, export, inject disease spikes, and advance time."],
         ["Pre-built database", "Ships with a ~87 MB SQLite database of 10,000 patients."],
@@ -257,21 +266,39 @@ add_table(
     [
         ["Patient", "patients", "mrn, dob, sex, race, insurance, allergies, fam_hx_*, smoker, bmi_baseline"],
         ["ChronicCondition", "chronic_conditions", "patient_id, icd10_code, onset_date, controlled"],
-        ["Visit", "visits", "patient_id, visit_date, visit_type, chief_complaint, provider_name, follow_up_days"],
-        ["Vital", "vitals", "visit_id, bp_systolic, bp_diastolic, hr, rr, temp_f, spo2, weight_kg, bmi, pain_scale"],
+        [
+            "Visit",
+            "visits",
+            "patient_id, visit_date, visit_type, chief_complaint, provider_name, follow_up_days",
+        ],
+        [
+            "Vital",
+            "vitals",
+            "visit_id, bp_systolic, bp_diastolic, hr, rr, temp_f, spo2, weight_kg, bmi, pain_scale",
+        ],
         ["Diagnosis", "diagnoses", "visit_id, icd10_code, description, is_primary"],
-        ["Prescription", "prescriptions", "visit_id, drug_name, drug_class, dose, frequency, duration_days, refills, is_new"],
-        ["LabResult", "lab_results", "visit_id, test_name, value, unit, ref_low, ref_high, status, loinc_code"],
+        [
+            "Prescription",
+            "prescriptions",
+            "visit_id, drug_name, drug_class, dose, frequency, duration_days, refills, is_new",
+        ],
+        [
+            "LabResult",
+            "lab_results",
+            "visit_id, test_name, value, unit, ref_low, ref_high, status, loinc_code",
+        ],
     ],
     widths=[1.4, 1.4, 3.7],
 )
 
 doc.add_heading("Enums", level=3)
-add_bullets([
-    "Sex: M / F",
-    "VisitType: acute / follow_up / preventive / urgent",
-    "LabStatus: normal / high / low / critical",
-])
+add_bullets(
+    [
+        "Sex: M / F",
+        "VisitType: acute / follow_up / preventive / urgent",
+        "LabStatus: normal / high / low / critical",
+    ]
+)
 
 doc.add_heading("Key Relationships", level=3)
 add_code(
@@ -292,34 +319,49 @@ doc.add_paragraph(
     "condition should look."
 )
 doc.add_heading("Each ConditionProfile defines", level=3)
-add_bullets([
-    "icd10_code, description, chief_complaint, and visit_type.",
-    "Vital deltas from baseline (mean, sd) for BP, HR, RR, temperature, SpO2, and pain.",
-    "labs — which lab panels to order (LabSpec).",
-    "rx_options — condition-appropriate formulary entries (RxSpec).",
-    "follow_up_days — a clinical-guideline follow-up interval.",
-    "seasonal_weights — month-to-multiplier seasonal weighting.",
-])
+add_bullets(
+    [
+        "icd10_code, description, chief_complaint, and visit_type.",
+        "Vital deltas from baseline (mean, sd) for BP, HR, RR, temperature, SpO2, and pain.",
+        "labs — which lab panels to order (LabSpec).",
+        "rx_options — condition-appropriate formulary entries (RxSpec).",
+        "follow_up_days — a clinical-guideline follow-up interval.",
+        "seasonal_weights — month-to-multiplier seasonal weighting.",
+    ]
+)
 
 doc.add_heading("30 Conditions by Age Group", level=3)
 add_table(
     ["Age Group", "Conditions"],
     [
         ["Infant 0–2", "Well-child, otitis media, RSV, febrile illness, rash/eczema, conjunctivitis, URI"],
-        ["Child 3–12", "Well-child, otitis media, strep throat, URI, febrile illness, rash, conjunctivitis, sports injury"],
+        [
+            "Child 3–12",
+            "Well-child, otitis media, strep throat, URI, febrile illness, rash, conjunctivitis, sports injury",
+        ],
         ["Teen 13–17", "Sports physical, URI, sports injury, acne, anxiety, strep, mono"],
-        ["Young Adult 18–35", "Annual physical, influenza, URI, UTI, anxiety, low back pain, laceration, contraception, GERD"],
-        ["Adult 36–50", "Annual physical, HTN, hyperlipidemia, T2DM, URI, influenza, GERD, anxiety, back pain, obesity"],
-        ["Middle-aged 51–65", "Annual physical, HTN, T2DM, hyperlipidemia, osteoarthritis, GERD, URI, COPD, depression, hypothyroidism"],
-        ["Senior 65+", "Annual wellness, HTN, T2DM, hyperlipidemia, osteoarthritis, COPD, falls, polypharmacy review, depression, hypothyroidism, influenza"],
+        [
+            "Young Adult 18–35",
+            "Annual physical, influenza, URI, UTI, anxiety, low back pain, laceration, contraception, GERD",
+        ],
+        [
+            "Adult 36–50",
+            "Annual physical, HTN, hyperlipidemia, T2DM, URI, influenza, GERD, anxiety, back pain, obesity",
+        ],
+        [
+            "Middle-aged 51–65",
+            "Annual physical, HTN, T2DM, hyperlipidemia, osteoarthritis, GERD, URI, COPD, depression, hypothyroidism",
+        ],
+        [
+            "Senior 65+",
+            "Annual wellness, HTN, T2DM, hyperlipidemia, osteoarthritis, COPD, falls, polypharmacy review, depression, hypothyroidism, influenza",
+        ],
     ],
     widths=[1.6, 4.9],
 )
 
 doc.add_heading("Seasonal Multipliers", level=3)
-doc.add_paragraph(
-    "Disease incidence is weighted by month so the dataset shows realistic seasonality."
-)
+doc.add_paragraph("Disease incidence is weighted by month so the dataset shows realistic seasonality.")
 add_code(
     "FLU_SEASON  = {Jan:2.5, Feb:2.0, ..., Dec:2.5}   # peaks winter\n"
     "RSV_SEASON  = {Jan:2.0, Feb:1.5, ..., Dec:2.5}   # peaks late fall/winter\n"
@@ -347,7 +389,10 @@ add_table(
     [
         ["generate --patients N --years Y", "Generate a fresh dataset."],
         ["stats", "Print dataset statistics."],
-        ["export --format {json|fhir|text|all} --limit N --output-dir DIR", "Export records in one or all formats."],
+        [
+            "export --format {json|fhir|text|all} --limit N --output-dir DIR",
+            "Export records in one or all formats.",
+        ],
         ["show --mrn MRN########", "Print a single patient's full chart."],
         ["list-conditions", "List all available condition codes."],
         ["add-spike --condition NAME --month M --n N", "Inject a seasonal disease spike."],
@@ -375,14 +420,16 @@ doc.add_paragraph(
 
 doc.add_heading("FHIR R4 Bundle", level=3)
 doc.add_paragraph("A standard FHIR R4 Bundle per patient containing:")
-add_bullets([
-    "Patient resource.",
-    "Encounter resource per visit.",
-    "Observation resources for vitals (with LOINC codes).",
-    "Condition resources for diagnoses (ICD-10).",
-    "MedicationRequest resources for prescriptions.",
-    "Observation resources for labs (with LOINC codes and reference ranges).",
-])
+add_bullets(
+    [
+        "Patient resource.",
+        "Encounter resource per visit.",
+        "Observation resources for vitals (with LOINC codes).",
+        "Condition resources for diagnoses (ICD-10).",
+        "MedicationRequest resources for prescriptions.",
+        "Observation resources for labs (with LOINC codes and reference ranges).",
+    ]
+)
 
 doc.add_heading("Plain-Text Clinical Notes", level=3)
 doc.add_paragraph("An LLM-ready chart summary — ideal as direct context for language models.")
@@ -419,11 +466,13 @@ doc.add_paragraph(
 )
 
 doc.add_heading("Modular layout", level=3)
-add_bullets([
-    "base_module — the core entities and relationships.",
-    "ontology_module — adds ontology columns (e.g. SNOMED tags) and new entities.",
-    "clinical_module — adds clinical extensions such as billing CPT codes or lab review fields.",
-])
+add_bullets(
+    [
+        "base_module — the core entities and relationships.",
+        "ontology_module — adds ontology columns (e.g. SNOMED tags) and new entities.",
+        "clinical_module — adds clinical extensions such as billing CPT codes or lab review fields.",
+    ]
+)
 doc.add_paragraph(
     "Each module ships a manifest.json declaring its name, version, dependencies, and "
     "priority, plus a schema/ folder split into entities/ (columns + indexes) and "
@@ -440,8 +489,14 @@ add_table(
     ["Phase", "What happens"],
     [
         ["Phase 1 — Entity schemas", "Load all modules' columns; every tablename and column is now known."],
-        ["Phase 2 — Merge entities", "Produce one merged column+index spec per entity (later module wins, logged)."],
-        ["Phase 3 — Relationship schemas", "Validate all relationship targets against the complete entity set."],
+        [
+            "Phase 2 — Merge entities",
+            "Produce one merged column+index spec per entity (later module wins, logged).",
+        ],
+        [
+            "Phase 3 — Relationship schemas",
+            "Validate all relationship targets against the complete entity set.",
+        ],
         ["Phase 4 — Merge relationships", "Merge relationship specs (later module wins, logged)."],
         ["Factory Pass 1", "Create mapped classes (columns + indexes only)."],
         ["Factory Pass 2", "Wire relationships — no forward references or deferred resolution needed."],
@@ -530,15 +585,17 @@ add_table(
 # 10. ROADMAP
 # ===========================================================================
 doc.add_heading("10.  Roadmap & Possible Extensions", level=1)
-add_bullets([
-    "Agentic care program layer — a LangGraph agent with SQLite tools querying this dataset.",
-    "Narrative generation — LLM-generated SOAP-note text per visit.",
-    "Care-gap detection — flag patients overdue for preventive visits or with uncontrolled chronic conditions.",
-    "Risk stratification — an ML model predicting hospitalization risk from visit patterns.",
-    "FHIR server — wrap the exporters in a HAPI FHIR-compatible REST API.",
-    "Ontology module — add SNOMED CT codes to diagnosis records.",
-    "Billing module — add CPT codes, RVUs, and insurance-claim simulation.",
-])
+add_bullets(
+    [
+        "Agentic care program layer — a LangGraph agent with SQLite tools querying this dataset.",
+        "Narrative generation — LLM-generated SOAP-note text per visit.",
+        "Care-gap detection — flag patients overdue for preventive visits or with uncontrolled chronic conditions.",
+        "Risk stratification — an ML model predicting hospitalization risk from visit patterns.",
+        "FHIR server — wrap the exporters in a HAPI FHIR-compatible REST API.",
+        "Ontology module — add SNOMED CT codes to diagnosis records.",
+        "Billing module — add CPT codes, RVUs, and insurance-claim simulation.",
+    ]
+)
 
 # ---- footer ---------------------------------------------------------------
 section = doc.sections[0]

@@ -6,3 +6,5 @@ are seniors on many medications without a recent review.
 """
 
 from .detector import CareGap, detect_gaps, reference_date
+
+__all__ = ["CareGap", "detect_gaps", "reference_date"]

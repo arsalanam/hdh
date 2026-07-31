@@ -18,8 +18,8 @@ def test_care_gap_detection(db_session):
 
 def test_risk_features(db_session):
     pytest.importorskip("numpy")
-    from hdh.modules.risk.features import extract_features, FEATURE_NAMES
     from hdh.modules.caregaps import reference_date
+    from hdh.modules.risk.features import FEATURE_NAMES, extract_features
 
     mrns, rows, labels = extract_features(db_session, cutoff=reference_date(db_session))
     assert len(mrns) == len(rows) == len(labels) == 8
@@ -60,8 +60,12 @@ def test_agent_tools_build(db_session):
 
     tools = build_tools(db_session)
     assert {t.name for t in tools} == {
-        "get_patient_chart", "search_patients", "get_care_gaps",
-        "get_risk_scores", "query_database", "dataset_stats",
+        "get_patient_chart",
+        "search_patients",
+        "get_care_gaps",
+        "get_risk_scores",
+        "query_database",
+        "dataset_stats",
     }
 
 

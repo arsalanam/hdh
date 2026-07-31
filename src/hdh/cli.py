@@ -15,27 +15,28 @@ Feature modules (hdh.modules.*) register additional subcommands, e.g.:
 
 import argparse
 import importlib
+import random
 import sys
 from datetime import date, timedelta
-import random
 
-from hdh.core.models import get_engine, get_session, Patient, Visit, ChronicCondition
-from hdh.core.generators import build_dataset, generate_patient, generate_visit_history
-from hdh.core.exporters import export_json, export_fhir, export_text, patient_to_text
 from hdh.core.disease_engine import CONDITIONS
-
+from hdh.core.exporters import export_fhir, export_json, export_text, patient_to_text
+from hdh.core.generators import build_dataset, generate_visit_history
+from hdh.core.models import ChronicCondition, Patient, Visit, get_engine, get_session
 
 # ─── Stats ────────────────────────────────────────────────────────────────────
 
+
 def cmd_stats(session):
     from sqlalchemy import func
-    from hdh.core.models import Visit, Diagnosis, Prescription, LabResult
 
-    n_patients  = session.query(func.count(Patient.id)).scalar()
-    n_visits    = session.query(func.count(Visit.id)).scalar()
-    n_dx        = session.query(func.count(Diagnosis.id)).scalar()
-    n_rx        = session.query(func.count(Prescription.id)).scalar()
-    n_labs      = session.query(func.count(LabResult.id)).scalar()
+    from hdh.core.models import Diagnosis, LabResult, Prescription, Visit
+
+    n_patients = session.query(func.count(Patient.id)).scalar()
+    n_visits = session.query(func.count(Visit.id)).scalar()
+    n_dx = session.query(func.count(Diagnosis.id)).scalar()
+    n_rx = session.query(func.count(Prescription.id)).scalar()
+    n_labs = session.query(func.count(LabResult.id)).scalar()
 
     print("\n" + "=" * 55)
     print("  FAMILY MEDICINE DATASET — STATISTICS")
@@ -51,8 +52,7 @@ def cmd_stats(session):
 
     # Top 10 diagnoses
     top_dx = (
-        session.query(Diagnosis.icd10_code, Diagnosis.description,
-                      func.count(Diagnosis.id).label("cnt"))
+        session.query(Diagnosis.icd10_code, Diagnosis.description, func.count(Diagnosis.id).label("cnt"))
         .group_by(Diagnosis.icd10_code)
         .order_by(func.count(Diagnosis.id).desc())
         .limit(10)
@@ -64,23 +64,31 @@ def cmd_stats(session):
     print()
 
     # Age distribution
-    from sqlalchemy import case, extract
     print("  PATIENT AGE DISTRIBUTION:")
-    brackets = [("0–12", 0, 12), ("13–17", 13, 17), ("18–35", 18, 35),
-                ("36–50", 36, 50), ("51–65", 51, 65), ("66+", 66, 120)]
+    brackets = [
+        ("0–12", 0, 12),
+        ("13–17", 13, 17),
+        ("18–35", 18, 35),
+        ("36–50", 36, 50),
+        ("51–65", 51, 65),
+        ("66+", 66, 120),
+    ]
     today = date.today()
     for label, lo, hi in brackets:
         lo_date = today - timedelta(days=hi * 365 + 365)
         hi_date = today - timedelta(days=lo * 365)
-        cnt = session.query(func.count(Patient.id)).filter(
-            Patient.date_of_birth.between(lo_date, hi_date)
-        ).scalar()
+        cnt = (
+            session.query(func.count(Patient.id))
+            .filter(Patient.date_of_birth.between(lo_date, hi_date))
+            .scalar()
+        )
         bar = "█" * (cnt * 30 // (n_patients or 1))
         print(f"    {label:<7} {cnt:>7,}  {bar}")
     print()
 
 
 # ─── Advance Time ─────────────────────────────────────────────────────────────
+
 
 def cmd_advance(session, months: int):
     """
@@ -90,12 +98,7 @@ def cmd_advance(session, months: int):
     print(f"\n⏩ Advancing dataset by {months} months...")
 
     # Focus on patients with chronic conditions — they get follow-up visits
-    chronic_patients = (
-        session.query(Patient)
-        .join(ChronicCondition)
-        .distinct()
-        .all()
-    )
+    chronic_patients = session.query(Patient).join(ChronicCondition).distinct().all()
 
     added = 0
     today = date.today()
@@ -104,36 +107,44 @@ def cmd_advance(session, months: int):
         if random.random() > 0.35:
             continue
 
-        fam_hx  = {"diabetes": p.fam_hx_diabetes, "hypertension": p.fam_hx_hypertension}
+        fam_hx = {"diabetes": p.fam_hx_diabetes, "hypertension": p.fam_hx_hypertension}
         visit_tuples, _ = generate_visit_history(p, fam_hx, p.smoker, years=1)
 
         # Keep only visits that fall in the new window
         cutoff = today - timedelta(days=months * 30)
         new_visits = [(v, cp, cn) for v, cp, cn in visit_tuples if v.visit_date >= cutoff]
 
-        from hdh.core.generators import generate_vital, generate_lab
-        from hdh.core.models import Diagnosis, Prescription, LabResult
+        from hdh.core.generators import generate_lab, generate_vital
+        from hdh.core.models import Diagnosis, Prescription
 
-        for visit, cprofile, cname in new_visits[:2]:  # cap at 2 new visits per advance
+        for visit, cprofile, _cname in new_visits[:2]:  # cap at 2 new visits per advance
             visit.patient_id = p.id
             session.add(visit)
             session.flush()
 
-            from hdh.core.generators import generate_vital
             vital = generate_vital(visit.id, p.age, p.sex, p.bmi_baseline, cprofile)
             session.add(vital)
 
-            dx = Diagnosis(visit_id=visit.id, icd10_code=cprofile.icd10_code,
-                           description=cprofile.description, is_primary=True)
+            dx = Diagnosis(
+                visit_id=visit.id,
+                icd10_code=cprofile.icd10_code,
+                description=cprofile.description,
+                is_primary=True,
+            )
             session.add(dx)
 
             if cprofile.rx_options:
                 rx_spec = random.choice(cprofile.rx_options)
-                rx = Prescription(visit_id=visit.id, drug_name=rx_spec.drug_name,
-                                  drug_class=rx_spec.drug_class, dose=rx_spec.dose,
-                                  frequency=rx_spec.frequency,
-                                  duration_days=rx_spec.duration_days,
-                                  refills=rx_spec.refills, is_new=False)
+                rx = Prescription(
+                    visit_id=visit.id,
+                    drug_name=rx_spec.drug_name,
+                    drug_class=rx_spec.drug_class,
+                    dose=rx_spec.dose,
+                    frequency=rx_spec.frequency,
+                    duration_days=rx_spec.duration_days,
+                    refills=rx_spec.refills,
+                    is_new=False,
+                )
                 session.add(rx)
 
             for lab_spec in cprofile.labs:
@@ -148,8 +159,8 @@ def cmd_advance(session, months: int):
 
 # ─── Add Seasonal Spike ───────────────────────────────────────────────────────
 
-def cmd_add_spike(session, condition_name: str, multiplier: float,
-                  month: int, n: int):
+
+def cmd_add_spike(session, condition_name: str, multiplier: float, month: int, n: int):
     """Inject a seasonal spike of a given condition for a given month."""
     if condition_name not in CONDITIONS:
         print(f"❌ Unknown condition '{condition_name}'. Available: {list(CONDITIONS.keys())}")
@@ -162,12 +173,13 @@ def cmd_add_spike(session, condition_name: str, multiplier: float,
         print("❌ No patients in the database.")
         return
 
-    from hdh.core.generators import generate_vital, generate_lab
-    from hdh.core.models import Diagnosis, Prescription, LabResult
+    from hdh.core.generators import generate_lab, generate_vital
+    from hdh.core.models import Diagnosis, Prescription
 
     # Pick a random day in the requested month (current or last year)
     year = date.today().year if month <= date.today().month else date.today().year - 1
     from calendar import monthrange
+
     _, max_day = monthrange(year, month)
     selected_patients = random.sample(patients, k=min(n, len(patients)))
     added = 0
@@ -176,13 +188,12 @@ def cmd_add_spike(session, condition_name: str, multiplier: float,
         vdate = date(year, month, random.randint(1, max_day))
 
         visit = Visit(
-            patient_id      = p.id,
-            visit_date      = vdate,
-            visit_type      = cprofile.visit_type,
-            chief_complaint = cprofile.chief_complaint,
-            provider_name   = random.choice([
-                "Dr. Sarah Mitchell, MD", "Dr. James O'Brien, MD"]),
-            follow_up_days  = cprofile.follow_up_days,
+            patient_id=p.id,
+            visit_date=vdate,
+            visit_type=cprofile.visit_type,
+            chief_complaint=cprofile.chief_complaint,
+            provider_name=random.choice(["Dr. Sarah Mitchell, MD", "Dr. James O'Brien, MD"]),
+            follow_up_days=cprofile.follow_up_days,
         )
         session.add(visit)
         session.flush()
@@ -190,17 +201,26 @@ def cmd_add_spike(session, condition_name: str, multiplier: float,
         vital = generate_vital(visit.id, p.age, p.sex, p.bmi_baseline, cprofile)
         session.add(vital)
 
-        dx = Diagnosis(visit_id=visit.id, icd10_code=cprofile.icd10_code,
-                       description=cprofile.description, is_primary=True)
+        dx = Diagnosis(
+            visit_id=visit.id,
+            icd10_code=cprofile.icd10_code,
+            description=cprofile.description,
+            is_primary=True,
+        )
         session.add(dx)
 
         if cprofile.rx_options:
             rx_spec = random.choice(cprofile.rx_options)
-            rx = Prescription(visit_id=visit.id, drug_name=rx_spec.drug_name,
-                              drug_class=rx_spec.drug_class, dose=rx_spec.dose,
-                              frequency=rx_spec.frequency,
-                              duration_days=rx_spec.duration_days,
-                              refills=rx_spec.refills, is_new=True)
+            rx = Prescription(
+                visit_id=visit.id,
+                drug_name=rx_spec.drug_name,
+                drug_class=rx_spec.drug_class,
+                dose=rx_spec.dose,
+                frequency=rx_spec.frequency,
+                duration_days=rx_spec.duration_days,
+                refills=rx_spec.refills,
+                is_new=True,
+            )
             session.add(rx)
 
         for lab_spec in cprofile.labs:
@@ -215,45 +235,43 @@ def cmd_add_spike(session, condition_name: str, multiplier: float,
 
 # ─── Show Patient ─────────────────────────────────────────────────────────────
 
+
 def cmd_show(session, mrn: str):
     p = session.query(Patient).filter(Patient.mrn == mrn).first()
     if not p:
         print(f"❌ Patient MRN '{mrn}' not found.")
         return
-    from hdh.core.exporters import patient_to_text
     print(patient_to_text(p))
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     # Windows consoles default to legacy code pages that can't print the
     # box-drawing and status characters used in CLI output.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
-    parser = argparse.ArgumentParser(
-        description="Family Medicine Synthetic Dataset CLI"
-    )
-    parser.add_argument("--db", default="family_medicine.db",
-                        help="Path to SQLite database file")
+    parser = argparse.ArgumentParser(description="Family Medicine Synthetic Dataset CLI")
+    parser.add_argument("--db", default="family_medicine.db", help="Path to SQLite database file")
 
     sub = parser.add_subparsers(dest="command")
 
     # generate
     gen_p = sub.add_parser("generate", help="Generate synthetic patients and visits")
     gen_p.add_argument("--patients", type=int, default=10_000)
-    gen_p.add_argument("--years",    type=int, default=4)
-    gen_p.add_argument("--quiet",    action="store_true")
+    gen_p.add_argument("--years", type=int, default=4)
+    gen_p.add_argument("--quiet", action="store_true")
 
     # stats
     sub.add_parser("stats", help="Print dataset statistics")
 
     # export
     exp_p = sub.add_parser("export", help="Export dataset")
-    exp_p.add_argument("--format",     choices=["json","fhir","text","all"], default="all")
-    exp_p.add_argument("--limit",      type=int, default=None)
+    exp_p.add_argument("--format", choices=["json", "fhir", "text", "all"], default="all")
+    exp_p.add_argument("--limit", type=int, default=None)
     exp_p.add_argument("--output-dir", default="exports")
 
     # advance
@@ -262,10 +280,10 @@ def main():
 
     # add-spike
     spk_p = sub.add_parser("add-spike", help="Inject a seasonal disease spike")
-    spk_p.add_argument("--condition",  required=True)
+    spk_p.add_argument("--condition", required=True)
     spk_p.add_argument("--multiplier", type=float, default=2.0)
-    spk_p.add_argument("--month",      type=int,   default=12)
-    spk_p.add_argument("--n",          type=int,   default=100)
+    spk_p.add_argument("--month", type=int, default=12)
+    spk_p.add_argument("--n", type=int, default=100)
 
     # show
     show_p = sub.add_parser("show", help="Print one patient's chart")
@@ -276,6 +294,7 @@ def main():
 
     # Feature-module subcommands (each module defers heavy imports to run time)
     from hdh.modules import CLI_MODULES
+
     for mod_path in CLI_MODULES:
         try:
             mod = importlib.import_module(mod_path)
@@ -285,14 +304,12 @@ def main():
 
     args = parser.parse_args()
 
-    engine  = get_engine(args.db)
+    engine = get_engine(args.db)
     session = get_session(engine)
 
     if args.command == "generate":
         print(f"\n🏥 Generating {args.patients:,} patients with {args.years} years of history...")
-        build_dataset(session, n_patients=args.patients,
-                      years_of_history=args.years,
-                      verbose=not args.quiet)
+        build_dataset(session, n_patients=args.patients, years_of_history=args.years, verbose=not args.quiet)
         cmd_stats(session)
 
     elif args.command == "stats":
@@ -300,7 +317,7 @@ def main():
 
     elif args.command == "export":
         odir = args.output_dir
-        lim  = args.limit
+        lim = args.limit
         if args.format in ("json", "all"):
             export_json(session, f"{odir}/json", limit=lim)
         if args.format in ("fhir", "all"):

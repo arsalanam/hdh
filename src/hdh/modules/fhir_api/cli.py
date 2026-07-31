@@ -11,9 +11,10 @@ def register_cli(subparsers):
 def run(session, args):
     try:
         import uvicorn
+
         from .server import create_app
     except ImportError:
-        raise SystemExit("API dependencies missing. Install with: pip install hdh[api]")
+        raise SystemExit("API dependencies missing. Install with: pip install hdh[api]") from None
 
     session.close()  # the app manages its own sessions
     app = create_app(db_path=getattr(args, "db", "family_medicine.db"))

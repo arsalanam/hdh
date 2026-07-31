@@ -10,7 +10,10 @@ import pytest
 pytest.importorskip("anthropic")
 
 from hdh.modules.agent.chat import (
-    ChatSession, find_clean_cut, is_clean_user_message, render_transcript,
+    ChatSession,
+    find_clean_cut,
+    is_clean_user_message,
+    render_transcript,
 )
 
 
@@ -20,25 +23,44 @@ def fake_conversation(n_turns: int) -> list:
     for i in range(n_turns):
         messages.append({"role": "user", "content": f"Question {i} about patient MRN0000000{i % 10}?"})
         if i % 3 == 0:
-            messages.append({"role": "assistant", "content": [
-                {"type": "tool_use", "id": f"tu_{i}", "name": "get_patient_chart",
-                 "input": {"mrn": f"MRN0000000{i % 10}"}},
-            ]})
-            messages.append({"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": f"tu_{i}",
-                 "content": "CHART DATA " * 100},
-            ]})
-        messages.append({"role": "assistant", "content": [
-            {"type": "text", "text": f"Answer {i}: the patient is stable."},
-        ]})
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"tu_{i}",
+                            "name": "get_patient_chart",
+                            "input": {"mrn": f"MRN0000000{i % 10}"},
+                        },
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": f"tu_{i}", "content": "CHART DATA " * 100},
+                    ],
+                }
+            )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": f"Answer {i}: the patient is stable."},
+                ],
+            }
+        )
     return messages
 
 
 def test_clean_user_detection():
     assert is_clean_user_message({"role": "user", "content": "hi"})
     assert not is_clean_user_message({"role": "assistant", "content": "hi"})
-    assert not is_clean_user_message({"role": "user", "content": [
-        {"type": "tool_result", "tool_use_id": "x", "content": "y"}]})
+    assert not is_clean_user_message(
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "y"}]}
+    )
 
 
 def test_clean_cut_never_orphans_tool_results():
@@ -50,9 +72,13 @@ def test_clean_cut_never_orphans_tool_results():
 
 def test_compaction_beyond_100_messages():
     """The headline demo: 100+ message history collapses to summary + recent."""
-    chat = ChatSession(db_session=None, max_messages=100, keep_recent=20,
-                       summarizer=lambda t: "Summary of the earlier conversation.")
-    chat.messages = fake_conversation(45)   # ~150 messages
+    chat = ChatSession(
+        db_session=None,
+        max_messages=100,
+        keep_recent=20,
+        summarizer=lambda t: "Summary of the earlier conversation.",
+    )
+    chat.messages = fake_conversation(45)  # ~150 messages
     n_before = len(chat.messages)
     assert n_before > 100
 

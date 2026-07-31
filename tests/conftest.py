@@ -1,7 +1,7 @@
 import pytest
 
-from hdh.core.models import get_engine, get_session
 from hdh.core.generators import build_dataset
+from hdh.core.models import get_engine, get_session
 
 
 @pytest.fixture(scope="session")
