@@ -15,7 +15,7 @@ LABEL org.opencontainers.image.title="hdh" \
       org.opencontainers.image.description="Health Data Hub — synthetic family-medicine EHR toolkit" \
       org.opencontainers.image.authors="Ajmal Mahmood" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/OWNER/hdh"
+      org.opencontainers.image.source="https://github.com/arsalanam/hdh"
 
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"

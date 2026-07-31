@@ -49,7 +49,7 @@ dev = [
 hdh = "hdh.cli:main"
 
 [project.urls]
-Documentation = "https://github.com/OWNER/hdh/blob/main/docs/FEATURE_GUIDE.md"
+Documentation = "https://github.com/arsalanam/hdh/blob/main/docs/FEATURE_GUIDE.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
