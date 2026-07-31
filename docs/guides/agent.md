@@ -75,6 +75,36 @@ Stages (see `src/hdh/modules/agent/pipeline/`):
 Every dependency is injected (`PipelineDeps`), so the full graph — including
 the retry loop — runs offline in `tests/test_pipeline.py` with fake LLMs.
 
+## Traceability (`hdh trace`)
+
+Every pipeline execution is recorded in a trace database (`runs` → `turns` →
+`steps`, see `pipeline/tracing.py`):
+
+- **run id** — a new one every time a gateway session starts (`hdh agent`
+  one-shot = a 1-turn run; `hdh agent --pipeline` = a multi-turn run).
+- **turn id** — one per question, with status
+  (validated/unvalidated/rejected/error), attempts, answer, and total tokens.
+- **steps** — one row per component execution (guardrails, intent,
+  tool-executor, assembler, validator) with its structured **input/output
+  JSON blobs**, input/output **tokens**, duration, attempt number, and
+  status. Retries appear as repeated executor→assembler→validator cycles.
+
+**Daily quota is computed from these tables** — usage accounting and
+observability share one source of truth (`TraceStore.daily_usage`).
+
+```bash
+hdh trace runs                 # recent runs: turns, tokens, model
+hdh trace show e912fc78        # one run: every turn and step with timings/tokens
+hdh trace show e912fc78 --json # full structured payloads (the stored blobs)
+hdh trace usage --days 7       # daily token totals
+```
+
+The store defaults to SQLite at `~/.hdh/traces.db` — right-sized for a local
+single user. Because it is plain SQLAlchemy, `HDH_TRACE_DB` accepts any
+database URL (`postgresql://...` for concurrent multi-user setups) with no
+code changes; that is the intended migration path if SQLite ever becomes the
+bottleneck.
+
 ## Simple one-shot
 
 ```bash

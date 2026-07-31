@@ -33,7 +33,17 @@ the retry loop — runs in tests with fake LLMs and no API key.
 
 from .gateway import Gateway
 from .graph import build_graph
-from .guardrails import QuotaStore
 from .state import AgentState, PipelineConfig, PipelineDeps
+from .tracing import StepRecord, TraceStore, TurnContext, instrument_deps
 
-__all__ = ["AgentState", "Gateway", "PipelineConfig", "PipelineDeps", "QuotaStore", "build_graph"]
+__all__ = [
+    "AgentState",
+    "Gateway",
+    "PipelineConfig",
+    "PipelineDeps",
+    "StepRecord",
+    "TraceStore",
+    "TurnContext",
+    "build_graph",
+    "instrument_deps",
+]

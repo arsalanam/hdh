@@ -47,6 +47,7 @@ COMPOSITION_ROOTS = {
     "src/hdh/core/models.py",  # defines the engine/session factories
     "src/hdh/modules/fhir_api/server.py",  # per-request session lifecycle
     "src/hdh/modules/agent/pipeline/gateway.py",  # pipeline composition root
+    "src/hdh/modules/agent/pipeline/tracing.py",  # owns the separate trace-DB engine
 }
 
 DEPENDENCY_FACTORIES = {"get_engine", "get_session", "create_engine", "Anthropic", "AsyncAnthropic"}

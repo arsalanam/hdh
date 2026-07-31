@@ -12,6 +12,7 @@ CLI_MODULES = {
     "hdh.modules.caregaps.cli": None,
     "hdh.modules.risk.cli": "risk",
     "hdh.modules.agent.cli": "agent",
+    "hdh.modules.agent.pipeline.trace_cli": "agent",
     "hdh.modules.narrative.cli": None,
     "hdh.modules.fhir_api.cli": "api",
 }

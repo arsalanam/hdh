@@ -14,8 +14,8 @@ from pathlib import Path
 from hdh.modules.agent.agent import DEFAULT_MODEL, SYSTEM_PROMPT
 
 from .graph import build_graph
-from .guardrails import QuotaStore
 from .state import PipelineConfig, PipelineDeps
+from .tracing import TraceStore, TurnContext, instrument_deps
 
 GUARD_PROMPT = """\
 You are a topic gatekeeper for a clinical-data assistant over a SYNTHETIC
@@ -92,11 +92,34 @@ def _text_of(message) -> str:
     return "\n".join(b.text for b in message.content if getattr(b, "type", "") == "text")
 
 
+def default_trace_url() -> str:
+    """Trace DB location: HDH_TRACE_DB (any SQLAlchemy URL, e.g. postgresql://...)
+    or a local SQLite file at ~/.hdh/traces.db."""
+    url = os.environ.get("HDH_TRACE_DB")
+    if url:
+        return url
+    path = Path.home() / ".hdh" / "traces.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path.as_posix()}"
+
+
 class Gateway:
     """Front door: builds the pipeline once, then answers questions through it."""
 
-    def __init__(self, db_session, model: str | None = None, max_attempts: int = 3, trace=None):
-        """Wire client, tools, quota store, and graph (the composition root)."""
+    def __init__(
+        self,
+        db_session,
+        model: str | None = None,
+        max_attempts: int = 3,
+        trace=None,
+        source: str = "pipeline",
+    ):
+        """Wire client, tools, trace store, and graph (the composition root).
+
+        Starting a gateway session opens a new *run* in the trace database;
+        every question becomes a *turn*, and every component execution a
+        *step* (see tracing.py).
+        """
         import anthropic
 
         from hdh.modules.agent.tools import build_tools
@@ -110,23 +133,33 @@ class Gateway:
         )
         self.client = anthropic.Anthropic()
         self.tools = build_tools(db_session)
-        self.quota = QuotaStore(
-            path=Path.home() / ".hdh" / "quota.json",
-            daily_input_tokens=self.config.daily_input_tokens,
-            daily_output_tokens=self.config.daily_output_tokens,
+        self.trace_store = TraceStore(default_trace_url())
+        self.run_id = self.trace_store.start_run(
+            source=source,
+            model=self.config.model,
+            guard_model=self.config.guard_model,
+            max_attempts=max_attempts,
         )
+        self._ctx = TurnContext()
+        self._turn_count = 0
         self.history: list[str] = []
         self._trace = trace or (lambda stage, message: print(f"  ├─ {stage:<14} {message}"))
         self.graph = build_graph(
-            PipelineDeps(
-                config=self.config,
-                check_topic=self._check_topic,
-                analyze_intent=self._analyze_intent,
-                run_tools=self._run_tools,
-                assemble=self._assemble,
-                validate=self._validate,
-                quota_check=self.quota.check,
-                trace=self._trace,
+            instrument_deps(
+                PipelineDeps(
+                    config=self.config,
+                    check_topic=self._check_topic,
+                    analyze_intent=self._analyze_intent,
+                    run_tools=self._run_tools,
+                    assemble=self._assemble,
+                    validate=self._validate,
+                    quota_check=lambda: self.trace_store.check_quota(
+                        self.config.daily_input_tokens, self.config.daily_output_tokens
+                    ),
+                    trace=self._trace,
+                ),
+                self.trace_store,
+                self._ctx,
             )
         )
 
@@ -254,13 +287,40 @@ class Gateway:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def ask(self, question: str) -> dict:
-        """Run one question through the full pipeline; returns the final state."""
-        left_in, left_out = self.quota.remaining()
-        self._trace("gateway", f"quota today: {left_in:,} input / {left_out:,} output tokens left")
-        state = self.graph.invoke({"question": question, "history": list(self.history)})
-        usage = state.get("usage") or {}
-        self.quota.record(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
+        """Run one question through the pipeline as a traced turn."""
+        used_in, used_out = self.trace_store.daily_usage()
+        self._trace(
+            "gateway",
+            f"run {self.run_id[:8]} · quota today: "
+            f"{max(0, self.config.daily_input_tokens - used_in):,} input / "
+            f"{max(0, self.config.daily_output_tokens - used_out):,} output tokens left",
+        )
+        self._turn_count += 1
+        turn_id = self.trace_store.start_turn(self.run_id, self._turn_count, question)
+        self._ctx.turn_id, self._ctx.seq, self._ctx.attempt = turn_id, 0, 0
+        try:
+            state = self.graph.invoke({"question": question, "history": list(self.history)})
+        except Exception as error:
+            self.trace_store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}", 0, {})
+            raise
         answer = self.answer_of(state)
+        status = (
+            "rejected" if state.get("rejected") else "unvalidated" if state.get("failed") else "validated"
+        )
+        self.trace_store.end_turn(
+            turn_id,
+            status=status,
+            answer=answer,
+            attempts=state.get("attempts", 0),
+            usage=state.get("usage") or {},
+            final_state={
+                "intent": state.get("intent"),
+                "verdict": state.get("verdict"),
+                "rejected": state.get("rejected"),
+                "failed": state.get("failed"),
+            },
+        )
+        self._trace("gateway", f"turn {self._turn_count} recorded as {status} (turn id {turn_id})")
         self.history.append(f"Q: {question}")
         self.history.append(f"A: {answer[:400]}")
         return state

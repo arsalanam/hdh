@@ -9,7 +9,15 @@ import pytest
 
 pytest.importorskip("langgraph")
 
-from hdh.modules.agent.pipeline import PipelineConfig, PipelineDeps, QuotaStore, build_graph
+from hdh.modules.agent.pipeline import (
+    PipelineConfig,
+    PipelineDeps,
+    StepRecord,
+    TraceStore,
+    TurnContext,
+    build_graph,
+    instrument_deps,
+)
 from hdh.modules.agent.pipeline.gateway import Gateway
 
 NO_USAGE = {"input_tokens": 10, "output_tokens": 5}
@@ -111,10 +119,65 @@ def test_usage_accumulates_across_nodes():
     assert state["usage"]["output_tokens"] == 40
 
 
-def test_quota_store_daily_cycle(tmp_path):
-    store = QuotaStore(path=tmp_path / "q.json", daily_input_tokens=100, daily_output_tokens=50)
-    assert store.check() is None
-    store.record(60, 20)
-    assert store.remaining() == (40, 30)
-    store.record(45, 5)
-    assert "input-token quota exhausted" in store.check()
+def make_store(tmp_path) -> TraceStore:
+    return TraceStore(f"sqlite:///{(tmp_path / 'traces.db').as_posix()}")
+
+
+def test_trace_store_run_turn_step_lifecycle(tmp_path):
+    store = make_store(tmp_path)
+    run_id = store.start_run(source="test", model="m", guard_model="g", max_attempts=3)
+    turn_id = store.start_turn(run_id, 1, "Q?")
+    store.record_step(
+        StepRecord(turn_id, 1, "guardrails", 1, "ok", {"question": "Q?"}, {"allowed": True}, 10, 5, 12)
+    )
+    store.end_turn(turn_id, "validated", "A.", 1, {"input_tokens": 10, "output_tokens": 5})
+
+    detail = store.run_detail(run_id[:8])
+    assert detail["run_id"] == run_id
+    turn = detail["turns"][0]
+    assert turn["status"] == "validated"
+    assert turn["steps"][0]["stage"] == "guardrails"
+    assert turn["steps"][0]["input"] == {"question": "Q?"}
+
+
+def test_trace_store_quota_from_recorded_steps(tmp_path):
+    store = make_store(tmp_path)
+    run_id = store.start_run(source="test", model="m", guard_model="g", max_attempts=3)
+    turn_id = store.start_turn(run_id, 1, "Q?")
+    assert store.check_quota(100, 50) is None
+    store.record_step(StepRecord(turn_id, 1, "tool-executor", 1, "ok", None, None, 90, 40, 5))
+    assert store.daily_usage() == (90, 40)
+    store.record_step(StepRecord(turn_id, 2, "assembler", 1, "ok", None, None, 15, 5, 5))
+    assert "input-token quota exhausted" in store.check_quota(100, 50)
+
+
+def test_instrumented_graph_records_every_step_and_retry(tmp_path):
+    store = make_store(tmp_path)
+    run_id = store.start_run(source="test", model="m", guard_model="g", max_attempts=3)
+    ctx = TurnContext(turn_id=store.start_turn(run_id, 1, "Q?"))
+
+    deps, _ = make_deps(verdicts=[(False, "MRN not in evidence"), (True, "grounded")])
+    state = build_graph(instrument_deps(deps, store, ctx)).invoke({"question": "Q?", "history": []})
+    store.end_turn(ctx.turn_id, "validated", "A.", state["attempts"], state["usage"])
+
+    detail = store.run_detail(run_id[:8])
+    steps = detail["turns"][0]["steps"]
+    stages = [s["stage"] for s in steps]
+    # guardrails, intent, then two full executor→assembler→validator cycles
+    assert stages == [
+        "guardrails",
+        "intent",
+        "tool-executor",
+        "assembler",
+        "validator",
+        "tool-executor",
+        "assembler",
+        "validator",
+    ]
+    validator_steps = [s for s in steps if s["stage"] == "validator"]
+    assert validator_steps[0]["status"] == "invalid"
+    assert validator_steps[1]["status"] == "ok"
+    # attempt numbers advance with the retry
+    assert [s["attempt"] for s in steps if s["stage"] == "tool-executor"] == [1, 2]
+    # every step carries token usage; the daily total matches the state total
+    assert store.daily_usage() == (state["usage"]["input_tokens"], state["usage"]["output_tokens"])

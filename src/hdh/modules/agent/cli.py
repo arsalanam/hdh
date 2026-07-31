@@ -22,6 +22,11 @@ def register_cli(subparsers):
         "--simple", action="store_true", help="Use the simple tool-runner loop instead of the pipeline"
     )
     p.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="Interactive mode through the pipeline engine (multi-turn, fully traced) instead of the chat UI",
+    )
+    p.add_argument(
         "--max-tries",
         type=int,
         default=3,
@@ -58,7 +63,9 @@ def _run_pipeline(session, args):
     from .pipeline import Gateway
 
     trace = (lambda stage, message: None) if args.quiet else None
-    gateway = Gateway(session, model=args.model, max_attempts=args.max_tries, trace=trace)
+    gateway = Gateway(
+        session, model=args.model, max_attempts=args.max_tries, trace=trace, source="cli-oneshot"
+    )
     if not args.quiet:
         print(f"┌─ pipeline · model {gateway.config.model} · guard {gateway.config.guard_model}")
     state = gateway.ask(args.question)
@@ -105,6 +112,10 @@ def run(session, args):
             sys.exit(130)
         return
 
+    if args.pipeline:
+        _pipeline_repl(session, args)
+        return
+
     from .chat import ChatSession
 
     try:
@@ -117,3 +128,26 @@ def run(session, args):
         db_session=session, model=args.model, max_messages=args.compact_after, keep_recent=args.keep_recent
     )
     run_ui(chat, compact_after=args.compact_after)
+
+
+def _pipeline_repl(session, args):
+    """Multi-turn REPL through the pipeline: one run id, a turn per question."""
+    from .pipeline import Gateway
+
+    gateway = Gateway(session, model=args.model, max_attempts=args.max_tries, source="cli-chat")
+    print(
+        f"┌─ pipeline chat · run {gateway.run_id[:8]} · model {gateway.config.model}\n"
+        f"│  every question is a traced turn — inspect later with: hdh trace show {gateway.run_id[:8]}\n"
+        f"│  blank line to exit"
+    )
+    while True:
+        try:
+            question = input("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not question:
+            break
+        state = gateway.ask(question)
+        print()
+        _stream(gateway.answer_of(state))
+    print(f"bye — this session: hdh trace show {gateway.run_id[:8]}")
