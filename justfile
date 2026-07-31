@@ -8,6 +8,10 @@
 # are single commands; anything needing logic lives in scripts/*.py.
 set windows-shell := ["cmd.exe", "/c"]
 
+# Load .env (gitignored; see .env.example) into every recipe's environment —
+# this is where ANTHROPIC_API_KEY lives for local development.
+set dotenv-load := true
+
 # uv manages the venv and lockfile; `uv run` resolves the right interpreter
 # on every platform (no .venv/Scripts vs .venv/bin juggling).
 run := "uv run"
@@ -25,6 +29,10 @@ setup:
 # Upgrade locked dependency versions within pyproject constraints
 lock-upgrade:
     uv lock --upgrade
+
+# Check whether the agent's API key is configured (never prints the key)
+check-env:
+    {{run}} python scripts/check_env.py
 
 # ── Quality gates ────────────────────────────────────────────────────────────
 

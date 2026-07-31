@@ -64,7 +64,10 @@ hdh serve --port 8000                     # FHIR R4 REST API
 ### The agent chat UI
 
 `hdh agent` (no arguments) opens an interactive chat with the care-program
-agent (requires `pip install hdh[agent]` and an `ANTHROPIC_API_KEY`). The
+agent. It needs an Anthropic API key: copy `.env.example` to `.env` and fill
+it in (`just` loads it automatically; `just check-env` verifies), or set
+`ANTHROPIC_API_KEY` machine-wide — see
+[docs/guides/agent.md](docs/guides/agent.md) for all options. The
 conversation is remembered across questions, answers render as markdown, tool
 calls are traced live, and previous questions are recallable with the arrow
 keys. Slash commands: `/history` (full chat so far), `/context` (messages +

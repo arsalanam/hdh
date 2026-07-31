@@ -7,12 +7,24 @@ then answers with the evidence it gathered.
 ## Setup
 
 ```bash
-pip install -e ".[agent]"        # anthropic SDK, rich, prompt_toolkit
-export ANTHROPIC_API_KEY=sk-...  # or authenticate with `ant auth login`
+uv sync --all-extras             # or: pip install -e ".[agent]"
 ```
 
+**Configuring the API key** — pick one:
+
+| Method | How | Scope |
+|---|---|---|
+| Project `.env` file (recommended) | `cp .env.example .env`, fill in `ANTHROPIC_API_KEY=sk-...` | Everything run through `just` (dotenv-load); for direct runs: `uv run --env-file .env hdh agent` |
+| Machine-wide (Windows) | `setx ANTHROPIC_API_KEY "sk-..."` then open a new terminal | Every process, permanently |
+| Current shell only | PowerShell: `$env:ANTHROPIC_API_KEY="sk-..."` · bash: `export ANTHROPIC_API_KEY=sk-...` | Until the terminal closes |
+| OAuth profile | `ant auth login` — the SDK picks up the stored profile; no key variable needed | Per machine |
+| Docker | `docker run -e ANTHROPIC_API_KEY hdh:latest agent "..."` (forwards from host) or `--env-file .env` | Per container |
+
+`just check-env` reports whether the key is visible (without printing it).
+The `.env` file is gitignored — never commit a real key.
+
 Default model is `claude-opus-5`; override with `--model` or the
-`HDH_AGENT_MODEL` environment variable.
+`HDH_AGENT_MODEL` environment variable (also settable in `.env`).
 
 ## One-shot questions
 
