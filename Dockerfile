@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1
-# Build the hdh wheel, then install it into a slim runtime image.
-# Quality gates (tests, coverage, ruff, mypy, security) run before this via
-# `just build` — the image itself stays lean.
+# Reproducible build from uv.lock: the image gets exactly the dependency
+# versions the lockfile pins. Quality gates (tests, coverage, ruff, mypy,
+# design-quality, security) run before this via `just build`.
 
-FROM python:3.13-slim AS builder
-WORKDIR /build
-COPY pyproject.toml README.md LICENSE ./
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+WORKDIR /app
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
-RUN pip install --no-cache-dir build && python -m build --wheel
+RUN uv sync --frozen --no-dev --no-editable --extra risk --extra agent --extra api
 
 FROM python:3.13-slim
 LABEL org.opencontainers.image.title="hdh" \
@@ -15,8 +16,8 @@ LABEL org.opencontainers.image.title="hdh" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/OWNER/hdh"
 
-COPY --from=builder /build/dist/*.whl /tmp/
-RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[risk,agent,api]" && rm /tmp/*.whl
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Non-root; /data holds the SQLite database (mount a volume there)
 RUN useradd --create-home --uid 1000 hdh && mkdir /data && chown hdh /data

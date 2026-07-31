@@ -3,9 +3,14 @@
 # Quality gates (test → coverage → lint → format → types → security) all run
 # before a Docker image is produced: `just build`.
 
-set windows-shell := ["bash", "-uc"]
+# cmd.exe is always present and resolves .exe names natively — no dependence
+# on which bash (Git Bash vs WSL) or cygpath happens to be on PATH. Recipes
+# are single commands; anything needing logic lives in scripts/*.py.
+set windows-shell := ["cmd.exe", "/c"]
 
-python := if os_family() == "windows" { ".venv/Scripts/python.exe" } else { ".venv/bin/python" }
+# uv manages the venv and lockfile; `uv run` resolves the right interpreter
+# on every platform (no .venv/Scripts vs .venv/bin juggling).
+run := "uv run"
 image := "hdh"
 tag := "latest"
 
@@ -13,68 +18,61 @@ tag := "latest"
 default:
     @just --list
 
-# Install the project with all extras + dev tools into .venv
+# Create/update .venv from uv.lock with all extras + dev tools
 setup:
-    {{python}} -m pip install -e ".[all]"
+    uv sync --all-extras
+
+# Upgrade locked dependency versions within pyproject constraints
+lock-upgrade:
+    uv lock --upgrade
 
 # ── Quality gates ────────────────────────────────────────────────────────────
 
 # Run unit tests
 test:
-    {{python}} -m pytest tests/ -q
+    {{run}} pytest tests/ -q
 
 # Run unit tests and print a coverage report (HTML report in htmlcov/)
 coverage:
-    {{python}} -m pytest tests/ -q --cov --cov-report=term --cov-report=html
+    {{run}} pytest tests/ -q --cov --cov-report=term --cov-report=html
 
 # Lint with ruff
 lint:
-    {{python}} -m ruff check src tests scripts
+    {{run}} ruff check src tests scripts
 
 # Check formatting with ruff (no changes)
 format-check:
-    {{python}} -m ruff format --check src tests scripts
+    {{run}} ruff format --check src tests scripts
 
 # Auto-fix lint findings and reformat the codebase
 format:
-    {{python}} -m ruff check src tests scripts --fix
-    {{python}} -m ruff format src tests scripts
+    {{run}} ruff check src tests scripts --fix
+    {{run}} ruff format src tests scripts
 
 # Static type checks with mypy
 typecheck:
-    {{python}} -m mypy
+    {{run}} mypy
 
 # Design-principle checks: contracts, no god classes, pluggable interfaces,
 # dependency injection, immutability, injection safety, data abstraction.
 quality:
-    {{python}} scripts/quality_gate.py
+    {{run}} python scripts/quality_gate.py
 
-# Security scanning. Currently best-effort; wire your OWASP tooling in here.
-#   - OWASP Dependency-Check:  dependency-check --scan . --format HTML
-#   - OWASP ZAP (against `just docker-serve`):  zap-baseline.py -t http://localhost:8000
-#   - Trivy (image scan, post-build):  trivy image {{image}}:{{tag}}
-#   - pip-audit (dependency CVEs):  pip install pip-audit
+# Security scanning: pip-audit over uv.lock (advisory), trivy if installed.
+# OWASP Dependency-Check / ZAP extension points live in the script.
 security:
-    @echo "── security scan ──────────────────────────────────────────"
-    @if command -v trivy >/dev/null 2>&1; then \
-        trivy fs --scanners vuln --exit-code 0 .; \
-    elif {{python}} -m pip_audit --version >/dev/null 2>&1; then \
-        {{python}} -m pip_audit --skip-editable; \
-    else \
-        echo "no scanner installed — add OWASP Dependency-Check / ZAP / trivy here"; \
-        echo "(see comments above this recipe in the justfile)"; \
-    fi
+    {{run}} python scripts/security_scan.py
 
 # All quality gates, in order
 qa: test coverage lint format-check typecheck quality security
-    @echo "✅ all quality gates passed"
+    @echo ✅ all quality gates passed
 
 # ── Docker ───────────────────────────────────────────────────────────────────
 
 # Build the Docker image — only after every quality gate passes
 build: qa
     docker build -t {{image}}:{{tag}} .
-    @echo "✅ built {{image}}:{{tag}}"
+    @echo ✅ built {{image}}:{{tag}}
 
 # Build without the quality gates (local iteration only)
 build-only:
@@ -96,5 +94,4 @@ docker-serve:
 
 # Remove caches, coverage output, and build artifacts
 clean:
-    rm -rf htmlcov .coverage .pytest_cache .mypy_cache .ruff_cache dist build
-    find src tests -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+    {{run}} python scripts/dev_clean.py

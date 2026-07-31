@@ -2,6 +2,7 @@
 # (keeps the ~87 MB database and .venv out).
 *
 !pyproject.toml
+!uv.lock
 !README.md
 !LICENSE
 !src/

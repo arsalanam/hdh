@@ -13,12 +13,22 @@ narratives, and a FHIR R4 REST API.
 
 ## Install
 
+With [uv](https://docs.astral.sh/uv/) (recommended — creates `.venv` from the
+committed `uv.lock`, so everyone gets identical dependency versions):
+
+```bash
+uv sync --all-extras          # everything + dev tools
+uv run hdh stats              # run commands through the managed venv
+```
+
+Or with pip:
+
 ```bash
 pip install -e .              # core: generation, exports, CLI
 pip install -e ".[risk]"      # + ML risk stratification (scikit-learn)
 pip install -e ".[agent]"     # + agentic AI assistant (Anthropic SDK)
 pip install -e ".[api]"       # + FHIR REST API (FastAPI)
-pip install -e ".[all]"       # everything
+pip install -e ".[all]"       # everything (dev tools need uv or pip install pytest ruff mypy)
 ```
 
 ## Quick Start
@@ -126,8 +136,11 @@ pre-built copy from your release artifacts.
 
 ## Build pipeline
 
-The project uses [`just`](https://github.com/casey/just) as its command runner.
-`just build` produces the Docker image **only after every quality gate passes**:
+The project uses [`just`](https://github.com/casey/just) as its command runner
+and [uv](https://docs.astral.sh/uv/) for dependency management — recipes run
+through `uv run`, so they work identically on every platform with no venv
+path juggling, and the Docker image installs exactly what `uv.lock` pins.
+`just build` produces the image **only after every quality gate passes**:
 
 ```bash
 just              # list all recipes
@@ -173,9 +186,10 @@ just docker-serve           # FHIR API on :8000 against ./data
 docker run --rm -v "$PWD/data:/data" hdh:latest stats
 ```
 
-The `security` recipe is the extension point for OWASP tooling — it runs
-trivy or pip-audit when available today, and the justfile comments show where
-to wire OWASP Dependency-Check or a ZAP baseline scan.
+The `security` recipe (`scripts/security_scan.py`) audits the locked
+dependency set for known CVEs with pip-audit on every run, adds a trivy scan
+when trivy is installed, and is the extension point for OWASP Dependency-Check
+or a ZAP baseline scan.
 
 ## Contributing
 

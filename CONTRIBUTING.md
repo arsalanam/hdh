@@ -6,10 +6,14 @@ Thanks for your interest in contributing!
 
 ```bash
 git clone <repo-url> && cd hdh
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[all]"
-just qa        # tests + coverage + ruff lint/format + mypy + security scan
+uv sync --all-extras   # creates .venv from uv.lock (runtime extras + dev tools)
+just qa                # tests + coverage + ruff + mypy + design-quality + security
 ```
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/): `uv.lock` is
+committed, `uv sync` reproduces the exact environment, `uv add <pkg>` adds a
+dependency (runtime deps go in `[project]`/extras, dev tooling in the
+`[dependency-groups]` dev group), and `just lock-upgrade` refreshes pins.
 
 The [`just`](https://github.com/casey/just) recipes are the source of truth
 for quality gates; `just build` runs them all and then builds the Docker
