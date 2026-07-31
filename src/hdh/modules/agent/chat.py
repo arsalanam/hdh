@@ -143,14 +143,19 @@ class ChatSession:
             tools=self.tools,
             messages=list(self.messages),
         )
-        try:
-            runner = self.client.beta.messages.tool_runner(
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-                **params,
-            )
-        except TypeError:
-            # Older SDK without the fallbacks parameter — run without it.
+        # Server-side refusal fallbacks exist only on the Opus 5 / Fable 5
+        # family; other models (e.g. claude-sonnet-4-6) reject the parameter.
+        if (self.model or "").startswith(("claude-opus-5", "claude-fable", "claude-mythos")):
+            try:
+                runner = self.client.beta.messages.tool_runner(
+                    betas=["server-side-fallback-2026-07-01"],
+                    fallbacks="default",
+                    **params,
+                )
+            except TypeError:
+                # Older SDK without the fallbacks parameter — run without it.
+                runner = self.client.beta.messages.tool_runner(**params)
+        else:
             runner = self.client.beta.messages.tool_runner(**params)
 
         final_text = ""

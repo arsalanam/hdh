@@ -10,7 +10,15 @@ from datetime import date
 
 from sqlalchemy import func, text
 
-from hdh.core.models import ChronicCondition, Patient
+from hdh.core.models import Base, ChronicCondition, Patient
+
+
+def _schema_summary() -> str:
+    """One line per table from the live ORM metadata — never drifts from models.py."""
+    lines = [
+        f"  {table.name}({', '.join(c.name for c in table.columns)})" for table in Base.metadata.sorted_tables
+    ]
+    return "\n".join(lines)
 
 
 def build_tools(session):
@@ -105,13 +113,9 @@ def build_tools(session):
             return "Risk module not installed (pip install hdh[risk])."
         return json.dumps(rows, indent=2) if rows else "No results."
 
-    @beta_tool
     def query_database(sql: str) -> str:
-        """Run a read-only SQL SELECT against the synthetic database. Tables: patients, chronic_conditions, visits, vitals, diagnoses, prescriptions, lab_results.
-
-        Args:
-            sql: A single SELECT statement (no writes, no multiple statements).
-        """
+        # Docstring (the tool description Claude sees) is set dynamically below
+        # so the embedded schema always matches the live ORM metadata.
         stripped = sql.strip().rstrip(";")
         if not stripped.lower().startswith("select") or ";" in stripped:
             return "Error: only a single SELECT statement is allowed."
@@ -122,6 +126,24 @@ def build_tools(session):
         except Exception as e:
             return f"SQL error: {e}"
         return json.dumps(rows, indent=2, default=str) if rows else "Query returned no rows."
+
+    query_database.__doc__ = f"""Run a read-only SQL SELECT against the synthetic SQLite database.
+
+        Schema (one line per table):
+{_schema_summary()}
+
+        Joins: visits.patient_id -> patients.id; chronic_conditions.patient_id
+        -> patients.id; vitals, diagnoses, prescriptions, and lab_results join
+        via visit_id -> visits.id. Enum columns store names: visits.visit_type
+        in ('ACUTE','FOLLOW_UP','PREVENTIVE','URGENT'), lab_results.status in
+        ('NORMAL','HIGH','LOW','CRITICAL'), patients.sex in ('MALE','FEMALE').
+        chronic_conditions.controlled is 0/1. Dates are ISO 'YYYY-MM-DD' text
+        (julianday()/strftime() work). Results are capped at 200 rows.
+
+        Args:
+            sql: A single SELECT statement (no writes, no multiple statements).
+        """
+    query_database = beta_tool(query_database)
 
     @beta_tool
     def dataset_stats() -> str:
