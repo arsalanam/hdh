@@ -26,16 +26,63 @@ The `.env` file is gitignored — never commit a real key.
 Default model is `claude-opus-5`; override with `--model` or the
 `HDH_AGENT_MODEL` environment variable (also settable in `.env`).
 
-## One-shot questions
+## Two engines
+
+| | Pipeline (default, one-shot) | Simple loop (`--simple`, and the chat UI) |
+|---|---|---|
+| Architecture | LangGraph state machine with explicit stages | Plain SDK tool-runner loop |
+| Guardrails | Topic guard + daily token quota before any work | none |
+| Validation | Response validated against tool evidence **before** it is streamed; hallucinations trigger a retry | none |
+| Retries | Executor re-runs with the validator's feedback, max `--max-tries` (3) | n/a |
+| Cost | Higher (guard + intent + assembler + validator calls) | Lower |
+
+## The pipeline (default for one-shot questions)
 
 ```bash
-hdh agent "Which patients with uncontrolled hypertension also have a high risk score?"
-#   🔧 get_care_gaps(limit=25)
-#   🔧 get_risk_scores(top=20)
-# Three patients overlap: MRN51248682 (Jonathan Ward, 41), ...
+hdh agent "Who are the highest-risk patients with uncontrolled diabetes?"
+# ┌─ pipeline · model claude-sonnet-4-6 · guard claude-haiku-4-5
+#   ├─ gateway        quota today: 246,159 input / 85,389 output tokens left
+#   ├─ guardrails     topic allowed ✓ (diabetes cohort query)
+#   ├─ intent         risk · entities: E11.9, uncontrolled diabetes, HbA1c
+#   ├─ tool-executor  attempt 1/3 · 5 tool call(s) recorded
+#   ├─ assembler      drafted 137-word response
+#   ├─ validator      INVALID — claims not supported by evidence → retrying executor
+#   ├─ tool-executor  attempt 2/3 · addressing: claims not supported ...
+#   ├─ validator      VALID ✓ — response is grounded in tool evidence
+#   └─ streaming validated response
 ```
 
-Use `--quiet` to hide the tool trace.
+Stages (see `src/hdh/modules/agent/pipeline/`):
+
+1. **Gateway** — the composition root: wires the client, tools, quota store,
+   and graph; single entry point (`Gateway.ask`).
+2. **Guardrails** — daily input/output token quota (persisted in
+   `~/.hdh/quota.json`; limits via `HDH_QUOTA_INPUT_TOKENS` /
+   `HDH_QUOTA_OUTPUT_TOKENS`), then a topic guard on a small model
+   (`claude-haiku-4-5`, override with `HDH_GUARD_MODEL`) that keeps the agent
+   on its preconfigured clinical topics.
+3. **Intent analysis** — classifies the ask and sketches a tool plan
+   (schema-enforced JSON).
+4. **Tool executor** — the heart: has the conversation context, the DB
+   schema, and every tool; on a retry it receives the validator's feedback
+   about exactly what failed.
+5. **Response assembler** — drafts the answer strictly from tool evidence.
+6. **Response validator** — schema-enforced verdict checking every MRN,
+   value, and count against the evidence. Invalid → back to the executor
+   (max 3 attempts); after the cap the draft is delivered clearly flagged
+   as unvalidated. Only a validated response is streamed.
+
+Every dependency is injected (`PipelineDeps`), so the full graph — including
+the retry loop — runs offline in `tests/test_pipeline.py` with fake LLMs.
+
+## Simple one-shot
+
+```bash
+hdh agent --simple "Which patients need outreach?"
+#   🔧 get_care_gaps(limit=25)
+```
+
+Use `--quiet` to hide the trace in either engine.
 
 ## Interactive chat
 

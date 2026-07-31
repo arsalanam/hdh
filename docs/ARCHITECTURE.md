@@ -150,7 +150,7 @@ robust:
 |---|---|---|
 | `caregaps` | Pure functions over aggregate SQL | Reference date defaults to the dataset's latest visit, not the wall clock — gap detection stays meaningful for any generation date. |
 | `risk` | features.py (extraction) + model.py (train/score) | Temporal split: features from 12 months before a cutoff, label (urgent visit or critical lab) from the 180 days after. The trained model, feature names, tier thresholds, and AUC ship as one joblib artifact. |
-| `agent` | tools.py + chat.py + ui.py | Anthropic SDK tool runner; `ChatSession` mirrors the runner's messages so conversation persists across questions; context auto-compacts beyond `max_messages` (see §6). |
+| `agent` | tools.py + chat.py + ui.py + pipeline/ | Two engines. Simple: SDK tool runner with persistent history and auto-compaction (§6). Pipeline (default one-shot): a LangGraph state machine — gateway (composition root) → guardrails (topic guard + daily token quota) → intent → tool executor → assembler → validator, with validator-feedback retries capped at 3 and responses streamed only after validation. All node dependencies injected (`PipelineDeps`), so the graph tests offline. |
 | `narrative` | Template renderer + optional LLM polish | Deterministic SOAP notes work offline; `--llm` is additive, never required. |
 | `fhir_api` | FastAPI app factory | Thin read-only facade over the core FHIR exporter — no separate serialization logic to drift. |
 | `ontology`, `billing` | Library scaffolds | Starter mappings (ICD-10→SNOMED, E/M CPT + RVU) with READMEs describing the extension path. |

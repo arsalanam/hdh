@@ -46,6 +46,7 @@ COMPOSITION_ROOTS = {
     "src/hdh/cli.py",  # wires session into every subcommand
     "src/hdh/core/models.py",  # defines the engine/session factories
     "src/hdh/modules/fhir_api/server.py",  # per-request session lifecycle
+    "src/hdh/modules/agent/pipeline/gateway.py",  # pipeline composition root
 }
 
 DEPENDENCY_FACTORIES = {"get_engine", "get_session", "create_engine", "Anthropic", "AsyncAnthropic"}

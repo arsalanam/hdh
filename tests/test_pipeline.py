@@ -1,0 +1,120 @@
+"""Offline tests for the LangGraph agent pipeline.
+
+Every dependency is injected as a fake, so the full graph — guardrails,
+intent, executor, assembler, validator, and the retry loop — runs without an
+API key. This is the payoff of the PipelineDeps contract.
+"""
+
+import pytest
+
+pytest.importorskip("langgraph")
+
+from hdh.modules.agent.pipeline import PipelineConfig, PipelineDeps, QuotaStore, build_graph
+from hdh.modules.agent.pipeline.gateway import Gateway
+
+NO_USAGE = {"input_tokens": 10, "output_tokens": 5}
+
+
+def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None):
+    """Fake dependencies; `verdicts` is the sequence of validator outcomes."""
+    verdicts = list(verdicts if verdicts is not None else [(True, "grounded")])
+    calls = {"executor": 0, "validator": 0}
+
+    def check_topic(question):
+        return on_topic, "clinical query" if on_topic else "cooking recipes", NO_USAGE
+
+    def analyze_intent(question, history):
+        return {"intent": "cohort_search", "entities": ["HTN"], "plan": "query db"}, NO_USAGE
+
+    def run_tools(question, intent, feedback, history):
+        calls["executor"] += 1
+        findings = f"attempt {calls['executor']} findings"
+        if feedback:
+            findings += f" (fixed: {feedback})"
+        evidence = [{"tool": "query_database", "input": {"sql": "SELECT 1"}, "result": "[1]"}]
+        return findings, evidence, NO_USAGE
+
+    def assemble(question, findings, evidence):
+        return f"ANSWER based on {findings}", NO_USAGE
+
+    def validate(question, draft, evidence):
+        index = min(calls["validator"], len(verdicts) - 1)
+        calls["validator"] += 1
+        valid, reason = verdicts[index]
+        return valid, reason, NO_USAGE
+
+    deps = PipelineDeps(
+        config=config or PipelineConfig(max_attempts=3),
+        check_topic=check_topic,
+        analyze_intent=analyze_intent,
+        run_tools=run_tools,
+        assemble=assemble,
+        validate=validate,
+        quota_check=lambda: quota_reason,
+    )
+    return deps, calls
+
+
+def run_question(deps, question="Which patients have uncontrolled HTN?"):
+    return build_graph(deps).invoke({"question": question, "history": []})
+
+
+def test_happy_path_single_attempt():
+    deps, calls = make_deps()
+    state = run_question(deps)
+    assert state["verdict"]["valid"]
+    assert state["attempts"] == 1
+    assert calls["executor"] == 1
+    assert "ANSWER" in Gateway.answer_of(state)
+
+
+def test_validator_failure_triggers_retry_with_feedback():
+    deps, calls = make_deps(verdicts=[(False, "MRN not in evidence"), (True, "grounded")])
+    state = run_question(deps)
+    assert state["attempts"] == 2
+    assert calls["executor"] == 2
+    assert state["verdict"]["valid"]
+    # the retry's executor run saw the validator's feedback
+    assert "fixed: MRN not in evidence" in state["findings"]
+
+
+def test_retries_capped_at_max_attempts():
+    deps, calls = make_deps(verdicts=[(False, "still hallucinating")])
+    state = run_question(deps)
+    assert calls["executor"] == 3  # max_attempts
+    assert state["failed"]
+    answer = Gateway.answer_of(state)
+    assert "could not produce a fully validated answer" in answer
+    assert "treat with caution" in answer
+
+
+def test_off_topic_rejected_before_any_tools():
+    deps, calls = make_deps(on_topic=False)
+    state = run_question(deps, "Best lasagna recipe?")
+    assert "rejected" in state
+    assert calls["executor"] == 0
+    assert "only help with" in Gateway.answer_of(state)
+
+
+def test_quota_exhaustion_rejected_before_topic_llm():
+    deps, calls = make_deps(quota_reason="daily input-token quota exhausted (500,000/500,000)")
+    state = run_question(deps)
+    assert "Usage limit" in state["rejected"]
+    assert calls["executor"] == 0
+
+
+def test_usage_accumulates_across_nodes():
+    deps, _ = make_deps(verdicts=[(False, "x"), (True, "grounded")])
+    state = run_question(deps)
+    # guard + intent + 2×executor + 2×assembler + 2×validator = 8 calls × 10/5
+    assert state["usage"]["input_tokens"] == 80
+    assert state["usage"]["output_tokens"] == 40
+
+
+def test_quota_store_daily_cycle(tmp_path):
+    store = QuotaStore(path=tmp_path / "q.json", daily_input_tokens=100, daily_output_tokens=50)
+    assert store.check() is None
+    store.record(60, 20)
+    assert store.remaining() == (40, 30)
+    store.record(45, 5)
+    assert "input-token quota exhausted" in store.check()

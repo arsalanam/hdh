@@ -61,6 +61,16 @@ hdh narrative --mrn MRN12345678           # SOAP-note narratives
 hdh serve --port 8000                     # FHIR R4 REST API
 ```
 
+### The agent pipeline
+
+One-shot questions run through a production-style **LangGraph pipeline**:
+gateway → guardrails (topic guard + daily token quota) → intent analysis →
+tool executor → response assembler → response validator. A response is only
+streamed after the validator confirms every claim is grounded in tool
+evidence; hallucinations send the executor back with feedback (max 3 tries).
+`--simple` uses the plain tool-runner loop instead. See
+[docs/guides/agent.md](docs/guides/agent.md).
+
 ### The agent chat UI
 
 `hdh agent` (no arguments) opens an interactive chat with the care-program
