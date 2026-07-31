@@ -55,15 +55,14 @@ quality:
 #   - Trivy (image scan, post-build):  trivy image {{image}}:{{tag}}
 #   - pip-audit (dependency CVEs):  pip install pip-audit
 security:
-    #!/usr/bin/env bash
-    echo "── security scan ──────────────────────────────────────────"
-    if command -v trivy >/dev/null 2>&1; then
-        trivy fs --scanners vuln --exit-code 0 .
-    elif {{python}} -m pip_audit --version >/dev/null 2>&1; then
-        {{python}} -m pip_audit --skip-editable
-    else
-        echo "no scanner installed — add OWASP Dependency-Check / ZAP / trivy here"
-        echo "(see comments above this recipe in the justfile)"
+    @echo "── security scan ──────────────────────────────────────────"
+    @if command -v trivy >/dev/null 2>&1; then \
+        trivy fs --scanners vuln --exit-code 0 .; \
+    elif {{python}} -m pip_audit --version >/dev/null 2>&1; then \
+        {{python}} -m pip_audit --skip-editable; \
+    else \
+        echo "no scanner installed — add OWASP Dependency-Check / ZAP / trivy here"; \
+        echo "(see comments above this recipe in the justfile)"; \
     fi
 
 # All quality gates, in order
@@ -97,6 +96,5 @@ docker-serve:
 
 # Remove caches, coverage output, and build artifacts
 clean:
-    #!/usr/bin/env bash
     rm -rf htmlcov .coverage .pytest_cache .mypy_cache .ruff_cache dist build
     find src tests -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
