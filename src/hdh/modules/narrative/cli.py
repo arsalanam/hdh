@@ -14,6 +14,7 @@ def register_cli(subparsers):
 
 
 def run(session, args):
+    """Render SOAP notes for one patient's recent visits."""
     from hdh.core.models import Patient
 
     from .soap import patient_soap_notes, polish_with_llm

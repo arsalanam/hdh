@@ -19,10 +19,10 @@ from hdh.core.models import ChronicCondition, Patient, Prescription, Visit, Visi
 FOLLOW_UP_GRACE = 1.5
 
 # Preventive-visit intervals by age (days)
-PREVENTIVE_INTERVALS = [
+PREVENTIVE_INTERVALS = (
     (2, 183),  # under 2: well-child every ~6 months
     (120, 365),  # everyone else: annual
-]
+)
 
 POLYPHARMACY_MIN_DRUGS = 5
 POLYPHARMACY_REVIEW_WINDOW = 183  # days since last visit of any kind
@@ -30,6 +30,8 @@ POLYPHARMACY_REVIEW_WINDOW = 183  # days since last visit of any kind
 
 @dataclass
 class CareGap:
+    """One detected gap in a patient's care (immutable finding)."""
+
     mrn: str
     patient_name: str
     age: int

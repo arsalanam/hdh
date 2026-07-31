@@ -75,11 +75,12 @@ def patient_soap_notes(patient: Patient, last_n: int | None = None) -> list[str]
     return [visit_to_soap(v, patient) for v in visits]
 
 
-def polish_with_llm(note: str, model: str = "claude-opus-5") -> str:
+def polish_with_llm(note: str, model: str = "claude-opus-5", client=None) -> str:
     """Rewrite a templated SOAP note as natural clinical prose using Claude."""
     import anthropic
 
-    client = anthropic.Anthropic()
+    # Default factory for the optional LLM path; callers may pass a client.
+    client = client or anthropic.Anthropic()  # quality: allow(dependency-injection)
     response = client.messages.create(
         model=model,
         max_tokens=2048,

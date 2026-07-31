@@ -15,6 +15,13 @@ The [`just`](https://github.com/casey/just) recipes are the source of truth
 for quality gates; `just build` runs them all and then builds the Docker
 image. Run `just format` to auto-fix style before committing.
 
+`just quality` runs the design-quality gate (`scripts/quality_gate.py`):
+docstring contracts, no god classes, `register_cli` pluggability, dependency
+injection, immutability, injection safety, and data abstraction. If you have
+a justified exception, waive it inline with `# quality: allow(<check>)` and a
+comment explaining why — waivers live in the code where reviewers see them.
+New checks implement the `QualityCheck` protocol in that script.
+
 Generate a small working database for local development:
 
 ```bash

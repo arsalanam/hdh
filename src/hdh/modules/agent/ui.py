@@ -30,6 +30,7 @@ HELP = """\
 
 
 def run_ui(chat, compact_after: int):
+    """Run the interactive chat REPL over an existing ChatSession."""
     from rich.console import Console
     from rich.markdown import Markdown
     from rich.panel import Panel

@@ -51,6 +51,8 @@ class LabStatus(str, enum.Enum):
 
 
 class Patient(Base):
+    """A patient: demographics, insurance, allergies, family history, lifestyle."""
+
     __tablename__ = "patients"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -112,6 +114,8 @@ class ChronicCondition(Base):
 
 
 class Visit(Base):
+    """One outpatient encounter; owns vitals, diagnoses, prescriptions, labs."""
+
     __tablename__ = "visits"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -131,6 +135,8 @@ class Visit(Base):
 
 
 class Vital(Base):
+    """The vitals panel recorded at one visit."""
+
     __tablename__ = "vitals"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -151,6 +157,8 @@ class Vital(Base):
 
 
 class Diagnosis(Base):
+    """An ICD-10 coded diagnosis made at one visit."""
+
     __tablename__ = "diagnoses"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -163,6 +171,8 @@ class Diagnosis(Base):
 
 
 class Prescription(Base):
+    """A medication ordered or continued at one visit."""
+
     __tablename__ = "prescriptions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -179,6 +189,8 @@ class Prescription(Base):
 
 
 class LabResult(Base):
+    """A LOINC-coded lab value with reference range and status flag."""
+
     __tablename__ = "lab_results"
 
     id = Column(Integer, primary_key=True, autoincrement=True)

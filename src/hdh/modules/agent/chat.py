@@ -113,7 +113,8 @@ class ChatSession:
         if self._client is None:
             import anthropic
 
-            self._client = anthropic.Anthropic()
+            # Lazy default factory; tests/callers may inject via _client.
+            self._client = anthropic.Anthropic()  # quality: allow(dependency-injection)
         return self._client
 
     @property

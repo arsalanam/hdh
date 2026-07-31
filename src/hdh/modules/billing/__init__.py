@@ -11,7 +11,7 @@ _ESTABLISHED_OFFICE = ("99213", 1.30)
 _ESTABLISHED_COMPLEX = ("99214", 1.92)
 _URGENT = ("99215", 2.80)
 
-_PREVENTIVE_BY_AGE = [
+_PREVENTIVE_BY_AGE = (
     (1, ("99381", 1.50)),  # infant
     (5, ("99382", 1.60)),
     (12, ("99383", 1.70)),
@@ -19,7 +19,7 @@ _PREVENTIVE_BY_AGE = [
     (40, ("99385", 1.92)),
     (65, ("99386", 2.33)),
     (200, ("99387", 2.50)),
-]
+)
 
 
 def cpt_for_visit(visit: Visit, patient_age: int) -> tuple[str, float]:

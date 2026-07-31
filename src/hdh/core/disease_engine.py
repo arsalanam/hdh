@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class LabSpec:
+    """Contract for one lab test: LOINC code, reference range, and how the condition shifts its value."""
+
     test_name: str
     loinc_code: str
     unit: str
@@ -38,6 +40,8 @@ class RxSpec:
 
 @dataclass
 class ConditionProfile:
+    """Contract for one condition: how a visit for it looks — ICD-10, vitals deltas, labs, formulary, follow-up, seasonality."""
+
     icd10_code: str
     description: str
     chief_complaint: str
@@ -731,6 +735,7 @@ AGE_WEIGHTS: dict[str, list[tuple[str, float]]] = {
 
 
 def age_group(age: int) -> str:
+    """Map an age in years to the condition-catalog age band."""
     if age <= 2:
         return "infant"
     if age <= 12:

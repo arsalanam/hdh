@@ -4,6 +4,7 @@ import json
 
 
 def register_cli(subparsers):
+    """Register the `hdh risk train|score` subcommands."""
     p = subparsers.add_parser("risk", help="ML risk stratification (train / score)")
     risk_sub = p.add_subparsers(dest="risk_cmd", required=True)
 
@@ -21,6 +22,7 @@ def register_cli(subparsers):
 
 
 def run(session, args):
+    """Train the risk model or score patients with it."""
     try:
         from . import model
     except ImportError as e:

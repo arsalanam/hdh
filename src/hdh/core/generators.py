@@ -23,7 +23,7 @@ random.seed(42)
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-INSURERS = [
+INSURERS = (
     "Blue Cross Blue Shield",
     "Aetna",
     "UnitedHealthcare",
@@ -34,11 +34,11 @@ INSURERS = [
     "Kaiser Permanente",
     "Anthem",
     "Molina Healthcare",
-]
+)
 
-BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
+BLOOD_TYPES = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 
-ALLERGENS = [
+ALLERGENS = (
     "Penicillin",
     "Sulfa drugs",
     "Aspirin",
@@ -52,27 +52,27 @@ ALLERGENS = [
     "Amoxicillin",
     "Erythromycin",
     "Ciprofloxacin",
-]
+)
 
-PROVIDERS = [
+PROVIDERS = (
     "Dr. Sarah Mitchell, MD",
     "Dr. James O'Brien, MD",
     "Dr. Priya Sharma, MD",
     "Dr. Robert Chen, MD",
     "Dr. Angela Torres, DO",
     "Dr. Michael Park, MD",
-]
+)
 
-RACES = [
+RACES = (
     "White",
     "Black or African American",
     "Asian",
     "American Indian or Alaska Native",
     "Pacific Islander",
     "Other",
-]
+)
 
-ETHNICITIES = ["Non-Hispanic or Latino", "Hispanic or Latino"]
+ETHNICITIES = ("Non-Hispanic or Latino", "Hispanic or Latino")
 
 
 def _random_mrn() -> str:
@@ -113,6 +113,7 @@ def _baseline_bmi(age: int) -> float:
 
 
 def generate_patient() -> tuple[Patient, dict[str, bool], bool]:
+    """Generate one synthetic patient; returns (patient, family_history, smoker)."""
     age = _weighted_age()
     sex = random.choice(["M", "F"])
     dob = date.today() - timedelta(days=age * 365 + random.randint(0, 364))
@@ -185,6 +186,7 @@ def _clamp(val, lo, hi):
 
 
 def generate_vital(visit_id: int, age: int, sex: str, bmi: float, condition_profile) -> Vital:
+    """Generate a vitals panel: age/sex baseline plus the condition's deltas."""
     cp = condition_profile
     sys_b, dia_b, hr_b, rr_b, temp_b, spo2_b = _baseline_vitals(age, sex, bmi)
 
@@ -220,6 +222,7 @@ def generate_vital(visit_id: int, age: int, sex: str, bmi: float, condition_prof
 
 
 def generate_lab(visit_id: int, spec: LabSpec, has_condition: bool = True) -> LabResult:
+    """Generate one lab result from its spec, shifted when the condition is present."""
     if has_condition and spec.condition_shift != 0:
         val = random.gauss(spec.normal_mean + spec.condition_shift, spec.condition_shift_sd or spec.normal_sd)
     else:

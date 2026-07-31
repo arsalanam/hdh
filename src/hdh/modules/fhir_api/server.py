@@ -18,6 +18,7 @@ def _fhir_patient(p: Patient) -> dict:
 
 
 def create_app(db_path: str = "family_medicine.db"):
+    """Build the FastAPI app serving the read-only FHIR R4 facade."""
     from fastapi import FastAPI, HTTPException
 
     app = FastAPI(

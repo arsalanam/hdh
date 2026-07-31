@@ -2,6 +2,7 @@
 
 
 def register_cli(subparsers):
+    """Register the `hdh agent` subcommand."""
     p = subparsers.add_parser(
         "agent", help="AI care-program agent — interactive chat with history, or one-shot question"
     )
@@ -26,6 +27,7 @@ def register_cli(subparsers):
 
 
 def run(session, args):
+    """Dispatch: one-shot question or the interactive chat UI."""
     try:
         import anthropic  # noqa: F401
     except ImportError:

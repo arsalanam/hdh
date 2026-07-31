@@ -44,6 +44,11 @@ format:
 typecheck:
     {{python}} -m mypy
 
+# Design-principle checks: contracts, no god classes, pluggable interfaces,
+# dependency injection, immutability, injection safety, data abstraction.
+quality:
+    {{python}} scripts/quality_gate.py
+
 # Security scanning. Currently best-effort; wire your OWASP tooling in here.
 #   - OWASP Dependency-Check:  dependency-check --scan . --format HTML
 #   - OWASP ZAP (against `just docker-serve`):  zap-baseline.py -t http://localhost:8000
@@ -62,7 +67,7 @@ security:
     fi
 
 # All quality gates, in order
-qa: test coverage lint format-check typecheck security
+qa: test coverage lint format-check typecheck quality security
     @echo "✅ all quality gates passed"
 
 # ── Docker ───────────────────────────────────────────────────────────────────

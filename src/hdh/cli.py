@@ -28,6 +28,7 @@ from hdh.core.models import ChronicCondition, Patient, Visit, get_engine, get_se
 
 
 def cmd_stats(session):
+    """Print dataset statistics: counts, top diagnoses, and age distribution."""
     from sqlalchemy import func
 
     from hdh.core.models import Diagnosis, LabResult, Prescription, Visit
@@ -248,6 +249,7 @@ def cmd_show(session, mrn: str):
 
 
 def main():
+    """CLI entry point: parse arguments, open the DB session, dispatch the command."""
     # Windows consoles default to legacy code pages that can't print the
     # box-drawing and status characters used in CLI output.
     if hasattr(sys.stdout, "reconfigure"):

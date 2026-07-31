@@ -9,6 +9,7 @@ def register_cli(subparsers):
 
 
 def run(session, args):
+    """Start the FHIR R4 API with uvicorn."""
     try:
         import uvicorn
 

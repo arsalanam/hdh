@@ -17,6 +17,7 @@ def register_cli(subparsers):
 
 
 def run(session, args):
+    """Detect care gaps and print them as a table or JSON."""
     from .detector import detect_gaps, reference_date
 
     as_of = date.fromisoformat(args.as_of) if args.as_of else reference_date(session)

@@ -30,7 +30,7 @@ from hdh.core.models import (
 LOOKBACK_DAYS = 365
 DEFAULT_HORIZON_DAYS = 180
 
-FEATURE_NAMES = [
+FEATURE_NAMES = (
     "age",
     "sex_male",
     "smoker",
@@ -48,7 +48,7 @@ FEATURE_NAMES = [
     "max_bp_sys",
     "min_spo2",
     "mean_pain",
-]
+)
 
 
 def extract_features(

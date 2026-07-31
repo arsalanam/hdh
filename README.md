@@ -136,10 +136,34 @@ just coverage     # tests + coverage report (HTML in htmlcov/)
 just lint         # ruff linting
 just format-check # ruff formatting (just format to apply)
 just typecheck    # mypy
+just quality      # design-quality gate (see below)
 just security     # security scan (trivy/pip-audit if installed; OWASP slot)
 just qa           # all of the above, in order
 just build        # qa → docker build -t hdh:latest
 ```
+
+### The design-quality gate
+
+Beyond style (ruff) and types (mypy), `scripts/quality_gate.py` enforces the
+design principles this project is meant to teach — each finding names the
+principle it violates:
+
+| Check | Principle |
+|---|---|
+| `contracts` | Clear contracts: public classes and non-trivial functions state what they promise (docstrings) |
+| `no-god-class` | Clear responsibilities: size limits on classes, functions, and parameter lists |
+| `pluggability` | Pluggable code: every CLI module complies with the `register_cli` interface |
+| `dependency-injection` | Collaborators (DB sessions, API clients) are injected; only composition roots construct them |
+| `immutability` | No mutable default arguments; constants prefer tuples over lists |
+| `injection-safety` | No `eval`/`exec`, no `shell=True`, no string-built SQL reaching `text()`/`execute()` |
+| `data-abstraction` | Public APIs return typed structures (dataclasses), not bare dicts |
+
+Errors fail the build; warnings are advisory. A justified exception is waived
+inline with `# quality: allow(<check>)` plus a comment — visible in code
+review, never hidden in config. The checker itself demonstrates the
+principles: checks are pluggable implementations of a `QualityCheck`
+protocol, findings are frozen dataclasses, and each check receives its parsed
+module by injection.
 
 Container usage:
 
