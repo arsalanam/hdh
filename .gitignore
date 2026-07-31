@@ -1,0 +1,25 @@
+# Databases (regenerate with: hdh generate)
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Exports & trained models
+exports/
+artifacts/
+*.joblib
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local env
+.env
