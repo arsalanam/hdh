@@ -45,10 +45,33 @@ Feature modules add their own subcommands:
 ```bash
 hdh care-gaps --limit 20                  # overdue preventive care, missed follow-ups
 hdh risk train && hdh risk score --top 20 # ML risk stratification
-hdh agent "Which patients need outreach?" # agentic AI over the dataset
+hdh agent                                 # interactive AI chat over the dataset
+hdh agent "Which patients need outreach?" # ...or one-shot
 hdh narrative --mrn MRN12345678           # SOAP-note narratives
 hdh serve --port 8000                     # FHIR R4 REST API
 ```
+
+### The agent chat UI
+
+`hdh agent` (no arguments) opens an interactive chat with the care-program
+agent (requires `pip install hdh[agent]` and an `ANTHROPIC_API_KEY`). The
+conversation is remembered across questions, answers render as markdown, tool
+calls are traced live, and previous questions are recallable with the arrow
+keys. Slash commands: `/history` (full chat so far), `/context` (messages +
+real token count), `/compact`, `/save`, `/clear`, `/exit`.
+
+**Context management:** once the conversation exceeds 100 messages (tool
+round-trips included), the agent automatically summarizes the older turns
+into a compact `<conversation_summary>` briefing — preserving MRNs, findings,
+and decisions — and keeps the 20 most recent messages verbatim, so context
+stays bounded in long sessions. Demo it without waiting 100 messages:
+
+```bash
+hdh agent --compact-after 8    # compaction kicks in after ~4 exchanges
+```
+
+The compaction logic itself is exercised offline in
+`tests/test_agent_chat.py`, which collapses a 120-message conversation to 21.
 
 ## Project Structure
 
