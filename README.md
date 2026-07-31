@@ -208,6 +208,13 @@ or a ZAP baseline scan.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Run `just qa` before submitting.
 
-## License
+## License & attribution
 
-[MIT](LICENSE)
+Copyright © 2026 **Ajmal Mahmood**. Released under the [MIT License](LICENSE).
+
+You are free to use, modify, and redistribute this project — including
+commercially and in closed-source derivatives. The one condition MIT imposes
+is that the original copyright notice and permission notice stay included in
+all copies or substantial portions of the software: keep the LICENSE file
+(or its text) with your copies and derivatives, and the original attribution
+is preserved.

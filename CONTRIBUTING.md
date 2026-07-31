@@ -2,6 +2,10 @@
 
 Thanks for your interest in contributing!
 
+By submitting a contribution you agree it is licensed under the project's
+[MIT License](LICENSE) (© 2026 Ajmal Mahmood). Derivative works must retain
+the original copyright and permission notice, as the license requires.
+
 ## Setup
 
 ```bash

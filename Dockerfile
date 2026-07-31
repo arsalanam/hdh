@@ -13,6 +13,7 @@ RUN uv sync --frozen --no-dev --no-editable --extra risk --extra agent --extra a
 FROM python:3.13-slim
 LABEL org.opencontainers.image.title="hdh" \
       org.opencontainers.image.description="Health Data Hub — synthetic family-medicine EHR toolkit" \
+      org.opencontainers.image.authors="Ajmal Mahmood" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/OWNER/hdh"
 
