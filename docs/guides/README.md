@@ -1,6 +1,12 @@
 # hdh user guides
 
-One guide per module. Start with [core](core.md) — everything else builds on it.
+**New to hdh, or not a developer?** Start with the
+**[Practitioner Guide](practitioner-guide.md)** — a complete Windows/PowerShell
+walkthrough from installation to using every feature, written for clinicians
+and care teams.
+
+For developers: one guide per module. Start with [core](core.md) — everything
+else builds on it.
 
 | Guide | What it covers | Requires |
 |---|---|---|

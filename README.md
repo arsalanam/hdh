@@ -9,7 +9,7 @@ probabilities, and layers optional feature modules on top of that core: care-gap
 detection, ML risk stratification, an agentic AI care assistant, SOAP-note
 narratives, and a FHIR R4 REST API.
 
-📖 **[Feature Guide](docs/FEATURE_GUIDE.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[User Guides (per module)](docs/guides/README.md)**
+📖 **[Feature Guide](docs/FEATURE_GUIDE.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[User Guides (per module)](docs/guides/README.md)** · **[Practitioner Guide (start here if you're not a developer)](docs/guides/practitioner-guide.md)**
 
 ## Install
 
