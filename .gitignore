@@ -1,35 +1,67 @@
-# Databases (regenerate with: hdh generate)
+# ─── Project-specific ────────────────────────────────────────────────────────
+# Generated databases — rebuild with: hdh generate  (or just docker-generate)
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+*.sqlite3
 
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-build/
-dist/
-.venv/
-venv/
-
-# Exports & trained models
-exports/
-artifacts/
+# Generated outputs: exports, trained models, container data volume
+/exports/
+/artifacts/
+/data/
 *.joblib
 
-# QA output
-htmlcov/
+# Agent chat transcripts (hdh agent /save)
+chat_transcript*.md
+
+# Security-scan scratch output
+requirements-audit.txt
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+/build/
+/dist/
+/wheels/
+
+# Virtual environments (recreate with: uv sync --all-extras)
+/.venv/
+/venv/
+
+# ─── QA / tool caches ────────────────────────────────────────────────────────
+/htmlcov/
 .coverage
+.coverage.*
+coverage.xml
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.ipynb_checkpoints/
 
-# Container data volume
-data/
+# ─── Secrets & local configuration ───────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
 
-# IDE / OS
+# ─── IDE / editor ────────────────────────────────────────────────────────────
 .idea/
 .vscode/
-.DS_Store
+*.swp
+.*.sw?
+*~
 
-# Local env
-.env
+# ─── OS noise ────────────────────────────────────────────────────────────────
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
