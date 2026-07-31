@@ -1,350 +1,193 @@
-# Family Medicine Synthetic Dataset — Feature Guide
+# hdh — Feature Guide
 
-**10,000 patients · 165,000+ visits · 777,000+ lab results**
+**Health Data Hub: a medically realistic synthetic family-medicine EHR, plus a
+modular AI care-program toolkit built on top of it.**
 
-*A medically realistic synthetic OPD dataset for testing agentic AI care programs*
+10,000 patients · 165,000+ visits · 777,000+ lab results · no PHI, ever.
 
-Stack: Python · Faker · SQLAlchemy · SQLite · Alembic
+| | |
+|---|---|
+| Stack | Python · SQLAlchemy · SQLite · Faker · scikit-learn · Anthropic SDK · FastAPI |
+| Install | `pip install -e ".[all]"` (core alone: `pip install -e .`) |
+| Docs | [Architecture](ARCHITECTURE.md) · [Per-module guides](guides/) |
+
+> The original (v0.1) feature guide for the flat, generator-only project is
+> preserved as `Feature_Guide.docx`; this document covers the current modular
+> project.
 
 ---
 
 ## Contents
 
 1. [Overview](#1-overview)
-2. [Key Features at a Glance](#2-key-features-at-a-glance)
-3. [Getting Started](#3-getting-started)
-4. [Data Model](#4-data-model)
-5. [The Disease Engine](#5-the-disease-engine)
-6. [Command-Line Interface](#6-command-line-interface)
-7. [Export Formats](#7-export-formats)
-8. [Extensible Schema Architecture](#8-extensible-schema-architecture)
-9. [Dataset Statistics](#9-dataset-statistics)
-10. [Roadmap & Possible Extensions](#10-roadmap--possible-extensions)
+2. [Feature matrix](#2-feature-matrix)
+3. [Core: synthetic data generation](#3-core-synthetic-data-generation)
+4. [Care-gap detection](#4-care-gap-detection)
+5. [Risk stratification](#5-risk-stratification)
+6. [Agentic AI care assistant](#6-agentic-ai-care-assistant)
+7. [SOAP-note narratives](#7-soap-note-narratives)
+8. [FHIR R4 REST API](#8-fhir-r4-rest-api)
+9. [Ontology & billing scaffolds](#9-ontology--billing-scaffolds)
+10. [Roadmap](#10-roadmap)
 
 ---
 
 ## 1. Overview
 
-The Family Medicine Synthetic Dataset is a generator and pre-built database of
-medically realistic outpatient (OPD) records. It produces 10,000 synthetic patients
-with roughly four years of visit history — 165,000+ visits, 165,000+ diagnoses,
-170,000+ prescriptions, and 777,000+ lab results — all driven by age, sex, and
-seasonal disease probabilities.
+hdh generates outpatient (OPD) records driven by age, sex, and seasonal
+disease probabilities — a safe, no-PHI sandbox for building and testing
+agentic AI care programs, clinical decision tools, FHIR pipelines, and
+analytics. On top of the generator sit optional feature modules that turn the
+dataset into a working care-program lab: rule-based care-gap detection, an ML
+deterioration-risk model, a Claude-powered chat agent with database tools,
+clinical narratives, and a FHIR façade.
 
-The dataset is purpose-built as a safe, no-PHI sandbox for developing and testing
-agentic AI care programs, clinical decision tools, FHIR pipelines, and analytics —
-without touching real patient data.
+**Who it's for:** AI/ML engineers building agentic care programs; healthcare
+integration developers testing FHIR R4 pipelines; data scientists prototyping
+risk-stratification or care-gap models; anyone needing realistic clinical data
+without privacy or compliance overhead.
 
-### Who it's for
+## 2. Feature matrix
 
-- AI/ML engineers building or evaluating agentic care programs.
-- Healthcare integration developers testing FHIR R4 pipelines.
-- Data scientists prototyping risk-stratification or care-gap models.
-- Anyone needing realistic clinical data without privacy or compliance overhead.
+| Feature | Command | Extra | Status |
+|---|---|---|---|
+| Synthetic data generation (30+ conditions) | `hdh generate` | — | ✅ core |
+| Dataset statistics & patient charts | `hdh stats`, `hdh show` | — | ✅ core |
+| JSON / FHIR R4 / plain-text export | `hdh export` | — | ✅ core |
+| Simulation: disease spikes, time advance | `hdh add-spike`, `hdh advance` | — | ✅ core |
+| Care-gap detection | `hdh care-gaps` | — | ✅ |
+| ML risk stratification | `hdh risk train/score` | `[risk]` | ✅ |
+| Agentic AI chat (history + context compaction) | `hdh agent` | `[agent]` | ✅ |
+| SOAP-note narratives (+ optional LLM polish) | `hdh narrative` | — (`[agent]` for `--llm`) | ✅ |
+| FHIR R4 REST API | `hdh serve` | `[api]` | ✅ |
+| ICD-10 → SNOMED mapping | library | — | 🧩 scaffold |
+| CPT / RVU claim estimation | library | — | 🧩 scaffold |
 
-## 2. Key Features at a Glance
+## 3. Core: synthetic data generation
 
-| Feature | Description |
-|---|---|
-| Realistic generation | Age/sex/season-weighted disease probability engine with comorbidity seeding. |
-| 30 conditions | Coverage spanning pediatric, adolescent, adult, and senior care. |
-| Full clinical detail | Vitals, ICD-10 diagnoses, formulary-accurate prescriptions, and LOINC-coded labs. |
-| Three export formats | Per-patient JSON, FHIR R4 Bundles, and LLM-ready plain-text charts. |
-| Maintenance CLI | Generate, inspect, export, inject disease spikes, and advance time. |
-| Pre-built database | Ships with a ~87 MB SQLite database of 10,000 patients. |
-| Extensible schema | JSON-driven, modular schema registry with Alembic migration support. |
-
-## 3. Getting Started
-
-Install dependencies and generate a dataset in a few commands:
-
-```bash
-pip install -r requirements.txt
-
-# Generate 10,000 patients (4 years of history)
-python cli.py generate --patients 10000 --years 4
-
-# View statistics
-python cli.py stats
-
-# Export to JSON / FHIR R4 / Plain text
-python cli.py export --format all --limit 500 --output-dir exports/
-
-# Show one patient chart
-python cli.py show --mrn MRN12345678
-```
-
-A pre-generated database (`family_medicine.db`) is included, so you can run stats,
-show, and export commands immediately without regenerating.
-
-### Project Files
-
-| File | Purpose |
-|---|---|
-| `models.py` | SQLAlchemy ORM — Patient, Visit, Vital, Diagnosis, Prescription, LabResult. |
-| `disease_engine.py` | Age/sex/season probability engine, ICD-10 codes, medication formularies. |
-| `generators.py` | Patient and visit-history generators. |
-| `exporters.py` | JSON, FHIR R4 Bundle, and plain-text clinical-note exporters. |
-| `cli.py` | Maintenance command-line interface. |
-| `family_medicine.db` | Pre-generated SQLite database (10,000 patients). |
-
-## 4. Data Model
-
-The schema is defined in `models.py` as SQLAlchemy ORM classes. Each patient anchors
-a tree of visits, and each visit carries its own vitals, diagnoses, prescriptions,
-and labs.
-
-| Model | Table | Key Columns |
-|---|---|---|
-| Patient | `patients` | mrn, dob, sex, race, insurance, allergies, fam_hx_*, smoker, bmi_baseline |
-| ChronicCondition | `chronic_conditions` | patient_id, icd10_code, onset_date, controlled |
-| Visit | `visits` | patient_id, visit_date, visit_type, chief_complaint, provider_name, follow_up_days |
-| Vital | `vitals` | visit_id, bp_systolic, bp_diastolic, hr, rr, temp_f, spo2, weight_kg, bmi, pain_scale |
-| Diagnosis | `diagnoses` | visit_id, icd10_code, description, is_primary |
-| Prescription | `prescriptions` | visit_id, drug_name, drug_class, dose, frequency, duration_days, refills, is_new |
-| LabResult | `lab_results` | visit_id, test_name, value, unit, ref_low, ref_high, status, loinc_code |
-
-### Enums
-
-- **Sex:** M / F
-- **VisitType:** acute / follow_up / preventive / urgent
-- **LabStatus:** normal / high / low / critical
-
-### Key Relationships
-
-```
-Patient ──< Visit ──< Diagnosis
-                 ──< Prescription
-                 ──< LabResult
-                 ──1 Vital
-Patient ──< ChronicCondition
-```
-
-## 5. The Disease Engine
-
-The disease engine (`disease_engine.py`) is the heart of the realism. Each condition is
-modeled as a `ConditionProfile` dataclass that defines exactly how a visit for that
-condition should look.
-
-### Each ConditionProfile defines
-
-- `icd10_code`, `description`, `chief_complaint`, and `visit_type`.
-- Vital deltas from baseline (mean, sd) for BP, HR, RR, temperature, SpO2, and pain.
-- `labs` — which lab panels to order (`LabSpec`).
-- `rx_options` — condition-appropriate formulary entries (`RxSpec`).
-- `follow_up_days` — a clinical-guideline follow-up interval.
-- `seasonal_weights` — month-to-multiplier seasonal weighting.
-
-### 30 Conditions by Age Group
-
-| Age Group | Conditions |
-|---|---|
-| Infant 0–2 | Well-child, otitis media, RSV, febrile illness, rash/eczema, conjunctivitis, URI |
-| Child 3–12 | Well-child, otitis media, strep throat, URI, febrile illness, rash, conjunctivitis, sports injury |
-| Teen 13–17 | Sports physical, URI, sports injury, acne, anxiety, strep, mono |
-| Young Adult 18–35 | Annual physical, influenza, URI, UTI, anxiety, low back pain, laceration, contraception, GERD |
-| Adult 36–50 | Annual physical, HTN, hyperlipidemia, T2DM, URI, influenza, GERD, anxiety, back pain, obesity |
-| Middle-aged 51–65 | Annual physical, HTN, T2DM, hyperlipidemia, osteoarthritis, GERD, URI, COPD, depression, hypothyroidism |
-| Senior 65+ | Annual wellness, HTN, T2DM, hyperlipidemia, osteoarthritis, COPD, falls, polypharmacy review, depression, hypothyroidism, influenza |
-
-### Seasonal Multipliers
-
-Disease incidence is weighted by month so the dataset shows realistic seasonality.
-
-```python
-FLU_SEASON  = {Jan:2.5, Feb:2.0, ..., Dec:2.5}   # peaks winter
-RSV_SEASON  = {Jan:2.0, Feb:1.5, ..., Dec:2.5}   # peaks late fall/winter
-SUMMER_PEAK = {Jun:1.5, Jul:1.5, Aug:1.5, ...}   # UTI, sports injuries, lacerations
-```
-
-### Comorbidity Seeding
-
-Chronic conditions are seeded probabilistically from age, family history, smoking
-status, and BMI — producing realistic clusters of comorbidities.
-
-```python
-def comorbidity_seeds(age, fam_hx, smoker, bmi) -> set[str]:
-    # age >= 45: seeds HTN (30%), T2DM (20%), hyperlipidemia (35%)
-    # age >= 60: seeds COPD if smoker, hypothyroidism (25%), OA (40%)
-```
-
-## 6. Command-Line Interface
-
-All maintenance tasks are driven through `cli.py`.
-
-| Command | Purpose |
-|---|---|
-| `generate --patients N --years Y` | Generate a fresh dataset. |
-| `stats` | Print dataset statistics. |
-| `export --format {json\|fhir\|text\|all} --limit N --output-dir DIR` | Export records in one or all formats. |
-| `show --mrn MRN########` | Print a single patient's full chart. |
-| `list-conditions` | List all available condition codes. |
-| `add-spike --condition NAME --month M --n N` | Inject a seasonal disease spike. |
-| `advance --months M` | Advance time, adding follow-up visits for chronic patients. |
-
-Example — inject 300 extra influenza visits in January:
+The disease engine models each condition as a profile: ICD-10 code and chief
+complaint, vital-sign deltas from an age/sex baseline, LOINC-coded lab panels
+with condition-shifted values, a condition-appropriate drug formulary,
+guideline follow-up intervals, and seasonal weights (flu peaks in winter,
+UTIs and sports injuries in summer). Chronic disease is seeded from age,
+family history, smoking, and BMI, so comorbidities cluster realistically.
 
 ```bash
-python cli.py add-spike --condition influenza --month 1 --n 300
+hdh generate --patients 10000 --years 4   # ~87 MB SQLite, reproducible (seeded)
+hdh stats                                 # counts, top diagnoses, age pyramid
+hdh show --mrn MRN12345678                # one patient's full chart
+hdh export --format all --limit 500 --output-dir exports/
+hdh add-spike --condition influenza --month 1 --n 300
+hdh advance --months 6                    # follow-up visits for chronic patients
 ```
 
-Example — advance the timeline by 6 months:
+Coverage spans well-child visits and RSV in infants through polypharmacy
+reviews and falls in seniors — the shipped 10k dataset averages 16.6 visits
+per patient with hypertension, T2DM, and hyperlipidemia as the top chronic
+diagnoses. → [guides/core.md](guides/core.md)
+
+## 4. Care-gap detection
+
+Four rules, evaluated against the dataset's own timeline (the reference date
+defaults to the latest visit, so results stay meaningful whenever the data was
+generated):
+
+1. **Overdue preventive** — no preventive visit within the age-based interval.
+2. **Uncontrolled chronic** — an uncontrolled condition with no visit in 90+ days (high severity).
+3. **Missed follow-up** — a requested follow-up window elapsed (×1.5 grace) with no return visit.
+4. **Polypharmacy review** — seniors on 5+ medications with no recent visit.
 
 ```bash
-python cli.py advance --months 6
+hdh care-gaps --limit 25            # ranked most-severe first
+hdh care-gaps --mrn MRN123... --json
 ```
 
-## 7. Export Formats
+→ [guides/caregaps.md](guides/caregaps.md)
 
-Records can be exported in three complementary formats.
+## 5. Risk stratification
 
-### JSON (per patient)
-
-A full denormalized bundle per patient — one file equals one patient's entire record,
-including chronic conditions and every visit with its vitals, diagnoses, prescriptions,
-and labs.
-
-### FHIR R4 Bundle
-
-A standard FHIR R4 Bundle per patient containing:
-
-- Patient resource.
-- Encounter resource per visit.
-- Observation resources for vitals (with LOINC codes).
-- Condition resources for diagnoses (ICD-10).
-- MedicationRequest resources for prescriptions.
-- Observation resources for labs (with LOINC codes and reference ranges).
-
-### Plain-Text Clinical Notes
-
-An LLM-ready chart summary — ideal as direct context for language models.
-
-```
-PATIENT CHART SUMMARY
-MRN: ... | Name: ... | Age: ... | Sex: ...
-FAMILY HISTORY: ...
-ACTIVE CHRONIC CONDITIONS: [ICD10] Description — Onset: date (Controlled/Uncontrolled)
-
-VISIT HISTORY (N total visits)
-DATE: 2022-03-06 [Follow Up] — Provider: Dr. James O'Brien, MD
-CHIEF COMPLAINT: Shortness of breath, worsening COPD
-VITALS: BP 129/88 | HR 74 | Temp 98.4°F | SpO2 93% | BMI 20.2 | Pain 1/10
-ASSESSMENT: J44.1 – COPD with acute exacerbation
-  Rx [Refill]: Albuterol inhaler 2 puffs Q4H PRN ×Ongoing
-  LABS: WBC 8.02 K/uL (Normal) | FEV1 40.13 %predicted ◄
-FOLLOW-UP: Return in 30 days
-```
-
-## 8. Extensible Schema Architecture
-
-Beyond the core ORM, the project documents a JSON-driven, modular schema registry that
-lets teams extend the data model without editing core class bodies — and keeps Alembic
-autogenerate working cleanly.
-
-### Core concept
-
-Declarative JSON is the source of truth — not Python class bodies. A registry merges
-schemas across modules, a ClassFactory builds the SQLAlchemy classes, and Alembic then
-sees ordinary metadata.
-
-### Modular layout
-
-- `base_module` — the core entities and relationships.
-- `ontology_module` — adds ontology columns (e.g. SNOMED tags) and new entities.
-- `clinical_module` — adds clinical extensions such as billing CPT codes or lab review fields.
-
-Each module ships a `manifest.json` declaring its name, version, dependencies, and
-priority, plus a `schema/` folder split into `entities/` (columns + indexes) and
-`relationships/` (relationship definitions).
-
-### Four-phase load order
-
-Entities and relationships live in separate files because columns only need their own
-table to exist, while relationships need both sides mapped. The registry loads in four
-phases, then the factory builds classes in two passes:
-
-| Phase | What happens |
-|---|---|
-| Phase 1 — Entity schemas | Load all modules' columns; every tablename and column is now known. |
-| Phase 2 — Merge entities | Produce one merged column+index spec per entity (later module wins, logged). |
-| Phase 3 — Relationship schemas | Validate all relationship targets against the complete entity set. |
-| Phase 4 — Merge relationships | Merge relationship specs (later module wins, logged). |
-| Factory Pass 1 | Create mapped classes (columns + indexes only). |
-| Factory Pass 2 | Wire relationships — no forward references or deferred resolution needed. |
-
-### Merge collision rules
-
-| Collision | Resolution |
-|---|---|
-| Same column name, different modules | Later module wins; warning logged. |
-| Same relationship name, different modules | Later module wins; warning logged. |
-| Extension tries to rename tablename | Hard error, blocked. |
-| Relationship targets unknown entity | Hard error at Phase 3 load time. |
-| Circular module dependency | Hard error from topological sort. |
-
-### Bootstrap & Alembic
-
-A single `bootstrap()` routine runs the full registry + factory sequence and must run in
-every process (CLI, Alembic, workers, API server) — the registry is a runtime construct,
-not persisted state. Adding a column is then a three-step workflow:
+A predictive model of near-term deterioration: from 17 features of each
+patient's prior 12 months (demographics, chronic burden, visit mix, distinct
+drugs, abnormal labs, vitals aggregates), a gradient-boosting classifier
+predicts an **urgent visit or critical lab within 180 days**. Training holds
+out the last 180 days of data as the label window; on the shipped 10k dataset
+it reaches ~0.71 held-out ROC AUC. Patients are tiered high / moderate / low
+from training-set probability quantiles.
 
 ```bash
-# 1. Add the column to the module's entities/*.json schema
-# 2. Autogenerate the migration
-alembic revision --autogenerate -m "clinical_module: add encounter_duration_min"
-# 3. Apply it
-alembic upgrade head
+pip install -e ".[risk]"
+hdh risk train                       # prints positive rate, AUC, tier cutoffs
+hdh risk score --top 20              # riskiest patients with driving factors
+hdh risk score --mrn MRN123... --json
 ```
 
-## 9. Dataset Statistics
+→ [guides/risk.md](guides/risk.md)
 
-The shipped 10,000-patient dataset contains:
+## 6. Agentic AI care assistant
 
-| Metric | Count |
-|---|---|
-| Patients | 10,000 |
-| Visits | 165,972 |
-| Diagnoses | 165,972 |
-| Prescriptions | 170,267 |
-| Lab Results | 777,868 |
-| Avg visits / patient | 16.6 |
+A Claude-powered agent (Anthropic SDK tool runner, `claude-opus-5` by
+default) with six database tools: patient charts, cohort search, care gaps,
+risk scores, read-only SQL, and dataset stats. Answers are grounded in actual
+tool results, with the tool trace shown live.
 
-### Top Diagnoses
+```bash
+pip install -e ".[agent]"     # + set ANTHROPIC_API_KEY
+hdh agent "Which uncontrolled-HTN patients also score high risk?"
+hdh agent                     # interactive chat
+```
 
-| ICD-10 | Description | Count |
-|---|---|---|
-| I10 | Essential hypertension | 21,051 |
-| E11.9 | Type 2 diabetes mellitus | 15,804 |
-| E78.5 | Hyperlipidemia | 14,585 |
-| Z00.00 | General adult medical examination | 14,187 |
-| J06.9 | Acute upper respiratory infection | 11,860 |
-| M19.90 | Osteoarthritis | 11,568 |
-| J11.1 | Influenza | 9,056 |
-| Z00.129 | Well-child visit | 7,762 |
-| E03.9 | Hypothyroidism | 6,144 |
-| J44.1 | COPD with acute exacerbation | 5,955 |
+**Interactive chat UI:** persistent conversation with markdown rendering,
+arrow-key input history, and slash commands — `/history`, `/context`
+(API-measured token count), `/compact`, `/save`, `/clear`.
 
-### Age Distribution
+**Context management:** beyond 100 messages (configurable via
+`--compact-after`), older turns are automatically summarized into a
+`<conversation_summary>` briefing that preserves MRNs, findings, and
+decisions; the 20 most recent messages stay verbatim. Demo it early with
+`hdh agent --compact-after 8`. → [guides/agent.md](guides/agent.md)
 
-| Age Band | Patients | Share |
-|---|---|---|
-| 0–12 | 2,059 | 20.6% |
-| 13–17 | 814 | 8.1% |
-| 18–35 | 1,689 | 16.9% |
-| 36–50 | 1,415 | 14.2% |
-| 51–65 | 1,425 | 14.3% |
-| 66+ | 2,600 | 26.0% |
+## 7. SOAP-note narratives
 
-## 10. Roadmap & Possible Extensions
+Every visit renders as a Subjective / Objective / Assessment / Plan note from
+a deterministic template (works offline); `--llm` optionally has Claude
+rewrite the notes as natural clinical prose with all values preserved.
 
-- **Agentic care program layer** — a tool-using AI agent with SQLite tools querying this dataset.
-- **Narrative generation** — LLM-generated SOAP-note text per visit.
-- **Care-gap detection** — flag patients overdue for preventive visits or with uncontrolled chronic conditions.
-- **Risk stratification** — an ML model predicting hospitalization risk from visit patterns.
-- **FHIR server** — wrap the exporters in a HAPI FHIR-compatible REST API.
-- **Ontology module** — add SNOMED CT codes to diagnosis records.
-- **Billing module** — add CPT codes, RVUs, and insurance-claim simulation.
+```bash
+hdh narrative --mrn MRN12345678 --last 3
+hdh narrative --mrn MRN12345678 --llm
+```
 
----
+→ [guides/narrative.md](guides/narrative.md)
 
-*Family Medicine Synthetic Dataset — Feature Guide*
+## 8. FHIR R4 REST API
+
+A read-only FHIR façade over the core exporter — the same bundles `hdh export
+--format fhir` writes, served over HTTP with interactive docs at `/docs`:
+
+```bash
+pip install -e ".[api]"
+hdh serve --port 8000
+# GET /Patient/{mrn}              Patient resource
+# GET /Patient?name=smith         searchset Bundle
+# GET /Patient/{mrn}/$everything  full clinical Bundle
+# GET /metadata                   CapabilityStatement
+```
+
+→ [guides/fhir-api.md](guides/fhir-api.md)
+
+## 9. Ontology & billing scaffolds
+
+Library-level starting points with documented extension paths:
+
+- **Ontology** — `snomed_for_icd10()` over a starter ICD-10→SNOMED map for the
+  dataset's highest-volume diagnoses. → [guides/ontology.md](guides/ontology.md)
+- **Billing** — E/M CPT assignment from visit type and age, work RVUs, and
+  `estimate_claim()` charge estimates. → [guides/billing.md](guides/billing.md)
+
+## 10. Roadmap
+
+- Wire SNOMED codings into the FHIR `Condition` resources.
+- Claims lifecycle simulation (submit → adjudicate → pay/deny) and an `hdh billing` command.
+- Care-gap → agent outreach loop: let the agent draft outreach plans for detected gaps.
+- Survival-style risk modeling (time-to-event) alongside the classifier.
+- CI (GitHub Actions), packaged releases, and a downloadable pre-built database.

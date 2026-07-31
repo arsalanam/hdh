@@ -9,7 +9,7 @@ probabilities, and layers optional feature modules on top of that core: care-gap
 detection, ML risk stratification, an agentic AI care assistant, SOAP-note
 narratives, and a FHIR R4 REST API.
 
-📖 **[Full Feature Guide](docs/FEATURE_GUIDE.md)** · **[Architecture](docs/ARCHITECTURE.md)**
+📖 **[Feature Guide](docs/FEATURE_GUIDE.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[User Guides (per module)](docs/guides/README.md)**
 
 ## Install
 
@@ -113,6 +113,16 @@ summer) and comorbidities are seeded from age, family history, smoking, and BMI.
 The generator writes `family_medicine.db` (SQLite, ~87 MB for 10k patients).
 It is **not** checked into git — run `hdh generate` to build one, or attach a
 pre-built copy from your release artifacts.
+
+## Documentation
+
+- [Feature Guide](docs/FEATURE_GUIDE.md) — every feature with examples
+- [Architecture](docs/ARCHITECTURE.md) — the core/modules design and its rules
+- [User guides](docs/guides/README.md) — one practical guide per module:
+  [core](docs/guides/core.md) · [care-gaps](docs/guides/caregaps.md) ·
+  [risk](docs/guides/risk.md) · [agent](docs/guides/agent.md) ·
+  [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
+  [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md)
 
 ## Contributing
 
