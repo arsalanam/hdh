@@ -1,5 +1,9 @@
 # hdh — Health Data Hub
 
+[![ci](https://github.com/arsalanam/hdh/actions/workflows/ci.yml/badge.svg)](https://github.com/arsalanam/hdh/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 **Medically realistic synthetic family-medicine EHR data — plus modular AI care-program tooling on top.**
 
 10,000 patients · 165,000+ visits · 777,000+ lab results · no PHI, ever.

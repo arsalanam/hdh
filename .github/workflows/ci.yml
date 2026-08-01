@@ -1,0 +1,29 @@
+# CI: the same quality gates as local development, via the same justfile.
+# `just qa` = tests → coverage → ruff lint → format check → mypy →
+#             design-quality gate → security scan (pip-audit over uv.lock).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Sync locked environment
+        run: uv sync --all-extras
+
+      - name: Run all quality gates
+        run: just qa
