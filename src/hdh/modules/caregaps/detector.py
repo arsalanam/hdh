@@ -35,10 +35,11 @@ class CareGap:
     mrn: str
     patient_name: str
     age: int
-    gap_type: str  # overdue_preventive | uncontrolled_chronic | missed_follow_up | polypharmacy_review
+    gap_type: str  # overdue_preventive | uncontrolled_chronic | missed_follow_up | polypharmacy_review | (AI-proposed)
     severity: str  # high | medium | low
     description: str
     overdue_days: int
+    source: str = "rules"  # which finder produced it: "rules" | "ai" | plugin name
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -1,15 +1,56 @@
 # Care-gaps guide
 
-Rule-based detection of patients whose care is overdue. No extra dependencies.
+Detection of patients whose care is overdue, with **two pluggable finders**
+behind one interface: a deterministic rule engine (default, no dependencies)
+and an AI chart reviewer.
 
 ## Usage
 
 ```bash
-hdh care-gaps                          # top 25 gaps, most severe first
+hdh care-gaps                          # rules: top 25 gaps, most severe first
 hdh care-gaps --limit 100
 hdh care-gaps --mrn MRN12345678        # one patient
-hdh care-gaps --json                   # machine-readable
+hdh care-gaps --json                   # machine-readable (includes `source`)
 hdh care-gaps --as-of 2026-01-15       # evaluate as of a specific date
+
+hdh care-gaps --finder ai --mrn MRN12345678   # AI chart review, one patient
+hdh care-gaps --finder ai --sample 5          # AI: the 5 most complex patients
+```
+
+## Choosing a finder
+
+| | `--finder rules` (default) | `--finder ai` |
+|---|---|---|
+| How it works | Four fixed rules over aggregate SQL | A Claude model reads each chart and reasons clinically (schema-enforced JSON out) |
+| Coverage | Exactly what the rules encode | Also gaps no rule expresses: stale HbA1c for a diabetic, duplicate/interacting meds, guideline medication gaps, unaddressed elevated BPs |
+| Determinism | Same input → same output, auditable | Non-deterministic; findings vary between runs |
+| Cost & speed | Free, instant, whole panel | One model call per chart (cents each); use `--mrn` or `--sample N` (default 5 most-complex patients) — never the whole panel |
+| Requirements | none | `hdh[agent]` extra + `ANTHROPIC_API_KEY` |
+
+Both produce the same `CareGap` records (the `source` field says which finder
+found it), so downstream consumers — the JSON export, the agent's
+`get_care_gaps` tool — work with either. A practical pattern: run rules for
+the panel-wide outreach list, then AI review on the handful of most complex
+patients.
+
+Real example — same patient, both finders: rules found one gap (missed
+follow-up); the AI found that gap **plus** concurrent atorvastatin +
+simvastatin (contraindicated duplication), a 6-month-old HbA1c in an
+uncontrolled diabetic, and elevated BPs with no dedicated follow-up.
+
+## Plugging in your own finder
+
+Implement the `GapFinder` protocol and register it — the CLI picks it up:
+
+```python
+# in hdh/modules/caregaps/finder.py (or your own module at import time)
+class MyFinder:
+    name = "mine"
+    description = "My strategy"
+    def find(self, session, *, mrn=None, limit=None, as_of=None, sample=5):
+        return [CareGap(...), ...]
+
+FINDERS["mine"] = MyFinder()      # now: hdh care-gaps --finder mine
 ```
 
 Example output:

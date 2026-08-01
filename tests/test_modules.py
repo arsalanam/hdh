@@ -77,3 +77,82 @@ def test_fhir_api_app(db_session):
     paths = {r.path for r in app.routes}
     assert "/metadata" in paths
     assert "/Patient/{mrn}" in paths
+
+
+def test_gap_finder_registry():
+    from hdh.modules.caregaps import FINDERS, get_finder
+
+    assert set(FINDERS) >= {"rules", "ai"}
+    assert get_finder("rules").name == "rules"
+    with pytest.raises(ValueError, match="Available: ai, rules"):
+        get_finder("psychic")
+
+
+def test_rule_finder_matches_detect_gaps(db_session):
+    from hdh.modules.caregaps import detect_gaps, get_finder
+
+    via_finder = get_finder("rules").find(db_session, limit=10)
+    direct = detect_gaps(db_session, limit=10)
+    assert [g.to_dict() for g in via_finder] == [g.to_dict() for g in direct]
+    assert all(g.source == "rules" for g in via_finder)
+
+
+def test_ai_finder_maps_findings_offline(db_session):
+    from hdh.core.models import Patient
+    from hdh.modules.caregaps.ai_finder import AIGapFinder
+
+    seen_charts = []
+
+    def fake_review(chart, as_of):
+        seen_charts.append(chart)
+        return {
+            "gaps": [
+                {
+                    "gap_type": "missing_hba1c_monitoring",
+                    "severity": "high",
+                    "description": "Diabetic with no HbA1c in 14 months",
+                    "recommendation": "Order HbA1c",
+                },
+                {
+                    "gap_type": "statin_gap",
+                    "severity": "medium",
+                    "description": "Hyperlipidemia without statin",
+                    "recommendation": "Consider statin",
+                },
+            ]
+        }
+
+    mrn = db_session.query(Patient).filter(Patient.visits.any()).first().mrn
+    gaps = AIGapFinder(review=fake_review).find(db_session, mrn=mrn)
+
+    assert len(gaps) == 2
+    assert seen_charts and "PATIENT CHART SUMMARY" in seen_charts[0]
+    assert gaps[0].severity == "high" and gaps[1].severity == "medium"  # sorted
+    assert gaps[0].gap_type == "missing_hba1c_monitoring"
+    assert "Order HbA1c" in gaps[0].description
+    assert all(g.source == "ai" and g.mrn == mrn for g in gaps)
+
+
+def test_ai_finder_samples_most_complex_patients(db_session):
+    from hdh.modules.caregaps.ai_finder import AIGapFinder
+
+    reviewed = []
+
+    def fake_review(chart, as_of):
+        reviewed.append(chart)
+        return {"gaps": []}
+
+    AIGapFinder(review=fake_review).find(db_session, sample=3)
+    assert len(reviewed) <= 3
+
+
+def test_ai_finder_chart_clipping_keeps_recent_visits():
+    from hdh.modules.caregaps.ai_finder import _clip_chart
+
+    chart = "HEADER\n" + "\n".join(f"VISIT {i}" for i in range(3000))
+    clipped = _clip_chart(chart, 12_000)
+    assert len(clipped) < 12_200
+    assert clipped.startswith("HEADER")  # demographics kept
+    assert "VISIT 2999" in clipped  # most recent visit kept
+    assert "older visits omitted" in clipped
+    assert _clip_chart("short", 12_000) == "short"

@@ -162,6 +162,20 @@ uv run hdh care-gaps --limit 100 --json > gaps.json   # export for a spreadsheet
 Dates are judged against the dataset's own timeline (its most recent visit),
 so the results stay meaningful no matter when you generated the data.
 
+**AI chart review (optional).** Once your API key is set up (Part 7), a
+second finder reviews charts the way a quality reviewer would — catching
+things the fixed rules can't, like a diabetic overdue for an HbA1c or two
+overlapping statins on the med list:
+
+```powershell
+uv run hdh care-gaps --finder ai --mrn MRN12345678    # one patient (~a few cents)
+uv run hdh care-gaps --finder ai --sample 5           # your 5 most complex patients
+```
+
+Rules are free, instant, and reproducible; the AI finder is slower, costs a
+little, and varies between runs — but reasons clinically. Comparing the two
+on the same patient is one of the most instructive exercises in this toolkit.
+
 ## Part 6 — Risk stratification
 
 Train a machine-learning model on *your* generated panel, then rank patients
