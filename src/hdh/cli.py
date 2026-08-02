@@ -294,6 +294,9 @@ def main():
     # list-conditions
     sub.add_parser("list-conditions", help="List all available condition codes")
 
+    # schema
+    sub.add_parser("schema", help="Describe the schema registry: modules, extensions, new entities")
+
     # Feature-module subcommands (each module defers heavy imports to run time)
     from hdh.modules import CLI_MODULES
 
@@ -305,6 +308,10 @@ def main():
         mod.register_cli(sub)
 
     args = parser.parse_args()
+
+    from hdh.core.schema_registry import bootstrap_schema
+
+    schema_registry = bootstrap_schema()
 
     engine = get_engine(args.db)
     session = get_session(engine)
@@ -340,6 +347,9 @@ def main():
         print("\nAvailable conditions:")
         for k, v in CONDITIONS.items():
             print(f"  {k:<30} [{v.icd10_code}] {v.description}")
+
+    elif args.command == "schema":
+        print(schema_registry.describe())
 
     elif hasattr(args, "func"):
         args.func(session, args)

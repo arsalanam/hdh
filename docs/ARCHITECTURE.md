@@ -118,6 +118,41 @@ MedicationRequest), and an LLM-ready plain-text chart. Modules reuse these
 rather than re-serializing (the FHIR API serves `patient_to_fhir_bundle`
 verbatim; the agent's chart tool serves `patient_to_text`).
 
+### Schema registry: modules extend the data model (`core/schema_registry.py`)
+
+Beyond adding *behavior*, modules can extend *entity definitions* — the
+extensible-schema design from
+[design/original-design-notes.md](design/original-design-notes.md) §7–§13,
+realized in hybrid form: the static `models.py` classes are the implicit
+**base module**, and schema modules ship declarative JSON that appends
+columns, relationships, or whole new entities at bootstrap.
+
+```
+hdh/modules/ontology/
+├── manifest.json                    {name, version, depends_on, priority}
+└── schema/entities/diagnosis.json   adds snomed_code, snomed_display
+```
+
+The load pipeline follows the design exactly: four phases (load entities →
+merge → load relationships → merge) with its collision rules — later module
+wins on new-column collisions (logged warning); re-declaring a base column,
+renaming a tablename, targeting an unknown entity, or a circular module
+dependency are hard `SchemaError`s — then a two-pass factory (inject columns
+into mapped classes / build new classes on `Base`, then wire relationships).
+
+`bootstrap_schema()` runs once per process from each composition root (CLI,
+tests, FHIR app) **before** `get_engine()`; the engine then auto-adds any
+missing extension columns to an existing SQLite file (`ALTER TABLE ADD
+COLUMN` — the lightweight stand-in for the design's Alembic step). Inspect
+the result with `hdh schema`; the ontology module is the living example
+(`hdh ontology tag` backfills SNOMED codes into the registry-added columns,
+and the FHIR exporter emits dual ICD-10 + SNOMED codings).
+
+Hybrid rather than fully JSON-generated core, deliberately: keeping base
+entities as static classes preserves typing, IDE navigation, and the mypy
+setup; the registry's semantics apply where extensibility pays — module
+contributions.
+
 ## 4. The CLI and module discovery
 
 `hdh.cli` defines the core subcommands (`generate`, `stats`, `export`, `show`,

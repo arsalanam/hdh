@@ -1,5 +1,13 @@
 # Family Medicine Synthetic Dataset — Architecture Reference
 
+> **Status (2026-08):** §7–§13 (the extensible-schema registry) are now
+> implemented in hybrid form — static core classes as the base module, JSON
+> schema modules appending columns/relationships/entities via
+> `src/hdh/core/schema_registry.py`, with the four-phase load order and
+> collision rules below preserved verbatim. See docs/ARCHITECTURE.md §3
+> and the ontology module for the living example. §15's roadmap items are
+> all built as feature modules.
+
 > Generated from claude.ai design session. Use this file as context when
 > continuing with Claude Code:
 > ```bash

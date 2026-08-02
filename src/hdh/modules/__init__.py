@@ -13,6 +13,13 @@ CLI_MODULES = {
     "hdh.modules.risk.cli": "risk",
     "hdh.modules.agent.cli": "agent",
     "hdh.modules.agent.pipeline.trace_cli": "agent",
+    "hdh.modules.ontology.cli": None,
     "hdh.modules.narrative.cli": None,
     "hdh.modules.fhir_api.cli": "api",
 }
+
+# Modules that extend the data model via the schema registry (each ships a
+# manifest.json + schema/ directory; see hdh.core.schema_registry).
+SCHEMA_MODULES = [
+    "hdh.modules.ontology",
+]

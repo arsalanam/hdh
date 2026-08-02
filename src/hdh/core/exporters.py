@@ -234,22 +234,39 @@ def _fhir_vitals_observations(v, mrn: str, enc_id: str) -> list[dict]:
     ]
 
 
+def _dx_codings(dx) -> list[dict]:
+    """ICD-10 coding, plus SNOMED when the ontology schema module added it.
+
+    getattr because snomed_code is an optional extension column contributed
+    by the schema registry — core stays importable without the module.
+    """
+    codings = [
+        {
+            "system": "http://hl7.org/fhir/sid/icd-10",
+            "code": dx.icd10_code,
+            "display": dx.description,
+        }
+    ]
+    snomed = getattr(dx, "snomed_code", None)
+    if snomed:
+        codings.append(
+            {
+                "system": "http://snomed.info/sct",
+                "code": snomed,
+                "display": getattr(dx, "snomed_display", None) or dx.description,
+            }
+        )
+    return codings
+
+
 def _fhir_conditions(v, mrn: str, enc_id: str) -> list[dict]:
-    """ICD-10-coded Condition resources for a visit's diagnoses."""
+    """Coded Condition resources for a visit's diagnoses (ICD-10 + SNOMED)."""
     return [
         {
             "resourceType": "Condition",
             "id": str(uuid.uuid4()),
             "clinicalStatus": {"coding": [{"code": "active"}]},
-            "code": {
-                "coding": [
-                    {
-                        "system": "http://hl7.org/fhir/sid/icd-10",
-                        "code": dx.icd10_code,
-                        "display": dx.description,
-                    }
-                ]
-            },
+            "code": {"coding": _dx_codings(dx)},
             "subject": {"reference": f"Patient/{mrn}"},
             "encounter": {"reference": f"Encounter/{enc_id}"},
             "recordedDate": _date_str(v.visit_date),

@@ -21,6 +21,9 @@ def create_app(db_path: str = "family_medicine.db"):
     """Build the FastAPI app serving the read-only FHIR R4 facade."""
     from fastapi import FastAPI, HTTPException
 
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
     app = FastAPI(
         title="hdh FHIR R4 API",
         description="Read-only FHIR R4 facade over the synthetic family-medicine dataset",

@@ -210,8 +210,14 @@ class LabResult(Base):
 
 
 def get_engine(db_path: str = "family_medicine.db"):
+    """Create the engine, create missing tables, and add any extension
+    columns the schema registry contributed (see core/schema_registry.py)."""
     engine = create_engine(f"sqlite:///{db_path}", echo=False)
     Base.metadata.create_all(engine)
+    from hdh.core.schema_registry import registry  # lazy: avoid import cycle
+
+    if registry.applied:
+        registry.ensure_columns(engine)
     return engine
 
 

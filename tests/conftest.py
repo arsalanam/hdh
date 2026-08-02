@@ -6,7 +6,10 @@ from hdh.core.models import get_engine, get_session
 
 @pytest.fixture(scope="session")
 def db_session():
-    """A small in-memory dataset shared across tests."""
+    """A small in-memory dataset shared across tests (schema bootstrapped)."""
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
     engine = get_engine(":memory:")
     session = get_session(engine)
     build_dataset(session, n_patients=8, years_of_history=2, verbose=False)
