@@ -93,7 +93,11 @@ care-gaps, risk, agent, narrative, serve, trace`, and more.
 uv run hdh generate --patients 10000 --years 4
 ```
 
-This builds `family_medicine.db` (~87 MB) — your practice. It takes a few
+(Prefer not to wait? Download `family_medicine-10k.zip` from
+[the latest release](https://github.com/arsalanam/hdh/releases/latest) and
+unzip it into the `hdh` folder instead — same 10,000 patients, ready to use.)
+
+This builds `family_medicine.db` (~95 MB) — your practice. It takes a few
 minutes; you'll see progress every 500 patients. For a quicker first play,
 `--patients 2000` finishes in well under a minute (the AI and risk features
 work fine on the smaller panel too).
