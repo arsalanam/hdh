@@ -137,9 +137,12 @@ summer) and comorbidities are seeded from age, family history, smoking, and BMI.
 
 ## The Database
 
-The generator writes `family_medicine.db` (SQLite, ~87 MB for 10k patients).
-It is **not** checked into git — run `hdh generate` to build one, or attach a
-pre-built copy from your release artifacts.
+The generator writes `family_medicine.db` (SQLite, ~95 MB for 10k patients).
+It is **not** checked into git. Either build one (`hdh generate`) or download
+the pre-built 10,000-patient database from the
+[latest release](https://github.com/arsalanam/hdh/releases/latest)
+(`family_medicine-10k.zip`, ~28 MB — unzip into the project folder). The
+release copy is already SNOMED-tagged via `hdh ontology tag`.
 
 ## Documentation
 
