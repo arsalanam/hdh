@@ -186,7 +186,12 @@ Library-level starting points with documented extension paths:
 
 ## 10. Roadmap
 
-- Wire SNOMED codings into the FHIR `Condition` resources.
+- **Care-plan generation subagent** — designed, not yet built: a checkpointed
+  LangGraph subagent producing HL7/FHIR-shaped care plans (concerns → goals →
+  interventions → outcomes) via RAG over curated knowledge bases, with
+  rubric-driven auto-evaluation and human-in-the-loop approval. Full design:
+  [design/care-plan-module.md](design/care-plan-module.md)
+  ([PDF](design/care-plan-module.pdf)).
 - Claims lifecycle simulation (submit → adjudicate → pay/deny) and an `hdh billing` command.
 - Care-gap → agent outreach loop: let the agent draft outreach plans for detected gaps.
 - Survival-style risk modeling (time-to-event) alongside the classifier.
