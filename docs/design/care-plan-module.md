@@ -137,32 +137,81 @@ the corpus manifest records provenance and license per document.
 
 ## 4. Architecture overview
 
+Two views: where the subagent sits (context), and what it does (workflow).
+
+### 4.1 System context — who talks to what
+
 ```
-                        main agent pipeline (existing)
-                        └── tool executor ── generate_care_plan(mrn) ─┐
-                                                                      │
-  hdh careplan generate --mrn …  ──────────────────────────────────┐  │
-                                                                   ▼  ▼
-┌──────────────────────────  careplan subagent (LangGraph subgraph) ─────────────────────────┐
-│                                                                                            │
-│  intake ─▶ stratify ─▶ concerns ─▶ goals ─▶ interventions ─▶ reconcile ─▶ assemble         │
-│ (chart    (risk mod-  (RAG:       (RAG:    (RAG: guideline   (cross-      (plan rows +     │
-│  normal-   ule, flags, concern     goal     actions, SDOH     condition    FHIR bundle +   │
-│  ization)  Beers-type  KB +        temp-    referrals,        dedup,       narrative)      │
-│            rules)      SDOH)       lates)   safety check)     burden veto)                 │
-│                                                                    │                       │
-│                 ┌────────── auto-evaluate (rubric KB + grader) ◀───┘                       │
-│                 │      score < threshold ──▶ revise (bounded retries) ──▶ back to section  │
-│                 ▼                                                                          │
-│           INTERRUPT: human review  ◀━━ checkpointer persists full state ━━▶ resume         │
-│                 │ approve / edit / reject-with-reason                                      │
-│                 ▼                                                                          │
-│             finalize (status=approved, Provenance, export)                                 │
-└────────────────────────────────────────────────────────────────────────────────────────────┘
-        │                    │                        │
-   knowledge stores     clinical DB              trace DB
-   (RAG corpora, §6)    (plan entities, §5)      (runs/turns/steps — reused)
+   ┌───────────────────────┐          ┌───────────────────────┐
+   │  main agent pipeline  │          │  hdh careplan CLI     │
+   │  (tool executor calls │          │  generate · review ·  │
+   │  generate_care_plan)  │          │  resume · export      │
+   └───────────┬───────────┘          └───────────┬───────────┘
+               │                                  │
+               └────────────────┬─────────────────┘
+                                ▼
+               ┌────────────────────────────────┐
+               │     care-plan subagent         │
+               │     (LangGraph subgraph)       │
+               └───┬─────────┬─────────┬────┬───┘
+     reads chart,  │         │         │    │  workflow state
+     writes plan   │   RAG   │  step   │    │  (pause/resume)
+                   ▼         ▼         ▼    ▼
+             clinical DB  knowledge  trace  checkpoint DB
+             (entities,   stores     DB     (SqliteSaver,
+              §5)         (§6)       (§10)   §10)
 ```
+
+One subagent, four storage concerns, each with a single responsibility:
+clinical content, retrievable knowledge, observability, and resumable
+workflow state.
+
+### 4.2 Workflow — the stages in order
+
+A single forward spine; the only two loops are drawn where they occur.
+Each stage is labeled with its mechanism — **[det]** = deterministic code,
+**[RAG+LLM]** = retrieval then constrained selection (§7).
+
+```
+          chart (MRN)
+               │
+    ┌──────────▼──────────┐
+    │ 1  intake           │  normalize chart into compact context      [det]
+    ├─────────────────────┤
+    │ 2  stratify         │  risk score, med-safety flags, SDOH        [det]
+    ├─────────────────────┤
+    │ 3  concerns         │  candidates retrieved → LLM selects+cites  [RAG+LLM]
+    ├─────────────────────┤
+    │ 4  goals            │  templates → patient-specific targets      [RAG+LLM]
+    ├─────────────────────┤
+    │ 5  interventions    │  guideline actions, SDOH referrals         [RAG+LLM]
+    ├─────────────────────┤
+    │ 6  reconcile        │  dedup, deprescribing vetoes, burden       [det + LLM flag]
+    ├─────────────────────┤
+    │ 7  assemble         │  entity rows + FHIR bundle + narrative     [det + LLM prose]
+    └──────────┬──────────┘
+               ▼
+    ┌─────────────────────┐    score below threshold →
+    │ 8  auto-evaluate    │────  revise weak section with ────┐
+    │    (rubrics, §9)    │◀───  grader feedback (≤2 rounds) ─┘
+    └──────────┬──────────┘
+               ▼
+    ┌─────────────────────┐   ⏸ interrupt — full state checkpointed;
+    │ 9  human review     │      resumable any time later (§10)
+    └──────────┬──────────┘
+               │  approve ─────────────────▶ continue below
+               │  edit ────▶ re-evaluate (8) ─▶ review again (9)
+               │  reject + reason ─▶ revise, or terminate as rejected
+               ▼
+    ┌─────────────────────┐
+    │ 10 finalize         │  status=approved · Provenance · export
+    └─────────────────────┘
+```
+
+Reading it as a sentence: *deterministic preparation (1–2), constrained
+generation (3–5), safety reconciliation (6), assembly (7), machine grading
+(8), human decision (9), finalization (10)* — with revision loops only out
+of grading and review, never inside generation.
 
 Design rules carried over from the pipeline: every node's dependencies are
 injected (a `CarePlanDeps` frozen dataclass mirroring `PipelineDeps`), every
