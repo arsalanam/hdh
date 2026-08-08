@@ -192,6 +192,14 @@ Library-level starting points with documented extension paths:
   rubric-driven auto-evaluation and human-in-the-loop approval. Full design:
   [design/care-plan-module.md](design/care-plan-module.md)
   ([PDF](design/care-plan-module.pdf)).
+- **ICD-10-CM clinical ontology module** — open RFC: the full ~74k-code
+  catalog as a knowledge graph (hierarchy, laterality, severity, and
+  coding-rule edges) via the schema registry, loaded from official CMS
+  files, with description→code retrieval for the agent and care-plan
+  codification — and hdh's move to PostgreSQL + Redis via `just deps`,
+  retiring SQLite. Full design:
+  [design/icd10cm-ontology-module.md](design/icd10cm-ontology-module.md)
+  ([PDF](design/icd10cm-ontology-module.pdf)).
 - Claims lifecycle simulation (submit → adjudicate → pay/deny) and an `hdh billing` command.
 - Care-gap → agent outreach loop: let the agent draft outreach plans for detected gaps.
 - Survival-style risk modeling (time-to-event) alongside the classifier.
