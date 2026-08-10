@@ -248,6 +248,38 @@ def cmd_show(session, mrn: str):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
+def cmd_migrate(args):
+    """Copy the SQLite database into the HDH_DB_URL target and report results."""
+    import os
+
+    from sqlalchemy import create_engine
+
+    from hdh.core.migrate import MigrationError, migrate_sqlite
+
+    source = args.source or args.db
+    target_url = args.target or os.environ.get("HDH_DB_URL")
+    if not target_url:
+        raise SystemExit("hdh migrate: no target — set HDH_DB_URL (run `just deps`) or pass --target")
+    if not os.path.exists(source):
+        raise SystemExit(f"hdh migrate: source '{source}' not found")
+
+    target = create_engine(target_url, echo=False)
+    print(f"\n🚚 Migrating {source} → {target.url.render_as_string(hide_password=True)}")
+    try:
+        results = migrate_sqlite(source, target, batch_size=args.batch, force=args.force)
+    except MigrationError as err:
+        raise SystemExit(f"hdh migrate: {err}") from None
+    finally:
+        target.dispose()
+    for r in results:
+        flag = "✓" if r.verified else "✗ COUNT MISMATCH"
+        print(f"   {r.table:<20} {r.rows:>10,} rows  {flag}")
+    if all(r.verified for r in results):
+        print("✅ Migration verified — source file left untouched.")
+    else:
+        raise SystemExit("hdh migrate: verification failed (see table counts above)")
+
+
 def main():
     """CLI entry point: parse arguments, open the DB session, dispatch the command."""
     # Windows consoles default to legacy code pages that can't print the
@@ -297,6 +329,13 @@ def main():
     # schema
     sub.add_parser("schema", help="Describe the schema registry: modules, extensions, new entities")
 
+    # migrate (SQLite → HDH_DB_URL; the exit path from SQLite)
+    mig_p = sub.add_parser("migrate", help="Copy a SQLite database into HDH_DB_URL (PostgreSQL)")
+    mig_p.add_argument("--source", default=None, help="SQLite file to copy (default: --db)")
+    mig_p.add_argument("--target", default=None, help="Target URL (default: HDH_DB_URL)")
+    mig_p.add_argument("--batch", type=int, default=5000)
+    mig_p.add_argument("--force", action="store_true", help="Clear existing rows in the target first")
+
     # Feature-module subcommands (each module defers heavy imports to run time)
     from hdh.modules import CLI_MODULES
 
@@ -312,6 +351,10 @@ def main():
     from hdh.core.schema_registry import bootstrap_schema
 
     schema_registry = bootstrap_schema()
+
+    if args.command == "migrate":
+        cmd_migrate(args)
+        return
 
     engine = get_engine(args.db)
     session = get_session(engine)

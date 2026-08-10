@@ -41,12 +41,14 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -54,6 +56,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 log = logging.getLogger("hdh.schema")
@@ -68,10 +71,14 @@ class SchemaError(Exception):
 def _build_column(spec: dict, entity: str) -> Column:
     """Translate one JSON column spec into a SQLAlchemy Column."""
     type_name = spec["type"]
+    col_type: Any
     if type_name == "String":
         col_type = String(spec.get("length", 80))
     elif type_name == "Enum":
         col_type = SAEnum(*spec["values"], name=f"{entity.lower()}_{spec['name']}_enum")
+    elif type_name == "JSON":
+        # Portable JSON that upgrades to JSONB (GIN-indexable) on PostgreSQL
+        col_type = JSON().with_variant(JSONB(), "postgresql")
     else:
         simple = {
             "Integer": Integer,
@@ -86,6 +93,9 @@ def _build_column(spec: dict, entity: str) -> Column:
         except KeyError:
             raise SchemaError(f"{entity}: unsupported column type '{type_name}'") from None
     args = [ForeignKey(spec["foreign_key"])] if spec.get("foreign_key") else []
+    kwargs: dict[str, Any] = {}
+    if spec.get("server_default") is not None:
+        kwargs["server_default"] = text(str(spec["server_default"]))
     return Column(
         spec["name"],
         col_type,
@@ -93,7 +103,30 @@ def _build_column(spec: dict, entity: str) -> Column:
         primary_key=spec.get("primary_key", False),
         nullable=spec.get("nullable", True),
         autoincrement=spec.get("autoincrement", "auto"),
+        **kwargs,
     )
+
+
+def _build_indexes(merged: dict, table) -> list[Index]:
+    """Materialize an entity spec's "indexes" list against a live table.
+
+    Supported spec keys: name, columns (list), unique (bool), where (SQL
+    text for partial indexes — dialect support applies at create time).
+    """
+    built = []
+    existing = {ix.name for ix in table.indexes}
+    for ix_spec in merged.get("indexes", []):
+        if ix_spec["name"] in existing:
+            continue  # idempotent re-apply
+        try:
+            cols = [table.c[name] for name in ix_spec["columns"]]
+        except KeyError as err:
+            raise SchemaError(f"index {ix_spec['name']}: unknown column {err} on {table.name}") from None
+        kwargs: dict[str, Any] = {"unique": ix_spec.get("unique", False)}
+        if ix_spec.get("where"):
+            kwargs["postgresql_where"] = text(ix_spec["where"])
+        built.append(Index(ix_spec["name"], *cols, **kwargs))
+    return built
 
 
 def _base_entities() -> dict[str, type]:
@@ -182,10 +215,16 @@ class SchemaRegistry:
                     )
                 merged = self.merged_entities.setdefault(
                     entity,
-                    {"tablename": spec.get("tablename"), "columns": {}, "is_new": not is_base_entity},
+                    {
+                        "tablename": spec.get("tablename"),
+                        "columns": {},
+                        "indexes": [],
+                        "is_new": not is_base_entity,
+                    },
                 )
                 if merged["is_new"] and spec.get("tablename"):
                     merged["tablename"] = spec["tablename"]
+                merged["indexes"].extend(spec.get("indexes", []))
                 base_columns = {c.name for c in base[entity].__table__.columns} if is_base_entity else set()
                 for column_spec in spec.get("columns", []):
                     name = column_spec["name"]
@@ -256,32 +295,64 @@ class SchemaRegistry:
                 target = classes[entity]
                 for name, (spec, _module) in merged["columns"].items():
                     if name in target.__table__.columns:
-                        continue  # idempotent re-apply
+                        # idempotent re-apply; spec-vs-database drift is
+                        # Alembic autogenerate's job (issue #7)
+                        continue
                     column = _build_column(spec, entity)
                     target.__table__.append_column(column)
                     target.__mapper__.add_property(name, column)
+            # Index() attaches itself to the table's metadata at construction
+            _build_indexes(merged, classes[entity].__table__)
         for entity, rels in self.merged_relationships.items():  # pass 2
             target = classes[entity]
             for name, (spec, _module) in rels.items():
+                if spec["type"] == "many_to_many":
+                    raise SchemaError(
+                        f"{entity}.{name}: many_to_many is not supported (no association-"
+                        "table specs yet) — model an explicit link entity instead"
+                    )
                 kwargs: dict = {}
                 if spec.get("back_populates"):
                     kwargs["back_populates"] = spec["back_populates"]
                 if spec.get("cascade"):
                     kwargs["cascade"] = spec["cascade"]
-                uselist = spec["type"] in ("one_to_many", "many_to_many")
+                if spec.get("foreign_keys"):
+                    kwargs["foreign_keys"] = self._resolve_columns(entity, name, spec["foreign_keys"])
+                uselist = spec["type"] == "one_to_many"
                 target.__mapper__.add_property(
                     name, relationship(classes[spec["target"]], uselist=uselist, **kwargs)
                 )
         self.applied = True
         return classes
 
+    @staticmethod
+    def _resolve_columns(entity: str, rel: str, refs: list[str]) -> list[Column]:
+        """Resolve "table.column" strings from a relationship's foreign_keys
+        spec — required when two FKs point at the same target table (e.g. a
+        graph edge's source/target both referencing a concepts table)."""
+        from hdh.core.models import Base
+
+        columns = []
+        for ref in refs:
+            table_name, _, col_name = ref.partition(".")
+            table = Base.metadata.tables.get(table_name)
+            if table is None or col_name not in table.c:
+                raise SchemaError(f"{entity}.{rel}: foreign_keys references unknown column '{ref}'")
+            columns.append(table.c[col_name])
+        return columns
+
     # ── Runtime helpers ──────────────────────────────────────────────────────
 
     def ensure_columns(self, engine) -> list[str]:
-        """Add extension columns missing from an existing database (SQLite
-        ALTER TABLE ADD COLUMN) — the lightweight Alembic stand-in."""
-        added = []
+        """Add extension columns missing from an existing database (ALTER
+        TABLE ADD COLUMN) — the lightweight stand-in for databases not yet
+        under Alembic. Once a database carries an ``alembic_version`` table,
+        Alembic owns its schema and this auto-ADD path steps aside
+        (issue #7; run `just db-upgrade` instead)."""
+        added: list[str] = []
         inspector = inspect(engine)
+        if inspector.has_table("alembic_version"):
+            return added
         from hdh.core.models import Base
 
         for table in Base.metadata.tables.values():

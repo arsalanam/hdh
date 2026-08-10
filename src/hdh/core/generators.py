@@ -273,13 +273,19 @@ def _visits_per_year(age: int, established_conditions: set) -> float:
     return base
 
 
+def _bmi(patient: Patient) -> float:
+    if patient.bmi_baseline is None:
+        raise ValueError(f"patient {patient.mrn} has no bmi_baseline")
+    return patient.bmi_baseline
+
+
 def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: int = 4) -> tuple[list, set]:
     """
     Generate a realistic multi-year visit history for a patient.
     Returns a list of Visit objects (with vitals, diagnoses, Rx, labs attached).
     """
     age_at_start = max(0, patient.age - years)
-    established = comorbidity_seeds(patient.age, fam_hx, smoker, patient.bmi_baseline)
+    established = comorbidity_seeds(patient.age, fam_hx, smoker, _bmi(patient))
 
     start_date = date.today() - timedelta(days=years * 365)
     all_visits = []
@@ -362,7 +368,7 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
             session.flush()  # get visit.id
 
             # Vitals
-            vital = generate_vital(visit.id, patient.age, patient.sex, patient.bmi_baseline, cprofile)
+            vital = generate_vital(visit.id, patient.age, patient.sex, _bmi(patient), cprofile)
             session.add(vital)
 
             # Primary diagnosis

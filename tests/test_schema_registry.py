@@ -130,3 +130,147 @@ def test_ontology_module_end_to_end(db_session):
         if coding["system"] == "http://snomed.info/sct"
     ]
     assert snomed_codings, "FHIR Conditions should carry the SNOMED coding"
+
+
+# ─── Registry v2 (issue #11): JSON, indexes, server defaults, foreign_keys ───
+
+
+def test_json_column_and_server_default(tmp_path):
+    """JSON columns land as portable JSON (JSONB on PostgreSQL) and
+    server_default passes through to the column."""
+    from sqlalchemy import JSON
+    from sqlalchemy.dialects import postgresql
+
+    reg = SchemaRegistry()
+    spec = {
+        "entity": "RegV2JsonDoc",
+        "tablename": "regv2_json_docs",
+        "columns": [
+            {"name": "id", "type": "Integer", "primary_key": True},
+            {"name": "properties", "type": "JSON"},
+            {"name": "created_at", "type": "DateTime", "server_default": "CURRENT_TIMESTAMP"},
+        ],
+    }
+    reg.register_module(str(make_module(tmp_path, "json_mod", entities=[spec])))
+    reg.load_all()
+    classes = reg.apply()
+    table = classes["RegV2JsonDoc"].__table__
+    assert isinstance(table.c.properties.type, JSON)
+    assert table.c.properties.type.compile(dialect=postgresql.dialect()) == "JSONB"
+    assert table.c.created_at.server_default is not None
+
+
+def test_index_specs_build_and_validate(tmp_path):
+    """Entity-level index specs materialize (composite + unique); unknown
+    columns are a hard error."""
+    reg = SchemaRegistry()
+    spec = {
+        "entity": "RegV2Indexed",
+        "tablename": "regv2_indexed",
+        "columns": [
+            {"name": "id", "type": "Integer", "primary_key": True},
+            {"name": "kind", "type": "String", "length": 16},
+            {"name": "code", "type": "String", "length": 32},
+        ],
+        "indexes": [
+            {"name": "ix_regv2_kind_code", "columns": ["kind", "code"]},
+            {"name": "ux_regv2_code", "columns": ["code"], "unique": True},
+        ],
+    }
+    reg.register_module(str(make_module(tmp_path, "idx_mod", entities=[spec])))
+    reg.load_all()
+    classes = reg.apply()
+    indexes = {ix.name: ix for ix in classes["RegV2Indexed"].__table__.indexes}
+    assert set(indexes) == {"ix_regv2_kind_code", "ux_regv2_code"}
+    assert [c.name for c in indexes["ix_regv2_kind_code"].columns] == ["kind", "code"]
+    assert indexes["ux_regv2_code"].unique
+
+    bad = SchemaRegistry()
+    bad_spec = {
+        "entity": "RegV2BadIndex",
+        "tablename": "regv2_bad_index",
+        "columns": [{"name": "id", "type": "Integer", "primary_key": True}],
+        "indexes": [{"name": "ix_nope", "columns": ["missing"]}],
+    }
+    bad.register_module(str(make_module(tmp_path, "bad_idx", entities=[bad_spec])))
+    bad.load_all()
+    with pytest.raises(SchemaError, match="unknown column"):
+        bad.apply()
+
+
+def test_foreign_keys_disambiguate_double_fk(tmp_path):
+    """A graph-edge entity with two FKs to one target maps cleanly when the
+    relationship specs carry foreign_keys — the OntologyEdge shape (#11)."""
+    from sqlalchemy.orm import configure_mappers
+
+    reg = SchemaRegistry()
+    node = {
+        "entity": "RegV2Node",
+        "tablename": "regv2_nodes",
+        "columns": [
+            {"name": "id", "type": "String", "length": 64, "primary_key": True},
+            {"name": "display", "type": "String", "length": 100},
+        ],
+    }
+    edge = {
+        "entity": "RegV2Edge",
+        "tablename": "regv2_edges",
+        "columns": [
+            {"name": "id", "type": "Integer", "primary_key": True},
+            {"name": "source_id", "type": "String", "length": 64, "foreign_key": "regv2_nodes.id"},
+            {"name": "target_id", "type": "String", "length": 64, "foreign_key": "regv2_nodes.id"},
+        ],
+    }
+    rels = {
+        "entity": "RegV2Edge",
+        "relationships": [
+            {
+                "name": "source",
+                "target": "RegV2Node",
+                "type": "many_to_one",
+                "foreign_keys": ["regv2_edges.source_id"],
+            },
+            {
+                "name": "target",
+                "target": "RegV2Node",
+                "type": "many_to_one",
+                "foreign_keys": ["regv2_edges.target_id"],
+            },
+        ],
+    }
+    reg.register_module(str(make_module(tmp_path, "graph_mod", entities=[node, edge], relationships=[rels])))
+    reg.load_all()
+    classes = reg.apply()
+    configure_mappers()  # AmbiguousForeignKeysError would surface here
+
+    from hdh.core.models import get_engine, get_session
+
+    engine = get_engine(str(tmp_path / "graph.db"))
+    session = get_session(engine)
+    a = classes["RegV2Node"](id="n:a", display="A")
+    b = classes["RegV2Node"](id="n:b", display="B")
+    e = classes["RegV2Edge"](id=1, source_id="n:a", target_id="n:b")
+    session.add_all([a, b, e])
+    session.commit()
+    stored = session.get(classes["RegV2Edge"], 1)
+    assert stored.source.display == "A" and stored.target.display == "B"
+    session.close()
+    engine.dispose()
+
+
+def test_many_to_many_is_rejected(tmp_path):
+    """many_to_many has no association-table support — honest SchemaError."""
+    reg = SchemaRegistry()
+    ent = {
+        "entity": "RegV2M2M",
+        "tablename": "regv2_m2m",
+        "columns": [{"name": "id", "type": "Integer", "primary_key": True}],
+    }
+    rels = {
+        "entity": "RegV2M2M",
+        "relationships": [{"name": "peers", "target": "RegV2M2M", "type": "many_to_many"}],
+    }
+    reg.register_module(str(make_module(tmp_path, "m2m_mod", entities=[ent], relationships=[rels])))
+    reg.load_all()
+    with pytest.raises(SchemaError, match="many_to_many"):
+        reg.apply()
