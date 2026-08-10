@@ -1,0 +1,19 @@
+{
+  "entity": "OntologyLoad",
+  "tablename": "ontology_loads",
+  "module": "icd10cm_module",
+  "columns": [
+    { "name": "id", "type": "Integer", "primary_key": true, "autoincrement": true },
+    { "name": "ontology", "type": "String", "length": 16, "nullable": false },
+    { "name": "fiscal_year", "type": "Integer", "nullable": false },
+    { "name": "loaded_at", "type": "DateTime", "server_default": "CURRENT_TIMESTAMP" },
+    { "name": "source_checksums", "type": "JSON" },
+    { "name": "concept_count", "type": "Integer" },
+    { "name": "edge_count", "type": "Integer" },
+    { "name": "duration_seconds", "type": "Float" },
+    { "name": "properties", "type": "JSON" }
+  ],
+  "indexes": [
+    { "name": "ix_load_ontology_fy", "columns": ["ontology", "fiscal_year"] }
+  ]
+}

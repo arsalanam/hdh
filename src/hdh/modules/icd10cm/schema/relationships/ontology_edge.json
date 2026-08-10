@@ -1,0 +1,8 @@
+{
+  "entity": "OntologyEdge",
+  "module": "icd10cm_module",
+  "relationships": [
+    { "name": "source", "target": "OntologyConcept", "type": "many_to_one", "foreign_keys": ["ontology_edges.source_id"] },
+    { "name": "target", "target": "OntologyConcept", "type": "many_to_one", "foreign_keys": ["ontology_edges.target_id"] }
+  ]
+}

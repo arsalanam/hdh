@@ -20,6 +20,7 @@ CLI_MODULES = {
 
 # Modules that extend the data model via the schema registry (each ships a
 # manifest.json + schema/ directory; see hdh.core.schema_registry).
-SCHEMA_MODULES = [
+SCHEMA_MODULES = (
     "hdh.modules.ontology",
-]
+    "hdh.modules.icd10cm",
+)
