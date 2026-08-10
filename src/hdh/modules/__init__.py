@@ -14,6 +14,7 @@ CLI_MODULES = {
     "hdh.modules.agent.cli": "agent",
     "hdh.modules.agent.pipeline.trace_cli": "agent",
     "hdh.modules.ontology.cli": None,
+    "hdh.modules.icd10cm.cli": None,
     "hdh.modules.narrative.cli": None,
     "hdh.modules.fhir_api.cli": "api",
 }

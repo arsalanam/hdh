@@ -1,0 +1,119 @@
+00001 E11     0 Type 2 diabetes mellitus                                     Type 2 diabetes mellitus
+00002 E112    0 Type 2 diabetes mellitus with kidney complications           Type 2 diabetes mellitus with kidney complications
+00003 E1121   1 Type 2 diabetes mellitus with diabetic nephropathy           Type 2 diabetes mellitus with diabetic nephropathy
+00004 E1122   1 Type 2 diabetes mellitus with diabetic chronic kidney dis... Type 2 diabetes mellitus with diabetic chronic kidney disease
+00005 E1129   1 Type 2 diabetes mellitus with other diabetic kidney compl... Type 2 diabetes mellitus with other diabetic kidney complication
+00006 E114    0 Type 2 diabetes mellitus with neurological complications     Type 2 diabetes mellitus with neurological complications
+00007 E1140   1 Type 2 diabetes mellitus with diabetic neuropathy, unspec... Type 2 diabetes mellitus with diabetic neuropathy, unspecified
+00008 E1142   1 Type 2 diabetes mellitus with diabetic polyneuropathy        Type 2 diabetes mellitus with diabetic polyneuropathy
+00009 E115    0 Type 2 diabetes mellitus with circulatory complications      Type 2 diabetes mellitus with circulatory complications
+00010 E1151   1 Type 2 diabetes mellitus with diabetic peripheral angiopa... Type 2 diabetes mellitus with diabetic peripheral angiopathy without gangrene
+00011 E1152   1 Type 2 diabetes mellitus with diabetic peripheral angiopa... Type 2 diabetes mellitus with diabetic peripheral angiopathy with gangrene
+00012 E116    0 Type 2 diabetes mellitus with other specified complications  Type 2 diabetes mellitus with other specified complications
+00013 E1165   1 Type 2 diabetes mellitus with hyperglycemia                  Type 2 diabetes mellitus with hyperglycemia
+00014 E119    1 Type 2 diabetes mellitus without complications               Type 2 diabetes mellitus without complications
+00015 G89     0 Pain, not elsewhere classified                               Pain, not elsewhere classified
+00016 G892    0 Chronic pain, not elsewhere classified                       Chronic pain, not elsewhere classified
+00017 G8929   1 Other chronic pain                                           Other chronic pain
+00018 G893    1 Neoplasm related pain (acute) (chronic)                      Neoplasm related pain (acute) (chronic)
+00019 G894    1 Chronic pain syndrome                                        Chronic pain syndrome
+00020 M25     0 Other joint disorder, not elsewhere classified               Other joint disorder, not elsewhere classified
+00021 M255    0 Pain in joint                                                Pain in joint
+00022 M2551   0 Pain in shoulder                                             Pain in shoulder
+00023 M25511  1 Pain in right shoulder                                       Pain in right shoulder
+00024 M25512  1 Pain in left shoulder                                        Pain in left shoulder
+00025 M25519  1 Pain in unspecified shoulder                                 Pain in unspecified shoulder
+00026 M2555   0 Pain in hip                                                  Pain in hip
+00027 M25551  1 Pain in right hip                                            Pain in right hip
+00028 M25552  1 Pain in left hip                                             Pain in left hip
+00029 M25559  1 Pain in unspecified hip                                      Pain in unspecified hip
+00030 S52     0 Fracture of forearm                                          Fracture of forearm
+00031 S520    0 Fracture of upper end of ulna                                Fracture of upper end of ulna
+00032 S5200   0 Unspecified fracture of upper end of ulna                    Unspecified fracture of upper end of ulna
+00033 S52001  0 Unspecified fracture of upper end of right ulna              Unspecified fracture of upper end of right ulna
+00034 S52001A 1 Unspecified fracture of upper end of right ulna, initial ... Unspecified fracture of upper end of right ulna, initial encounter for closed fracture
+00035 S52001B 1 Unspecified fracture of upper end of right ulna, initial ... Unspecified fracture of upper end of right ulna, initial encounter for open fracture type I or II
+00036 S52001D 1 Unspecified fracture of upper end of right ulna, subseque... Unspecified fracture of upper end of right ulna, subsequent encounter for fracture with routine healing
+00037 S52001G 1 Unspecified fracture of upper end of right ulna, subseque... Unspecified fracture of upper end of right ulna, subsequent encounter for fracture with delayed healing
+00038 S52001K 1 Unspecified fracture of upper end of right ulna, subseque... Unspecified fracture of upper end of right ulna, subsequent encounter for fracture with nonunion
+00039 S52001P 1 Unspecified fracture of upper end of right ulna, subseque... Unspecified fracture of upper end of right ulna, subsequent encounter for fracture with malunion
+00040 S52001S 1 Unspecified fracture of upper end of right ulna, sequela     Unspecified fracture of upper end of right ulna, sequela
+00041 S52002  0 Unspecified fracture of upper end of left ulna               Unspecified fracture of upper end of left ulna
+00042 S52002A 1 Unspecified fracture of upper end of left ulna, initial e... Unspecified fracture of upper end of left ulna, initial encounter for closed fracture
+00043 S52002B 1 Unspecified fracture of upper end of left ulna, initial e... Unspecified fracture of upper end of left ulna, initial encounter for open fracture type I or II
+00044 S52002D 1 Unspecified fracture of upper end of left ulna, subsequen... Unspecified fracture of upper end of left ulna, subsequent encounter for fracture with routine healing
+00045 S52002G 1 Unspecified fracture of upper end of left ulna, subsequen... Unspecified fracture of upper end of left ulna, subsequent encounter for fracture with delayed healing
+00046 S52002K 1 Unspecified fracture of upper end of left ulna, subsequen... Unspecified fracture of upper end of left ulna, subsequent encounter for fracture with nonunion
+00047 S52002P 1 Unspecified fracture of upper end of left ulna, subsequen... Unspecified fracture of upper end of left ulna, subsequent encounter for fracture with malunion
+00048 S52002S 1 Unspecified fracture of upper end of left ulna, sequela      Unspecified fracture of upper end of left ulna, sequela
+00049 S52009  0 Unspecified fracture of upper end of unspecified ulna        Unspecified fracture of upper end of unspecified ulna
+00050 S52009A 1 Unspecified fracture of upper end of unspecified ulna, in... Unspecified fracture of upper end of unspecified ulna, initial encounter for closed fracture
+00051 S52009B 1 Unspecified fracture of upper end of unspecified ulna, in... Unspecified fracture of upper end of unspecified ulna, initial encounter for open fracture type I or II
+00052 S52009D 1 Unspecified fracture of upper end of unspecified ulna, su... Unspecified fracture of upper end of unspecified ulna, subsequent encounter for fracture with routine healing
+00053 S52009G 1 Unspecified fracture of upper end of unspecified ulna, su... Unspecified fracture of upper end of unspecified ulna, subsequent encounter for fracture with delayed healing
+00054 S52009K 1 Unspecified fracture of upper end of unspecified ulna, su... Unspecified fracture of upper end of unspecified ulna, subsequent encounter for fracture with nonunion
+00055 S52009P 1 Unspecified fracture of upper end of unspecified ulna, su... Unspecified fracture of upper end of unspecified ulna, subsequent encounter for fracture with malunion
+00056 S52009S 1 Unspecified fracture of upper end of unspecified ulna, se... Unspecified fracture of upper end of unspecified ulna, sequela
+00057 S82     0 Fracture of lower leg, including ankle                       Fracture of lower leg, including ankle
+00058 S825    0 Fracture of medial malleolus                                 Fracture of medial malleolus
+00059 S8251   0 Displaced fracture of medial malleolus of right tibia        Displaced fracture of medial malleolus of right tibia
+00060 S8251XA 1 Displaced fracture of medial malleolus of right tibia, in... Displaced fracture of medial malleolus of right tibia, initial encounter for closed fracture
+00061 S8251XB 1 Displaced fracture of medial malleolus of right tibia, in... Displaced fracture of medial malleolus of right tibia, initial encounter for open fracture type I or II
+00062 S8251XD 1 Displaced fracture of medial malleolus of right tibia, su... Displaced fracture of medial malleolus of right tibia, subsequent encounter for fracture with routine healing
+00063 S8251XS 1 Displaced fracture of medial malleolus of right tibia, se... Displaced fracture of medial malleolus of right tibia, sequela
+00064 S8252   0 Displaced fracture of medial malleolus of left tibia         Displaced fracture of medial malleolus of left tibia
+00065 S8252XA 1 Displaced fracture of medial malleolus of left tibia, ini... Displaced fracture of medial malleolus of left tibia, initial encounter for closed fracture
+00066 S8252XB 1 Displaced fracture of medial malleolus of left tibia, ini... Displaced fracture of medial malleolus of left tibia, initial encounter for open fracture type I or II
+00067 S8252XD 1 Displaced fracture of medial malleolus of left tibia, sub... Displaced fracture of medial malleolus of left tibia, subsequent encounter for fracture with routine healing
+00068 S8252XS 1 Displaced fracture of medial malleolus of left tibia, seq... Displaced fracture of medial malleolus of left tibia, sequela
+00069 S8253   0 Displaced fracture of medial malleolus of unspecified tibia  Displaced fracture of medial malleolus of unspecified tibia
+00070 S8253XA 1 Displaced fracture of medial malleolus of unspecified tib... Displaced fracture of medial malleolus of unspecified tibia, initial encounter for closed fracture
+00071 S8253XB 1 Displaced fracture of medial malleolus of unspecified tib... Displaced fracture of medial malleolus of unspecified tibia, initial encounter for open fracture type I or II
+00072 S8253XD 1 Displaced fracture of medial malleolus of unspecified tib... Displaced fracture of medial malleolus of unspecified tibia, subsequent encounter for fracture with routine healing
+00073 S8253XS 1 Displaced fracture of medial malleolus of unspecified tib... Displaced fracture of medial malleolus of unspecified tibia, sequela
+00074 S8254   0 Nondisplaced fracture of medial malleolus of right tibia     Nondisplaced fracture of medial malleolus of right tibia
+00075 S8254XA 1 Nondisplaced fracture of medial malleolus of right tibia,... Nondisplaced fracture of medial malleolus of right tibia, initial encounter for closed fracture
+00076 S8254XB 1 Nondisplaced fracture of medial malleolus of right tibia,... Nondisplaced fracture of medial malleolus of right tibia, initial encounter for open fracture type I or II
+00077 S8254XD 1 Nondisplaced fracture of medial malleolus of right tibia,... Nondisplaced fracture of medial malleolus of right tibia, subsequent encounter for fracture with routine healing
+00078 S8254XS 1 Nondisplaced fracture of medial malleolus of right tibia,... Nondisplaced fracture of medial malleolus of right tibia, sequela
+00079 S8255   0 Nondisplaced fracture of medial malleolus of left tibia      Nondisplaced fracture of medial malleolus of left tibia
+00080 S8255XA 1 Nondisplaced fracture of medial malleolus of left tibia, ... Nondisplaced fracture of medial malleolus of left tibia, initial encounter for closed fracture
+00081 S8255XB 1 Nondisplaced fracture of medial malleolus of left tibia, ... Nondisplaced fracture of medial malleolus of left tibia, initial encounter for open fracture type I or II
+00082 S8255XD 1 Nondisplaced fracture of medial malleolus of left tibia, ... Nondisplaced fracture of medial malleolus of left tibia, subsequent encounter for fracture with routine healing
+00083 S8255XS 1 Nondisplaced fracture of medial malleolus of left tibia, ... Nondisplaced fracture of medial malleolus of left tibia, sequela
+00084 S8256   0 Nondisplaced fracture of medial malleolus of unspecified ... Nondisplaced fracture of medial malleolus of unspecified tibia
+00085 S8256XA 1 Nondisplaced fracture of medial malleolus of unspecified ... Nondisplaced fracture of medial malleolus of unspecified tibia, initial encounter for closed fracture
+00086 S8256XB 1 Nondisplaced fracture of medial malleolus of unspecified ... Nondisplaced fracture of medial malleolus of unspecified tibia, initial encounter for open fracture type I or II
+00087 S8256XD 1 Nondisplaced fracture of medial malleolus of unspecified ... Nondisplaced fracture of medial malleolus of unspecified tibia, subsequent encounter for fracture with routine healing
+00088 S8256XS 1 Nondisplaced fracture of medial malleolus of unspecified ... Nondisplaced fracture of medial malleolus of unspecified tibia, sequela
+00089 S826    0 Fracture of lateral malleolus                                Fracture of lateral malleolus
+00090 S8261   0 Displaced fracture of lateral malleolus of right fibula      Displaced fracture of lateral malleolus of right fibula
+00091 S8261XA 1 Displaced fracture of lateral malleolus of right fibula, ... Displaced fracture of lateral malleolus of right fibula, initial encounter for closed fracture
+00092 S8261XB 1 Displaced fracture of lateral malleolus of right fibula, ... Displaced fracture of lateral malleolus of right fibula, initial encounter for open fracture type I or II
+00093 S8261XD 1 Displaced fracture of lateral malleolus of right fibula, ... Displaced fracture of lateral malleolus of right fibula, subsequent encounter for fracture with routine healing
+00094 S8261XS 1 Displaced fracture of lateral malleolus of right fibula, ... Displaced fracture of lateral malleolus of right fibula, sequela
+00095 S8262   0 Displaced fracture of lateral malleolus of left fibula       Displaced fracture of lateral malleolus of left fibula
+00096 S8262XA 1 Displaced fracture of lateral malleolus of left fibula, i... Displaced fracture of lateral malleolus of left fibula, initial encounter for closed fracture
+00097 S8262XB 1 Displaced fracture of lateral malleolus of left fibula, i... Displaced fracture of lateral malleolus of left fibula, initial encounter for open fracture type I or II
+00098 S8262XD 1 Displaced fracture of lateral malleolus of left fibula, s... Displaced fracture of lateral malleolus of left fibula, subsequent encounter for fracture with routine healing
+00099 S8262XS 1 Displaced fracture of lateral malleolus of left fibula, s... Displaced fracture of lateral malleolus of left fibula, sequela
+00100 S8263   0 Displaced fracture of lateral malleolus of unspecified fi... Displaced fracture of lateral malleolus of unspecified fibula
+00101 S8263XA 1 Displaced fracture of lateral malleolus of unspecified fi... Displaced fracture of lateral malleolus of unspecified fibula, initial encounter for closed fracture
+00102 S8263XB 1 Displaced fracture of lateral malleolus of unspecified fi... Displaced fracture of lateral malleolus of unspecified fibula, initial encounter for open fracture type I or II
+00103 S8263XD 1 Displaced fracture of lateral malleolus of unspecified fi... Displaced fracture of lateral malleolus of unspecified fibula, subsequent encounter for fracture with routine healing
+00104 S8263XS 1 Displaced fracture of lateral malleolus of unspecified fi... Displaced fracture of lateral malleolus of unspecified fibula, sequela
+00105 S8264   0 Nondisplaced fracture of lateral malleolus of right fibula   Nondisplaced fracture of lateral malleolus of right fibula
+00106 S8264XA 1 Nondisplaced fracture of lateral malleolus of right fibul... Nondisplaced fracture of lateral malleolus of right fibula, initial encounter for closed fracture
+00107 S8264XB 1 Nondisplaced fracture of lateral malleolus of right fibul... Nondisplaced fracture of lateral malleolus of right fibula, initial encounter for open fracture type I or II
+00108 S8264XD 1 Nondisplaced fracture of lateral malleolus of right fibul... Nondisplaced fracture of lateral malleolus of right fibula, subsequent encounter for fracture with routine healing
+00109 S8264XS 1 Nondisplaced fracture of lateral malleolus of right fibul... Nondisplaced fracture of lateral malleolus of right fibula, sequela
+00110 S8265   0 Nondisplaced fracture of lateral malleolus of left fibula    Nondisplaced fracture of lateral malleolus of left fibula
+00111 S8265XA 1 Nondisplaced fracture of lateral malleolus of left fibula... Nondisplaced fracture of lateral malleolus of left fibula, initial encounter for closed fracture
+00112 S8265XB 1 Nondisplaced fracture of lateral malleolus of left fibula... Nondisplaced fracture of lateral malleolus of left fibula, initial encounter for open fracture type I or II
+00113 S8265XD 1 Nondisplaced fracture of lateral malleolus of left fibula... Nondisplaced fracture of lateral malleolus of left fibula, subsequent encounter for fracture with routine healing
+00114 S8265XS 1 Nondisplaced fracture of lateral malleolus of left fibula... Nondisplaced fracture of lateral malleolus of left fibula, sequela
+00115 S8266   0 Nondisplaced fracture of lateral malleolus of unspecified... Nondisplaced fracture of lateral malleolus of unspecified fibula
+00116 S8266XA 1 Nondisplaced fracture of lateral malleolus of unspecified... Nondisplaced fracture of lateral malleolus of unspecified fibula, initial encounter for closed fracture
+00117 S8266XB 1 Nondisplaced fracture of lateral malleolus of unspecified... Nondisplaced fracture of lateral malleolus of unspecified fibula, initial encounter for open fracture type I or II
+00118 S8266XD 1 Nondisplaced fracture of lateral malleolus of unspecified... Nondisplaced fracture of lateral malleolus of unspecified fibula, subsequent encounter for fracture with routine healing
+00119 S8266XS 1 Nondisplaced fracture of lateral malleolus of unspecified... Nondisplaced fracture of lateral malleolus of unspecified fibula, sequela
