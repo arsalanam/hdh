@@ -54,7 +54,10 @@ def _advance_sequences(target: Engine, tables) -> None:
         return
     with target.begin() as conn:
         for table in tables:
-            if "id" not in table.columns or not table.columns["id"].autoincrement:
+            # autoincrement_column resolves "auto" correctly — a String PK
+            # (e.g. ontology_concepts.id) has no sequence to advance
+            auto_col = table.autoincrement_column
+            if auto_col is None or auto_col.name != "id":
                 continue
             # table.name comes from our own ORM metadata, never user input
             seq_sql = (

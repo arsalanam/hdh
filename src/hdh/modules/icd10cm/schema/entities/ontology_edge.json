@@ -1,0 +1,18 @@
+{
+  "entity": "OntologyEdge",
+  "tablename": "ontology_edges",
+  "module": "icd10cm_module",
+  "columns": [
+    { "name": "id", "type": "Integer", "primary_key": true, "autoincrement": true },
+    { "name": "source_id", "type": "String", "length": 64, "foreign_key": "ontology_concepts.id", "nullable": false },
+    { "name": "target_id", "type": "String", "length": 64, "foreign_key": "ontology_concepts.id", "nullable": false },
+    { "name": "edge_type", "type": "Enum", "values": ["parent_of", "contralateral", "axis_variant", "episode_variant", "excludes1", "excludes2", "code_first", "use_additional", "includes", "maps_to"], "nullable": false },
+    { "name": "authority", "type": "String", "length": 64 },
+    { "name": "confidence", "type": "Float", "server_default": "1.0" },
+    { "name": "properties", "type": "JSON" }
+  ],
+  "indexes": [
+    { "name": "ix_edge_source_type", "columns": ["source_id", "edge_type"] },
+    { "name": "ix_edge_target_type", "columns": ["target_id", "edge_type"] }
+  ]
+}

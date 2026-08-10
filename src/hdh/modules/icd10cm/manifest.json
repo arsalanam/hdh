@@ -1,0 +1,6 @@
+{
+  "name": "icd10cm_module",
+  "version": "0.1.0",
+  "depends_on": ["base", "ontology_module"],
+  "priority": 20
+}

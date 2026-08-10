@@ -28,6 +28,18 @@ def _database_url() -> str:
     return ini_url or os.environ.get("HDH_DB_URL") or "sqlite:///family_medicine.db"
 
 
+def _render_item(type_, obj, autogen_context):
+    """Render JSONB variants importably. Alembic's default repr for JSONB
+    emits ``astext_type=Text()`` with ``Text`` never imported — a NameError
+    in the generated migration. Our registry only ever uses plain JSONB."""
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    if type_ == "type" and isinstance(obj, JSONB):
+        autogen_context.imports.add("from sqlalchemy.dialects import postgresql")
+        return "postgresql.JSONB()"
+    return False
+
+
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without a live connection (alembic --sql)."""
     context.configure(
@@ -35,6 +47,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         render_as_batch=True,  # SQLite ALTERs need batch mode during the transition
+        render_item=_render_item,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -48,6 +61,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             render_as_batch=True,
+            render_item=_render_item,
         )
         with context.begin_transaction():
             context.run_migrations()
