@@ -1,0 +1,37 @@
+# Dependency containers for local development: `just deps` starts them and
+# waits for health; `just deps-down` stops them (data volume preserved).
+#
+#   PostgreSQL — the clinical database when HDH_DB_URL is set
+#                (hdh_test database is created for the integration tests)
+#   Redis      — reserved as the future Celery broker/beat backend
+#                (see docs/design/icd10cm-ontology-module.md §6)
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hdh
+      POSTGRES_PASSWORD: hdh
+      POSTGRES_DB: hdh
+    ports:
+      - "5433:5432"  # host 5433: avoids colliding with other local PostgreSQL instances
+    volumes:
+      - hdh-pgdata:/var/lib/postgresql/data
+      - ./docker/pg-init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hdh -d hdh"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  hdh-pgdata:

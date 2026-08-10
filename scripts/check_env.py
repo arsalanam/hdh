@@ -18,6 +18,24 @@ def main() -> None:
     if model:
         print(f"HDH_AGENT_MODEL override: {model}")
 
+    db_url = os.environ.get("HDH_DB_URL")
+    if not db_url:
+        print("HDH_DB_URL not set — using the SQLite file (transitional default).")
+        return
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    shown = make_url(db_url).render_as_string(hide_password=True)
+    connect_args = {"connect_timeout": 3} if db_url.startswith("postgresql") else {}
+    try:
+        engine = create_engine(db_url, connect_args=connect_args)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print(f"HDH_DB_URL: connected OK ({shown})")
+    except Exception:
+        print(f"HDH_DB_URL is set ({shown}) but the database is not reachable.")
+        print("  → start the dependency containers with: just deps")
+
 
 if __name__ == "__main__":
     main()

@@ -35,6 +35,7 @@ and a FHIR interface.
 - [Part 9 — Export data and the FHIR interface](#part-9--export-data-and-the-fhir-interface)
 - [Part 10 — Simulate scenarios](#part-10--simulate-scenarios)
 - [Part 11 — See what the AI did (traces & spending)](#part-11--see-what-the-ai-did-traces--spending)
+- [Part 12 — Optional: a real database server (PostgreSQL)](#part-12--optional-a-real-database-server-postgresql)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -371,6 +372,32 @@ verdict — the anatomy of a trustworthy AI answer. The daily quota
 records; when it's exhausted, the assistant politely declines until tomorrow.
 
 ---
+
+## Part 12 — Optional: a real database server (PostgreSQL)
+
+hdh normally keeps everything in one `family_medicine.db` file — fine for
+learning. If you want the same setup professional systems use (and the
+direction hdh is heading), you can run PostgreSQL in a container:
+
+1. Install **Docker Desktop** (free): <https://www.docker.com/products/docker-desktop/>
+   — on Windows, accept its suggestion to use WSL 2.
+2. Start the database (first run downloads it, ~30 seconds):
+
+   ```powershell
+   just deps
+   ```
+
+3. Open your `.env` file and remove the `#` in front of the `HDH_DB_URL=`
+   line.
+4. Copy your existing data across (your `.db` file is not modified):
+
+   ```powershell
+   uv run hdh migrate
+   ```
+
+From then on every command — stats, care gaps, the AI assistant — uses the
+server automatically. `just deps-down` stops it (your data is kept);
+`just check-env` tells you whether the connection works.
 
 ## Troubleshooting
 

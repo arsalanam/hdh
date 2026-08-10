@@ -69,15 +69,16 @@ def detect_gaps(
     as_of = as_of or reference_date(session)
 
     # ── Aggregate lookups (one query each, keyed by patient_id) ──────────────
-    last_visit = dict(
-        session.query(Visit.patient_id, func.max(Visit.visit_date)).group_by(Visit.patient_id).all()
-    )
-    last_preventive = dict(
-        session.query(Visit.patient_id, func.max(Visit.visit_date))
+    last_visit: dict[int, date] = {
+        pid: d
+        for pid, d in session.query(Visit.patient_id, func.max(Visit.visit_date)).group_by(Visit.patient_id)
+    }
+    last_preventive: dict[int, date] = {
+        pid: d
+        for pid, d in session.query(Visit.patient_id, func.max(Visit.visit_date))
         .filter(Visit.visit_type == VisitType.PREVENTIVE)
         .group_by(Visit.patient_id)
-        .all()
-    )
+    }
     # follow_up_days of each patient's latest visit
     latest_follow_up: dict[int, tuple[date, int | None]] = {}
     for pid, vdate, fu in session.query(Visit.patient_id, Visit.visit_date, Visit.follow_up_days).all():
@@ -94,13 +95,13 @@ def detect_gaps(
         uncontrolled.setdefault(pid, []).append(desc)
 
     year_ago = as_of - timedelta(days=365)
-    drug_counts = dict(
-        session.query(Visit.patient_id, func.count(func.distinct(Prescription.drug_name)))
+    drug_counts: dict[int, int] = {
+        pid: n
+        for pid, n in session.query(Visit.patient_id, func.count(func.distinct(Prescription.drug_name)))
         .join(Prescription, Prescription.visit_id == Visit.id)
         .filter(Visit.visit_date >= year_ago)
         .group_by(Visit.patient_id)
-        .all()
-    )
+    }
 
     # ── Evaluate rules per patient ───────────────────────────────────────────
     q = session.query(Patient)
@@ -155,8 +156,9 @@ def detect_gaps(
 
         # Rule 3 — missed scheduled follow-up
         lf = latest_follow_up.get(p.id)
-        if lf and lf[1]:
-            visit_date, fu_days = lf
+        fu_days = lf[1] if lf else None
+        if lf and fu_days:
+            visit_date = lf[0]
             deadline = visit_date + timedelta(days=int(fu_days * FOLLOW_UP_GRACE))
             if as_of > deadline:
                 gaps.append(

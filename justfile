@@ -34,6 +34,38 @@ lock-upgrade:
 check-env:
     {{run}} python scripts/check_env.py
 
+# ── Dependency containers (PostgreSQL + Redis) ───────────────────────────────
+
+# Start PostgreSQL + Redis containers and wait until healthy
+deps:
+    docker compose -f docker-compose.deps.yml up -d --wait
+
+# Stop the dependency containers (data volume preserved)
+deps-down:
+    docker compose -f docker-compose.deps.yml down
+
+# Stop the dependency containers and DELETE the data volume
+deps-nuke:
+    docker compose -f docker-compose.deps.yml down -v
+
+# Run the PostgreSQL integration tests against the `just deps` containers
+test-pg:
+    {{run}} python scripts/test_pg.py
+
+# ── Schema migrations (Alembic over registry-merged metadata) ────────────────
+
+# Autogenerate a migration after editing model code or module schema JSON
+db-revision message:
+    {{run}} alembic revision --autogenerate -m "{{message}}"
+
+# Apply pending migrations (HDH_DB_URL when set, else the SQLite file)
+db-upgrade:
+    {{run}} alembic upgrade head
+
+# Mark an existing database (built by create_all) as current — one-time
+db-stamp:
+    {{run}} alembic stamp head
+
 # ── Quality gates ────────────────────────────────────────────────────────────
 
 # Run unit tests

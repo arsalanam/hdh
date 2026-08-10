@@ -27,3 +27,46 @@ jobs:
 
       - name: Run all quality gates
         run: just qa
+
+  # The same test suite against PostgreSQL — the configuration `just deps`
+  # runs locally and the one SQLite retirement converges on (design §5.3).
+  qa-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hdh
+          POSTGRES_PASSWORD: hdh
+          POSTGRES_DB: hdh_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hdh"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HDH_PG_TEST_URL: postgresql+psycopg://hdh:hdh@localhost:5432/hdh_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync locked environment
+        run: uv sync --all-extras
+
+      - name: Run tests (SQLite unit + PostgreSQL integration)
+        run: uv run pytest tests/ -q

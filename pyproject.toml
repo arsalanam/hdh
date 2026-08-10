@@ -22,6 +22,11 @@ classifiers = [
 dependencies = [
     "SQLAlchemy>=2.0",
     "Faker>=19.0",
+    # PostgreSQL driver: core so `hdh migrate` and HDH_DB_URL work everywhere
+    # (the SQLite retirement plan, docs/design/icd10cm-ontology-module.md §5.3)
+    "psycopg[binary]>=3.1",
+    # Schema migrations from registry-merged metadata (issue #7)
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
@@ -88,16 +93,5 @@ warn_unused_ignores = true
 # Column[T] instead of their Python values. Until the models migrate to
 # SQLAlchemy 2.0 Mapped[] typing, suppress that class of false positive in the
 # modules that read ORM attributes heavily.
-[[tool.mypy.overrides]]
-module = ["hdh.core.models"]
-disable_error_code = ["var-annotated"]
-
-[[tool.mypy.overrides]]
-module = [
-    "hdh.cli",
-    "hdh.core.exporters",
-    "hdh.core.generators",
-    "hdh.modules.caregaps.detector",
-    "hdh.modules.risk.features",
-]
-disable_error_code = ["arg-type", "dict-item", "call-overload", "index", "var-annotated"]
+# (mypy overrides for legacy Column[] typing removed with the SQLAlchemy 2.0
+# Mapped[] migration — issue #6)
