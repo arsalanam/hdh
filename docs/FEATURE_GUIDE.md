@@ -193,6 +193,12 @@ Library-level starting points with documented extension paths:
   rubric-driven auto-evaluation and human-in-the-loop approval. Full design:
   [design/care-plan-module.md](design/care-plan-module.md)
   ([PDF](design/care-plan-module.pdf)).
+- **Doctor-notes comprehension service** — open RFC: free-text encounter
+  notes → span-grounded, ontology-coded structured records via a
+  specialized subagent; defines the OntologyService protocol and the
+  SNOMED/RxNorm/LOINC module roadmap.
+  [design/notes-comprehension-service.md](design/notes-comprehension-service.md)
+  ([PDF](design/notes-comprehension-service.pdf)).
 - **ICD-10-CM cross-ontology mappings** — the module is built (see the
   [guide](guides/icd10cm.md)); design §9's SNOMED/LOINC loaders over
   `maps_to` edges remain
