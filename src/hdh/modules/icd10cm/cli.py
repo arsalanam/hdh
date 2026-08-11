@@ -342,7 +342,7 @@ def _cmd_codify(session, args) -> None:
     """Description → ranked candidates, with the explanation rendered."""
     import os
 
-    from hdh.modules.icd10cm.service import CodifyError, codify, stub_extractor
+    from hdh.modules.icd10cm.service import CodifyError, ambiguous_axes, codify, stub_extractor
 
     description = " ".join(args.description)
     if args.terms:
@@ -384,8 +384,9 @@ def _cmd_codify(session, args) -> None:
         print(f"   {rank}. {cand.code:<10} {cand.display}")
         print(f"      {'; '.join(marks) or 'no axes requested'}{exact}")
     top = candidates[0]
-    if top.unstated:
-        print(f"   💬 ask about: {', '.join(top.unstated)} — the description never said")
+    ask = tuple(dict.fromkeys(top.unstated + ambiguous_axes(candidates, extraction.axes)))
+    if ask:
+        print(f"   💬 ask about: {', '.join(ask)} — the description never said")
 
 
 def _cmd_pattern(session, args) -> None:

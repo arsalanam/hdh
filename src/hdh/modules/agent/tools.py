@@ -207,6 +207,14 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         query_database,
         dataset_stats,
     ]
+    # ICD-10-CM coding tools via the icd10cm module's published API —
+    # optional: the agent runs fine without the module or its catalog
+    try:
+        from hdh.modules.icd10cm.agent_tools import build_icd_tools
+
+        all_tools.extend(build_icd_tools(session))
+    except Exception:  # noqa: BLE001 — absent module/catalog must never break the agent
+        pass
     if include is None:
         return all_tools
     return [tool for tool in all_tools if tool.name in include]

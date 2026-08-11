@@ -15,6 +15,8 @@ DEFAULT_ALLOWED_TOPICS = (
     "patients, cohorts, and clinical data in the synthetic family-medicine dataset",
     "care gaps, risk scores, visits, diagnoses, prescriptions, labs, vitals",
     "dataset statistics, SQL questions about the database, SOAP notes",
+    "ICD-10-CM coding: finding the right code for a clinical description, "
+    "code lookups, hierarchy, laterality, and Excludes/code-first rules",
     "how the hdh tool itself works",
 )
 

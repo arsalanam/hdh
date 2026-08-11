@@ -174,3 +174,21 @@ def stub_extractor(terms: str, axes: dict[str, str]) -> AxisExtractor:
         return AxisExtraction(terms, dict(axes))
 
     return extract
+
+
+def ambiguous_axes(candidates: list[CodedCandidate], requested: dict[str, str]) -> tuple[str, ...]:
+    """Axes the top candidates DISAGREE on that the caller never stated —
+    the funnel's cue to ask a follow-up question ("was the fracture
+    displaced?") instead of silently picking a branch (design §7.2, RFC Q9).
+    """
+    seen: dict[str, set[str]] = {}
+    for candidate in candidates:
+        lowered = candidate.display.lower()
+        for axis, options in AXIS_VALUES.items():
+            if axis in requested:
+                continue
+            for value in options:
+                if re.search(rf"\b{value}\b", lowered):
+                    seen.setdefault(axis, set()).add(value)
+                    break
+    return tuple(sorted(axis for axis, values in seen.items() if len(values) > 1))
