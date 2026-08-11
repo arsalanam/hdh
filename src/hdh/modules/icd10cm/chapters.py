@@ -53,7 +53,14 @@ CHAPTERS: tuple[Chapter, ...] = (
     Chapter(14, "N00", "N99", "Diseases of the genitourinary system"),
     Chapter(15, "O00", "O9A", "Pregnancy, childbirth and the puerperium"),
     Chapter(16, "P00", "P96", "Certain conditions originating in the perinatal period"),
-    Chapter(17, "Q00", "Q99", "Congenital malformations, deformations and chromosomal abnormalities"),
+    # FY2026 extended ch17 through QA0 (genetic disorders, not elsewhere
+    # classified) — lexicographic containment holds: "Q99" < "QA0"
+    Chapter(
+        17,
+        "Q00",
+        "QA0",
+        "Congenital malformations, deformations, chromosomal abnormalities, and genetic disorders",
+    ),
     Chapter(
         18,
         "R00",
