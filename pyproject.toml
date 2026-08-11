@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hdh"
-version = "0.2.0"
+version = "0.3.0"
 description = "Health Data Hub — medically realistic synthetic family-medicine EHR data, with modular care-gap, risk-stratification, agentic-AI, and FHIR extensions"
 readme = "README.md"
 authors = [{ name = "Ajmal Mahmood", email = "arsalanam@yahoo.com" }]
