@@ -20,3 +20,5 @@ else builds on it.
 | [billing.md](billing.md) | CPT / RVU claim estimation (scaffold) | base install |
 
 Project-level docs: [Feature Guide](../FEATURE_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [Contributing](../../CONTRIBUTING.md)
+
+- [icd10cm](icd10cm.md)

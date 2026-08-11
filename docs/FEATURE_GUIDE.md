@@ -60,6 +60,7 @@ without privacy or compliance overhead.
 | Agentic AI chat (history + context compaction) | `hdh agent` | `[agent]` | ✅ |
 | SOAP-note narratives (+ optional LLM polish) | `hdh narrative` | — (`[agent]` for `--llm`) | ✅ |
 | FHIR R4 REST API | `hdh serve` | `[api]` | ✅ |
+| ICD-10-CM knowledge graph (~74.7k codes, description→code, graph patterns) | `hdh icd` | — (`[agent]` for LLM codify) | ✅ |
 | ICD-10 → SNOMED mapping | library | — | 🧩 scaffold |
 | CPT / RVU claim estimation | library | — | 🧩 scaffold |
 
@@ -192,14 +193,10 @@ Library-level starting points with documented extension paths:
   rubric-driven auto-evaluation and human-in-the-loop approval. Full design:
   [design/care-plan-module.md](design/care-plan-module.md)
   ([PDF](design/care-plan-module.pdf)).
-- **ICD-10-CM clinical ontology module** — open RFC: the full ~74k-code
-  catalog as a knowledge graph (hierarchy, laterality, severity, and
-  coding-rule edges) via the schema registry, loaded from official CMS
-  files, with description→code retrieval for the agent and care-plan
-  codification — and hdh's move to PostgreSQL + Redis via `just deps`,
-  retiring SQLite. Full design:
-  [design/icd10cm-ontology-module.md](design/icd10cm-ontology-module.md)
-  ([PDF](design/icd10cm-ontology-module.pdf)).
+- **ICD-10-CM cross-ontology mappings** — the module is built (see the
+  [guide](guides/icd10cm.md)); design §9's SNOMED/LOINC loaders over
+  `maps_to` edges remain
+  ([design](design/icd10cm-ontology-module.md), phase 6).
 - Claims lifecycle simulation (submit → adjudicate → pay/deny) and an `hdh billing` command.
 - Care-gap → agent outreach loop: let the agent draft outreach plans for detected gaps.
 - Survival-style risk modeling (time-to-event) alongside the classifier.

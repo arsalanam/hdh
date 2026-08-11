@@ -57,7 +57,16 @@ INTENT_SCHEMA = {
     "properties": {
         "intent": {
             "type": "string",
-            "enum": ["patient_lookup", "cohort_search", "risk", "care_gaps", "stats", "sql", "other"],
+            "enum": [
+                "patient_lookup",
+                "cohort_search",
+                "risk",
+                "care_gaps",
+                "stats",
+                "sql",
+                "coding",
+                "other",
+            ],
         },
         "entities": {"type": "array", "items": {"type": "string"}},
         "plan": {"type": "string"},
@@ -76,6 +85,7 @@ INTENT_TOOLS: dict[str, set[str]] = {
     "care_gaps": {"get_care_gaps", "query_database", "get_patient_chart"},
     "stats": {"dataset_stats", "query_database"},
     "sql": {"query_database", "dataset_stats"},
+    "coding": {"icd_codify", "icd_search", "icd_lookup", "icd_pattern", "query_database"},
 }
 
 INTENT_TABLES: dict[str, tuple[str, ...]] = {
@@ -83,6 +93,7 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
     "cohort_search": ("patients", "chronic_conditions", "visits", "prescriptions"),
     "risk": ("patients", "chronic_conditions", "visits", "vitals", "lab_results"),
     "care_gaps": ("patients", "chronic_conditions", "visits", "prescriptions"),
+    "coding": ("diagnoses", "visits", "patients", "ontology_concepts", "ontology_edges"),
 }
 
 ECONOMY_PROMPT = (

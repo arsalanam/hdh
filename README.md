@@ -63,6 +63,8 @@ hdh agent                                 # interactive AI chat over the dataset
 hdh agent "Which patients need outreach?" # ...or one-shot
 hdh narrative --mrn MRN12345678           # SOAP-note narratives
 hdh serve --port 8000                     # FHIR R4 REST API
+hdh icd load --download && hdh icd codify "broke her left ankle, first visit"
+                                          # ICD-10-CM knowledge graph + coding
 ```
 
 ### The agent pipeline
@@ -115,6 +117,7 @@ src/hdh/
 │   ├── agent/              # Agentic AI care assistant (Claude tool-use loop)
 │   ├── narrative/          # SOAP-note narrative generation
 │   ├── fhir_api/           # FHIR R4 REST API (FastAPI)
+│   ├── icd10cm/            # ICD-10-CM knowledge graph: loader, retrieval funnel, agent tools
 │   ├── ontology/           # SNOMED CT mapping (scaffold)
 │   └── billing/            # CPT / RVU / claims simulation (scaffold)
 └── cli.py           # `hdh` CLI — core commands + auto-discovered module subcommands
