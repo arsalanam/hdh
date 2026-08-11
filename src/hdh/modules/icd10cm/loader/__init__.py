@@ -55,6 +55,7 @@ class LoadContext:
     concepts: dict[str, dict[str, Any]] = field(default_factory=dict)  # id -> column values
     edges: list[dict[str, Any]] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=dict)
+    tabular: Any = None  # TabularData when the XML is present (loader.tabular)
 
 
 class LoadStage(Protocol):
@@ -75,9 +76,11 @@ def default_stages() -> tuple[LoadStage, ...]:
         s.AcquireStage(),
         s.ParseStage(),
         s.StructureStage(),
+        s.TabularStage(),
         s.EnrichStage(),
         s.LoadConceptsStage(),
         s.EdgesStage(),
+        s.AccelerateStage(),
         s.VerifyStage(),
         s.FinalizeStage(),
     )

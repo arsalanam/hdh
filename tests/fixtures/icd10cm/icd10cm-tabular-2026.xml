@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture slice of the CMS tabular XML: the sections, rule notes, and
+     sevenChrDef structures for the order-file fixture's families. Element
+     shapes mirror icd10cm_tabular_<fy>.xml exactly. -->
+<ICD10CM.tabular>
+  <chapter>
+    <name>4</name>
+    <desc>Endocrine, nutritional and metabolic diseases (E00-E89)</desc>
+    <section id="E08-E13">
+      <desc>Diabetes mellitus (E08-E13)</desc>
+      <diag>
+        <name>E11</name>
+        <desc>Type 2 diabetes mellitus</desc>
+        <useAdditionalCode>
+          <note>code to identify control using insulin (Z79.4)</note>
+        </useAdditionalCode>
+        <excludes1>
+          <note>diabetes mellitus due to underlying condition (E08.-)</note>
+        </excludes1>
+      </diag>
+    </section>
+  </chapter>
+  <chapter>
+    <name>6</name>
+    <desc>Diseases of the nervous system (G00-G99)</desc>
+    <section id="G89-G99">
+      <desc>Other disorders of the nervous system (G89-G99)</desc>
+      <diag>
+        <name>G89</name>
+        <desc>Pain, not elsewhere classified</desc>
+        <codeFirst>
+          <note>related psychological factors associated with pain (F45.42)</note>
+        </codeFirst>
+      </diag>
+    </section>
+  </chapter>
+  <chapter>
+    <name>13</name>
+    <desc>Diseases of the musculoskeletal system and connective tissue (M00-M99)</desc>
+    <section id="M20-M25">
+      <desc>Other joint disorders (M20-M25)</desc>
+      <diag>
+        <name>M25</name>
+        <desc>Other joint disorder, not elsewhere classified</desc>
+      </diag>
+    </section>
+  </chapter>
+  <chapter>
+    <name>19</name>
+    <desc>Injury, poisoning and certain other consequences of external causes (S00-T88)</desc>
+    <section id="S50-S59">
+      <desc>Injuries to the elbow and forearm (S50-S59)</desc>
+      <diag>
+        <name>S52</name>
+        <desc>Fracture of forearm</desc>
+        <notes>
+          <note>A fracture not indicated as displaced or nondisplaced should be coded to displaced</note>
+        </notes>
+        <excludes1>
+          <note>traumatic amputation of forearm (S58.-)</note>
+        </excludes1>
+        <excludes2>
+          <note>fracture at ankle level (S82.-)</note>
+        </excludes2>
+        <sevenChrDef>
+          <extension char="A">initial encounter for closed fracture</extension>
+          <extension char="B">initial encounter for open fracture type I or II</extension>
+          <extension char="D">subsequent encounter for fracture with routine healing</extension>
+          <extension char="G">subsequent encounter for fracture with delayed healing</extension>
+          <extension char="K">subsequent encounter for fracture with nonunion</extension>
+          <extension char="P">subsequent encounter for fracture with malunion</extension>
+          <extension char="S">sequela</extension>
+        </sevenChrDef>
+      </diag>
+    </section>
+    <section id="S80-S89">
+      <desc>Injuries to the knee and lower leg (S80-S89)</desc>
+      <diag>
+        <name>S82</name>
+        <desc>Fracture of lower leg, including ankle</desc>
+        <sevenChrDef>
+          <extension char="A">initial encounter for closed fracture</extension>
+          <extension char="B">initial encounter for open fracture type I or II</extension>
+          <extension char="D">subsequent encounter for fracture with routine healing</extension>
+          <extension char="S">sequela</extension>
+        </sevenChrDef>
+      </diag>
+    </section>
+  </chapter>
+</ICD10CM.tabular>

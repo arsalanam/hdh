@@ -25,8 +25,45 @@ BATCH = 2000
 EPISODE_CHARS = frozenset("ABCDEFGHJKMNPQRS")
 
 _SIDE_WORDS = {"right": "1", "left": "2", "unspecified": "9"}
-_SIDE_RE = re.compile(r"\b(right|left|unspecified)\b", re.IGNORECASE)
+_SIDE_RE = re.compile(r"\b(right|left|bilateral|unspecified)\b", re.IGNORECASE)
 _DISPLACEMENT_RE = re.compile(r"\b(nondisplaced|displaced)\b", re.IGNORECASE)
+_ENCOUNTER_WORDS = ("encounter", "sequela")
+
+
+def _longest_prefix_match(dotted: str, defs: dict) -> str | None:
+    """The most specific sevenChrDef family covering a code, if any."""
+    for length in range(len(dotted), 2, -1):
+        candidate = dotted[:length].rstrip(".")
+        if candidate in defs:
+            return candidate
+    return None
+
+
+def _one_char_subgroups(members: list) -> list:
+    """Split same-stem candidates into true variant sets.
+
+    Identical descriptions can belong to unrelated codes (H54.2X1 and
+    H54.511 are both "Low vision, right eye, category 1"). True laterality
+    variants differ in exactly ONE code character (the side position), so
+    subgroup membership requires hamming distance 1 to the subgroup seed.
+    """
+    subgroups: list[list] = []
+    for member in members:
+        code = member["concept"]["code"]
+        for subgroup in subgroups:
+            seed = subgroup[0]["concept"]["code"]
+            if len(seed) == len(code) and sum(a != b for a, b in zip(seed, code, strict=True)) == 1:
+                subgroup.append(member)
+                break
+        else:
+            subgroups.append([member])
+    return subgroups
+
+
+def _is_encounter_definition(meaning: str) -> bool:
+    """True when a 7th-char definition describes an episode of care."""
+    lowered = meaning.lower()
+    return any(word in lowered for word in _ENCOUNTER_WORDS)
 
 
 def _tables():
@@ -43,18 +80,34 @@ class AcquireStage:
     name: ClassVar[str] = "acquire"
 
     def run(self, ctx: LoadContext) -> str:
-        """Locate the release files and record their checksums."""
-        pattern = f"icd10cm-order-{ctx.fiscal_year}*"
-        matches = sorted(ctx.source_dir.glob(pattern + ".txt")) or sorted(ctx.source_dir.glob(pattern))
-        if not matches:
+        """Locate the release files (order required, tabular optional)."""
+        order_file = self._find(ctx, "order", ".txt")
+        if order_file is None:
             raise LoadError(
-                f"no order file matching '{pattern}' in {ctx.source_dir} — "
-                "download the CMS release files there first"
+                f"no order file for FY{ctx.fiscal_year} in {ctx.source_dir} — "
+                "use --download or place the CMS release files there"
             )
-        order_file = matches[0]
         ctx.files["order"] = order_file
         ctx.checksums[order_file.name] = hashlib.sha256(order_file.read_bytes()).hexdigest()
-        return f"{order_file.name} ({order_file.stat().st_size:,} bytes)"
+        summary = f"{order_file.name} ({order_file.stat().st_size:,} bytes)"
+        tabular_file = self._find(ctx, "tabular", ".xml")
+        if tabular_file is not None:
+            ctx.files["tabular"] = tabular_file
+            ctx.checksums[tabular_file.name] = hashlib.sha256(tabular_file.read_bytes()).hexdigest()
+            summary += f" + {tabular_file.name}"
+        return summary
+
+    @staticmethod
+    def _find(ctx: LoadContext, kind: str, suffix: str):
+        """Match both normalized (dash) and CMS-native (underscore) names."""
+        for pattern in (
+            f"icd10cm-{kind}-{ctx.fiscal_year}*{suffix}",
+            f"icd10cm_{kind}_{ctx.fiscal_year}*{suffix}",
+        ):
+            matches = sorted(ctx.source_dir.glob(pattern))
+            if matches:
+                return matches[0]
+        return None
 
 
 class ParseStage:
@@ -158,6 +211,105 @@ class StructureStage:
         return "category" if len(row.code) == 3 else "subcategory"
 
 
+class TabularStage:
+    """Stage 3 (XML half): blocks, coding-rule notes, 7th-char definitions.
+
+    Skipped gracefully when only the order file is present — the hierarchy
+    then stays chapter → category and no rule edges are built.
+    """
+
+    name: ClassVar[str] = "tabular"
+
+    def run(self, ctx: LoadContext) -> str:
+        """Add the block level, attach rule notes, collect 7th-char defs."""
+        if "tabular" not in ctx.files:
+            return "no tabular XML — blocks and coding rules skipped"
+        from hdh.modules.icd10cm.loader.tabular import parse_tabular
+
+        ctx.tabular = parse_tabular(ctx.files["tabular"])
+        blocks = self._add_blocks(ctx)
+        reparented = self._reparent_categories(ctx)
+        self._recompute_paths(ctx)
+        noted = self._attach_notes(ctx)
+        return (
+            f"{blocks} blocks, {reparented} categories re-parented, "
+            f"rule notes on {noted}, 7th-char defs for {len(ctx.tabular.seven_defs)} families"
+        )
+
+    def _add_blocks(self, ctx: LoadContext) -> int:
+        used_categories = {c["code"][:3] for c in ctx.concepts.values() if c["kind"] != "chapter"}
+        added = 0
+        for block in ctx.tabular.blocks:
+            if not any(block.contains(cat) for cat in used_categories):
+                continue
+            if f"{ONTOLOGY}:{block.range_code}" in ctx.concepts:
+                # single-code sections (B20, F99, R99…) ARE their category —
+                # no separate block node, hierarchy stays chapter → category
+                continue
+            chapter = chapter_for(block.first)
+            if chapter is None:
+                raise LoadError(f"block {block.range_code}: no chapter covers {block.first}")
+            ctx.concepts[f"{ONTOLOGY}:{block.range_code}"] = {
+                "id": f"{ONTOLOGY}:{block.range_code}",
+                "ontology": ONTOLOGY,
+                "code": block.range_code,
+                "kind": "block",
+                "display": block.description,
+                "short_display": block.description[:128],
+                "is_billable": False,
+                "hierarchy_depth": 1,
+                "path": f"{chapter.path_segment}.{block.range_code}",
+                "properties": {},
+                "effective_fy": ctx.fiscal_year,
+                "_parent": chapter.concept_id,
+            }
+            added += 1
+        return added
+
+    def _reparent_categories(self, ctx: LoadContext) -> int:
+        count = 0
+        for concept in ctx.concepts.values():
+            if len(concept["code"]) != 3 or concept["kind"] in ("chapter", "block"):
+                continue
+            block = ctx.tabular.block_for(concept["code"])
+            if (
+                block
+                and block.range_code != concept["code"]  # never self-parent (B20 case)
+                and f"{ONTOLOGY}:{block.range_code}" in ctx.concepts
+            ):
+                concept["_parent"] = f"{ONTOLOGY}:{block.range_code}"
+                count += 1
+        return count
+
+    @staticmethod
+    def _recompute_paths(ctx: LoadContext) -> None:
+        """Re-derive every path/depth from the (possibly new) parent chain."""
+        rank = {"chapter": 0, "block": 1}
+        ordered = sorted(
+            ctx.concepts.values(),
+            key=lambda c: (rank.get(c["kind"], 2), len(c["code"].replace(".", ""))),
+        )
+        for concept in ordered:
+            if concept["kind"] == "chapter":
+                continue
+            parent = ctx.concepts[concept["_parent"]]
+            concept["path"] = f"{parent['path']}.{concept['code'].replace('.', '')}"
+            concept["hierarchy_depth"] = parent["hierarchy_depth"] + 1
+
+    @staticmethod
+    def _attach_notes(ctx: LoadContext) -> int:
+        noted = 0
+        for dotted, notes in ctx.tabular.rules.items():
+            concept = ctx.concepts.get(f"{ONTOLOGY}:{dotted}")
+            if concept is None:
+                continue
+            grouped = concept["properties"].setdefault("notes", {})
+            for note in notes:
+                grouped.setdefault(note.edge_type, []).append(note.text)
+            noted += 1
+        return noted
+
+
 class EnrichStage:
     """Stage 4: semantic axes from descriptions (design §3.5) + episode."""
 
@@ -178,39 +330,63 @@ class EnrichStage:
             words = {m.group(1).lower() for m in _SIDE_RE.finditer(concept["display"])}
             if not words:
                 continue
+            if "right" in words and "left" in words:
+                continue  # composite descriptor (H54 "blindness right eye,
+                #           normal vision left eye") — laterality undefined
             # "Unspecified fracture of the RIGHT ulna": the sided word wins;
             # "unspecified" means side 9 only when no side word is present
-            side = "1" if "right" in words else "2" if "left" in words else "9"
+            side = (
+                "1" if "right" in words else "2" if "left" in words else "3" if "bilateral" in words else "9"
+            )
             stem = _SIDE_RE.sub("*", concept["display"].lower())
             stem = re.sub(r"\s+", " ", stem).strip()
             groups.setdefault((concept["code"][:3], stem), []).append({"concept": concept, "side": side})
         count = 0
         for (category, stem), members in groups.items():
-            sides = {m["side"] for m in members}
-            if not ({"1", "2"} & sides) or len(members) < 2:
-                continue  # "unspecified" without sided siblings is not laterality
-            group_key = f"{category}:{hashlib.sha1(stem.encode()).hexdigest()[:12]}"
-            for member in members:
-                member["concept"]["laterality"] = member["side"]
-                member["concept"]["laterality_group"] = group_key
-                member["concept"]["properties"].setdefault("axes", {})["laterality"] = {
-                    "1": "right",
-                    "2": "left",
-                    "9": "unspecified",
-                }[member["side"]]
-                count += 1
+            for index, subgroup in enumerate(_one_char_subgroups(members)):
+                sides = {m["side"] for m in subgroup}
+                if not ({"1", "2"} & sides) or len(subgroup) < 2:
+                    continue  # "unspecified" without sided siblings is not laterality
+                digest = hashlib.sha1(stem.encode()).hexdigest()[:12]
+                group_key = f"{category}:{digest}:{index}"
+                for member in subgroup:
+                    member["concept"]["laterality"] = member["side"]
+                    member["concept"]["laterality_group"] = group_key
+                    member["concept"]["properties"].setdefault("axes", {})["laterality"] = {
+                        "1": "right",
+                        "2": "left",
+                        "3": "bilateral",
+                        "9": "unspecified",
+                    }[member["side"]]
+                    count += 1
         return count
 
     @staticmethod
     def _episodes(ctx: LoadContext) -> int:
+        """Assign episode from the 7th character — but only where it means
+        one: the XML's sevenChrDef is authoritative (obstetric codes carry
+        fetus digits there, not encounters); without the XML the
+        conservative letter set applies and unknown characters are left
+        unclassified rather than guessed."""
+        seven_defs = ctx.tabular.seven_defs if ctx.tabular else {}
         count = 0
         for concept in ctx.concepts.values():
             code = concept["code"].replace(".", "")
             if concept["kind"] != "code" or len(code) != 7:
                 continue
             seventh = code[-1]
-            if seventh not in EPISODE_CHARS:
-                raise LoadError(f"{concept['code']}: unknown 7th character '{seventh}'")
+            family = _longest_prefix_match(concept["code"], seven_defs)
+            if family is not None:
+                definitions = seven_defs[family]
+                if seventh not in definitions:
+                    raise LoadError(
+                        f"{concept['code']}: 7th character '{seventh}' not in "
+                        f"{family} sevenChrDef {sorted(definitions)}"
+                    )
+                if not _is_encounter_definition(definitions[seventh]):
+                    continue  # a fetus digit or similar — not an episode
+            elif seventh not in EPISODE_CHARS:
+                continue  # no authority to classify — leave unset
             concept["episode"] = seventh
             concept["episode_group"] = concept["code"][:-1]
             count += 1
@@ -267,6 +443,7 @@ class EdgesStage:
         self._contralateral_edges(ctx)
         self._episode_edges(ctx)
         self._displacement_edges(ctx)
+        self._rule_edges(ctx)
         _concepts_t, edges_t, _loads_t = _tables()
         for i in range(0, len(ctx.edges), BATCH):
             ctx.session.execute(insert(edges_t), ctx.edges[i : i + BATCH])
@@ -278,12 +455,13 @@ class EdgesStage:
         return ", ".join(f"{n:,} {k}" for k, n in sorted(kinds.items()))
 
     def _add(self, ctx: LoadContext, source: str, target: str, edge_type: str, **props) -> None:
+        authority = props.pop("authority", "DERIVED_LOADER")
         ctx.edges.append(
             {
                 "source_id": source,
                 "target_id": target,
                 "edge_type": edge_type,
-                "authority": "DERIVED_LOADER",
+                "authority": authority,
                 "confidence": 1.0,
                 "properties": props or {},
             }
@@ -330,6 +508,61 @@ class EdgesStage:
             if "displaced" in pair and "nondisplaced" in pair:
                 self._add(ctx, pair["displaced"], pair["nondisplaced"], "axis_variant", axis="displacement")
                 self._add(ctx, pair["nondisplaced"], pair["displaced"], "axis_variant", axis="displacement")
+
+    def _rule_edges(self, ctx: LoadContext) -> None:
+        """Coding-rule edges from tabular notes with resolvable code refs.
+
+        A note referencing a code outside the loaded catalog produces no
+        edge — the note text itself is already on the source concept's
+        properties (TabularStage), so nothing is lost."""
+        if ctx.tabular is None:
+            return
+        for dotted, notes in ctx.tabular.rules.items():
+            source = ctx.concepts.get(f"{ONTOLOGY}:{dotted}")
+            if source is None:
+                continue
+            for note in notes:
+                for ref in note.refs:
+                    target = ctx.concepts.get(f"{ONTOLOGY}:{ref}")
+                    if target is not None and target["id"] != source["id"]:
+                        self._add(
+                            ctx,
+                            source["id"],
+                            target["id"],
+                            note.edge_type,
+                            authority="CMS_TABULAR",
+                            note=note.text,
+                        )
+
+
+class AccelerateStage:
+    """Stage 7: PostgreSQL accelerators (design §3.4) — expression-GIN FTS
+    and trigram indexes. A no-op on other dialects; all statements are
+    static and idempotent (IF NOT EXISTS)."""
+
+    name: ClassVar[str] = "accelerate"
+
+    DDL = (
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+        "CREATE INDEX IF NOT EXISTS ix_concept_fts ON ontology_concepts "
+        "USING GIN (to_tsvector('english', code || ' ' || display))",
+        "CREATE INDEX IF NOT EXISTS ix_concept_trgm ON ontology_concepts USING GIN (display gin_trgm_ops)",
+        # plain btree can't serve LIKE prefix scans on PG — the reference
+        # architecture's own text_pattern_ops lesson (design §2 departure 4)
+        "CREATE INDEX IF NOT EXISTS ix_concept_path_prefix ON ontology_concepts (path text_pattern_ops)",
+    )
+
+    def run(self, ctx: LoadContext) -> str:
+        """Create the PostgreSQL search indexes (skips other dialects)."""
+        from sqlalchemy import text
+
+        bind = ctx.session.get_bind()
+        if bind.dialect.name != "postgresql":
+            return f"skipped ({bind.dialect.name})"
+        for statement in self.DDL:
+            ctx.session.execute(text(statement))
+        ctx.session.flush()
+        return f"{len(self.DDL) - 1} search indexes ensured (+pg_trgm)"
 
 
 class VerifyStage:
