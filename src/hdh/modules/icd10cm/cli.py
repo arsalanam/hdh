@@ -40,6 +40,20 @@ def register_cli(subparsers) -> None:
     bench_p = sub.add_parser("bench", help="Measure lookup/search/hierarchy latencies")
     bench_p.add_argument("--iterations", type=int, default=200)
 
+    codify_p = sub.add_parser("codify", help="Description → ranked ICD-10-CM candidates")
+    codify_p.add_argument("description", nargs="+")
+    codify_p.add_argument("--limit", type=int, default=5)
+    codify_p.add_argument("--terms", help="Offline mode: search terms (skips the LLM axis extraction)")
+    codify_p.add_argument(
+        "--axes",
+        default=None,
+        help="Offline mode: comma-separated axis=value pairs (e.g. laterality=left,encounter=initial)",
+    )
+
+    pattern_p = sub.add_parser("pattern", help="Run a validated graph-pattern query (JSON)")
+    pattern_p.add_argument("pattern_json")
+    pattern_p.add_argument("--limit", type=int, default=20)
+
     p.set_defaults(func=run)
 
 
@@ -53,6 +67,8 @@ def run(session, args) -> None:
         "lateral": lambda: _cmd_lateral(session, args.code),
         "link": lambda: _cmd_link(session),
         "bench": lambda: _cmd_bench(session, args.iterations),
+        "codify": lambda: _cmd_codify(session, args),
+        "pattern": lambda: _cmd_pattern(session, args),
     }
     commands[args.icd_cmd]()
 
@@ -184,10 +200,18 @@ def search_concepts(session, term: str, limit: int) -> list:
             "ORDER BY similarity(display, :term) DESC LIMIT :k"
         )
         return session.execute(fuzzy, {"term": term, "k": limit}).all()
-    query = select(concepts_t.c.code, concepts_t.c.display, concepts_t.c.is_billable)
-    for word in term.split():
-        query = query.where(concepts_t.c.display.ilike(f"%{word}%"))
-    return session.execute(query.order_by(concepts_t.c.hierarchy_depth.desc()).limit(limit)).all()
+    # AND across words, relaxing from the end when over-specific terms
+    # ("acromial") zero the result — deterministic and explainable
+    words = term.split()
+    while words:
+        query = select(concepts_t.c.code, concepts_t.c.display, concepts_t.c.is_billable)
+        for word in words:
+            query = query.where(concepts_t.c.display.ilike(f"%{word}%"))
+        rows = session.execute(query.order_by(concepts_t.c.hierarchy_depth.desc()).limit(limit)).all()
+        if rows:
+            return rows
+        words = words[:-1]
+    return []
 
 
 def _cmd_search(session, term: str, limit: int) -> None:
@@ -312,3 +336,75 @@ def _cmd_bench(session, iterations: int) -> None:
         mean, p95 = timed(fn)
         verdict = "✓" if p95 < float(target.strip("<ms")) else "✗ OVER"
         print(f"   {label:<22} {mean:>7.2f}ms {p95:>7.2f}ms   {target} {verdict}")
+
+
+def _cmd_codify(session, args) -> None:
+    """Description → ranked candidates, with the explanation rendered."""
+    import os
+
+    from hdh.modules.icd10cm.service import CodifyError, codify, stub_extractor
+
+    description = " ".join(args.description)
+    if args.terms:
+        axes = {}
+        for pair in (args.axes or "").split(","):
+            if "=" in pair:
+                axis, _, value = pair.partition("=")
+                axes[axis.strip()] = value.strip()
+        extractor = stub_extractor(args.terms, axes)
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        from hdh.modules.icd10cm.llm import llm_extractor
+
+        extractor = llm_extractor()
+    else:
+        raise SystemExit(
+            "hdh icd codify: set ANTHROPIC_API_KEY for LLM extraction, or use "
+            "--terms/--axes for the offline path"
+        )
+
+    try:
+        extraction, candidates = codify(session, description, extractor, limit=args.limit)
+    except CodifyError as err:
+        raise SystemExit(f"hdh icd codify: {err}") from None
+    axes_shown = ", ".join(f"{k}={v}" for k, v in sorted(extraction.axes.items())) or "none stated"
+    print(f'\n🩺 "{description}"')
+    print(f"   understood: terms=[{extraction.terms}] axes: {axes_shown}")
+    if not candidates:
+        print("   no candidates — try different terms")
+        return
+    for rank, cand in enumerate(candidates, start=1):
+        marks = []
+        if cand.matched:
+            marks.append("matches " + ",".join(cand.matched))
+        if cand.conflicts:
+            marks.append("CONFLICTS " + ",".join(cand.conflicts))
+        if cand.unstated:
+            marks.append("unstated " + ",".join(cand.unstated))
+        exact = " ← exact" if cand.exact and rank == 1 else ""
+        print(f"   {rank}. {cand.code:<10} {cand.display}")
+        print(f"      {'; '.join(marks) or 'no axes requested'}{exact}")
+    top = candidates[0]
+    if top.unstated:
+        print(f"   💬 ask about: {', '.join(top.unstated)} — the description never said")
+
+
+def _cmd_pattern(session, args) -> None:
+    """Validate + compile + run a JSON graph pattern."""
+    import json as json_lib
+
+    from hdh.modules.icd10cm.patterns import PatternError, run_pattern
+
+    try:
+        pattern = json_lib.loads(args.pattern_json)
+    except json_lib.JSONDecodeError as err:
+        raise SystemExit(f"hdh icd pattern: not valid JSON ({err})") from None
+    try:
+        hits = run_pattern(session, pattern, limit=args.limit)
+    except PatternError as err:
+        raise SystemExit(f"hdh icd pattern: {err}") from None
+    if not hits:
+        print("No matches.")
+        return
+    for hit in hits:
+        marker = "•" if hit.is_billable else "○"
+        print(f" {marker} {hit.code:<10} {hit.display}")
