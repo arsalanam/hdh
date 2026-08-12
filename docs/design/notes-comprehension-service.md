@@ -32,7 +32,7 @@ contracts between them.*
 7. [Specialty modularization](#7-specialty-modularization)
 8. [Evaluation strategy](#8-evaluation-strategy)
 9. [Non-goals and safety](#9-non-goals-and-safety)
-10. [Dependent service: SNOMED CT module (placeholder)](#10-dependent-service-snomed-ct-module-placeholder)
+10. [Dependent service: SNOMED CT module (design done, development pending)](#10-dependent-service-snomed-ct-module-design-done-development-pending)
 11. [Dependent service: RxNorm module (placeholder)](#11-dependent-service-rxnorm-module-placeholder)
 12. [Dependent service: LOINC module (placeholder)](#12-dependent-service-loinc-module-placeholder)
 13. [Phasing](#13-phasing)
@@ -236,7 +236,7 @@ not a medical device, never run on real PHI. Every output traces to a span
 and a catalog entry or it is rejected — the validator's grounding rule is
 the safety property. Not billing advice.
 
-## 10. Dependent service: SNOMED CT module (placeholder)
+## 10. Dependent service: SNOMED CT module (design done, development pending)
 
 > **Designed:** see [snomed-module.md](snomed-module.md) — data sources and
 > UMLS licensing logistics, first-time load, biannual updates, closure +
