@@ -42,8 +42,20 @@ def _assert_target_empty(target: Engine, tables) -> None:
 
 
 def _clear_target(target: Engine, tables) -> None:
-    """Delete all rows in reverse FK order (children before parents)."""
+    """Delete all rows in reverse FK order (children before parents).
+
+    Cyclic (use_alter) FK columns are nulled first — otherwise the cycle
+    blocks deletion in every order."""
     with target.begin() as conn:
+        for table in tables:
+            cyclic = {
+                col.name
+                for col in table.columns
+                for fk in col.foreign_keys
+                if fk.constraint is not None and fk.constraint.use_alter
+            }
+            if cyclic:
+                conn.execute(table.update().values(**{name: None for name in cyclic}))
         for table in reversed(tables):
             conn.execute(table.delete())
 
