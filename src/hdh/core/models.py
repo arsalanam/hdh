@@ -140,7 +140,9 @@ class Patient(Base):
     deceased: Mapped[bool | None] = mapped_column(Boolean, default=False)
     deceased_date: Mapped[date | None] = mapped_column(Date)
     # use_alter breaks the patients ↔ family_members FK cycle at create time
-    emergency_contact_id: Mapped[int | None] = mapped_column(ForeignKey("family_members.id", use_alter=True, name="fk_patients_emergency_contact"))
+    emergency_contact_id: Mapped[int | None] = mapped_column(
+        ForeignKey("family_members.id", use_alter=True, name="fk_patients_emergency_contact")
+    )
     # Lifestyle
     smoker: Mapped[bool | None] = mapped_column(Boolean, default=False)
     bmi_baseline: Mapped[float | None] = mapped_column(Float)

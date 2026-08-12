@@ -96,25 +96,49 @@ def migrate_sqlite(
             _assert_target_empty(target, tables)
 
         results: list[TableCopy] = []
+        deferred_updates: list[tuple] = []  # (table, pk_col, fk_col, rows) applied last
         for table in tables:
             source_cols = {c["name"] for c in inspect(source).get_columns(table.name)}
             cols = [c for c in table.columns if c.name in source_cols]
             copied = 0
+            # use_alter FK columns (cycles: patients.emergency_contact_id →
+            # family_members) can't be inserted before their target table
+            # exists — null them now, restore in a final pass
+            deferred = {
+                col.name
+                for col in table.columns
+                for fk in col.foreign_keys
+                if fk.constraint is not None and fk.constraint.use_alter
+            }
+            pending: list[dict] = []
             with source.connect() as read_conn, target.begin() as write_conn:
                 rows = read_conn.execution_options(yield_per=batch_size).execute(
                     select(*[table.c[c.name] for c in cols])
                 )
                 for batch in rows.partitions(batch_size):
-                    if batch:
-                        write_conn.execute(
-                            table.insert(),
-                            [dict(zip([c.name for c in cols], row, strict=True)) for row in batch],
-                        )
-                        copied += len(batch)
+                    if not batch:
+                        continue
+                    dicts = [dict(zip([c.name for c in cols], row, strict=True)) for row in batch]
+                    for row_dict in dicts:
+                        for name in deferred:
+                            if row_dict.get(name) is not None:
+                                pending.append({"pk": row_dict["id"], "col": name, "val": row_dict[name]})
+                                row_dict[name] = None
+                    write_conn.execute(table.insert(), dicts)
+                    copied += len(dicts)
+            if pending:
+                deferred_updates.append((table, pending))
             with source.connect() as sconn, target.connect() as tconn:
                 src_count = sconn.execute(select(text("count(*)")).select_from(table)).scalar()
                 tgt_count = tconn.execute(select(text("count(*)")).select_from(table)).scalar()
             results.append(TableCopy(table.name, copied, src_count == tgt_count))
+
+        with target.begin() as conn:
+            for table, pending in deferred_updates:
+                for entry in pending:
+                    conn.execute(
+                        table.update().where(table.c.id == entry["pk"]).values(**{entry["col"]: entry["val"]})
+                    )
 
         _advance_sequences(target, tables)
         return results
