@@ -234,6 +234,11 @@ the safety property. Not billing advice.
 
 ## 10. Dependent service: SNOMED CT module (placeholder)
 
+> **Designed:** see [snomed-module.md](snomed-module.md) — data sources and
+> UMLS licensing logistics, first-time load, biannual updates, closure +
+> attribute graph store, retrieval pipeline, and milestones. The paragraph
+> below is the contract this master document fixed; the design honors it.
+
 *Own design doc before build. Fixed here:* implements `OntologyService`;
 loads RF2 (user-supplied under UMLS affiliate license — loader ships, data
 does not); N `parent_of` edges + private transitive closure; ~1.4M
