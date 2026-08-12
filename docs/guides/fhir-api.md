@@ -14,24 +14,31 @@ hdh serve --port 8000
 |---|---|
 | `GET /metadata` | Minimal `CapabilityStatement` |
 | `GET /Patient/{mrn}` | The `Patient` resource |
-| `GET /Patient?name=smith&_count=20` | `searchset` Bundle of matching Patients (name substring; `_count` capped at 100) |
+| `GET /Patient?name=smith&birthdate=1990-04-12&identifier=MRN12345678&_count=20` | `searchset` Bundle of matching Patients. `name` is a substring match; `birthdate` is an exact `YYYY-MM-DD` match; `identifier` is an exact MRN match; `_count` is capped at 100 |
 | `GET /Patient/{mrn}/$everything` | The full per-patient Bundle: Patient, one Encounter per visit, Observations for vitals and labs (LOINC-coded, with reference ranges), Conditions (ICD-10), MedicationRequests |
+| `GET /Observation?patient=MRN12345678&category=laboratory&_count=20` | `searchset` Bundle of Observations for one patient. `patient` (an MRN) is required. `category` optionally narrows to `vital-signs` or `laboratory`; omit it to get both. `_count` is capped at 100 |
 | `GET /docs` | Interactive OpenAPI docs (FastAPI) |
 
 ```bash
 curl -s localhost:8000/Patient/MRN12345678 | jq .name
 curl -s "localhost:8000/Patient?name=ward" | jq .total
+curl -s "localhost:8000/Patient?birthdate=1990-04-12" | jq .total
 curl -s "localhost:8000/Patient/MRN12345678/\$everything" | jq '.entry | length'
+curl -s "localhost:8000/Observation?patient=MRN12345678&category=laboratory" | jq .total
 ```
 
-Unknown MRNs return `404` with a JSON detail body.
+Unknown MRNs return `404` with a JSON detail body. An invalid `birthdate` value,
+a missing `patient` on `/Observation`, or an unrecognized `category` return `400`.
 
 ## Design
 
 The API is a thin facade over `hdh.core.exporters.patient_to_fhir_bundle` —
 the same serialization used by `hdh export --format fhir`, so file exports and
-API responses can never drift apart. Each request opens and closes its own
-SQLAlchemy session against the SQLite file.
+API responses can never drift apart. `/Observation` reuses the same
+per-visit `_fhir_vitals_observations` / `_fhir_lab_observations` helpers
+directly, rather than re-serializing, so it stays in lockstep with the bundle
+export too. Each request opens and closes its own SQLAlchemy session against
+the SQLite file.
 
 Embed it in your own service:
 
@@ -45,9 +52,11 @@ app = create_app(db_path="family_medicine.db")   # a FastAPI app — mount or ru
 This is a testing facade, not a conformant FHIR server:
 
 - Read-only; no create/update, no transactions, no auth.
-- Search supports `name` only; no `_include`, pagination tokens, or `_sort`.
+- Search supports `name`, `birthdate`, and `identifier` on Patient, and
+  `patient` / `category` on Observation; no `_include`, pagination tokens,
+  or `_sort` anywhere.
 - Resources carry no persistent server-assigned IDs beyond the MRN.
 
-Natural next steps: token auth middleware, search on birthdate/identifier,
-per-resource endpoints (`/Observation?patient=`), and SNOMED codings from the
-ontology module in `Condition.code.coding`.
+Natural next steps: token auth middleware, per-resource endpoints for
+Condition and MedicationRequest, and SNOMED codings from the ontology module
+in `Condition.code.coding`.
