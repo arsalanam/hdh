@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from hdh.core.models import ChronicCondition, Patient, Prescription, Visit, VisitType
+from hdh.core.models import Condition, Patient, Prescription, Visit, VisitType
 
 # Grace multiplier applied to a visit's follow_up_days before it counts as missed
 FOLLOW_UP_GRACE = 1.5
@@ -88,8 +88,8 @@ def detect_gaps(
 
     uncontrolled: dict[int, list[str]] = {}
     for pid, desc in (
-        session.query(ChronicCondition.patient_id, ChronicCondition.description)
-        .filter(ChronicCondition.controlled.is_(False))
+        session.query(Condition.patient_id, Condition.description)
+        .filter(Condition.chronic.is_(True), Condition.controlled.is_(False))
         .all()
     ):
         uncontrolled.setdefault(pid, []).append(desc)

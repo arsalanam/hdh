@@ -104,7 +104,7 @@ def test_diagnosis_concept_bridge(tmp_path):
     Concept = new_classes["OntologyConcept"]
     from datetime import date
 
-    from hdh.core.models import Diagnosis, Patient, Sex, Visit, VisitType
+    from hdh.core.models import Condition, Patient, Sex, Visit, VisitType
 
     engine = get_engine(str(tmp_path / "bridge.db"))
     session = get_session(engine)
@@ -124,7 +124,8 @@ def test_diagnosis_concept_bridge(tmp_path):
         sex=Sex.MALE,
     )
     visit = Visit(patient=patient, visit_date=date(2026, 1, 5), visit_type=VisitType.FOLLOW_UP)
-    dx = Diagnosis(
+    dx = Condition(
+        patient=patient,
         visit=visit,
         icd10_code="E11.9",
         description="Type 2 diabetes mellitus",
@@ -133,7 +134,7 @@ def test_diagnosis_concept_bridge(tmp_path):
     session.add_all([concept, patient, visit, dx])
     session.commit()
 
-    stored = session.query(Diagnosis).filter_by(icd10_code="E11.9").one()
+    stored = session.query(Condition).filter_by(icd10_code="E11.9").one()
     assert stored.concept.display.startswith("Type 2 diabetes")
     session.close()
     engine.dispose()
@@ -146,18 +147,22 @@ def test_existing_database_upgrade_path(tmp_path):
     db = tmp_path / "old.db"
     conn = sqlite3.connect(db)
     conn.execute(
-        "CREATE TABLE diagnoses (id INTEGER PRIMARY KEY, visit_id INTEGER, "
-        "icd10_code VARCHAR(10), description VARCHAR(200), is_primary BOOLEAN)"
+        "CREATE TABLE conditions (id INTEGER PRIMARY KEY, patient_id INTEGER, visit_id INTEGER, "
+        "icd10_code VARCHAR(10), description VARCHAR(200), chronic BOOLEAN, "
+        "status VARCHAR(9), controlled BOOLEAN, is_primary BOOLEAN, onset_date DATE, resolved_date DATE)"
     )
-    conn.execute("INSERT INTO diagnoses (visit_id, icd10_code, description) VALUES (1, 'E11.9', 'T2DM')")
+    conn.execute(
+        "INSERT INTO conditions (patient_id, visit_id, icd10_code, description, status) "
+        "VALUES (1, 1, 'E11.9', 'T2DM', 'ACTIVE')"
+    )
     conn.commit()
     conn.close()
 
     engine = get_engine(str(db))
     inspector = inspect(engine)
-    cols = {c["name"] for c in inspector.get_columns("diagnoses")}
+    cols = {c["name"] for c in inspector.get_columns("conditions")}
     assert {"concept_id", "snomed_code", "snomed_display"} <= cols  # both modules applied
     assert "ontology_concepts" in inspector.get_table_names()
     with engine.connect() as c:
-        assert c.exec_driver_sql("SELECT icd10_code FROM diagnoses").scalar() == "E11.9"
+        assert c.exec_driver_sql("SELECT icd10_code FROM conditions").scalar() == "E11.9"
     engine.dispose()

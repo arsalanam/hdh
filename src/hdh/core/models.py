@@ -1,5 +1,12 @@
 """
 SQLAlchemy ORM models for the Family Medicine synthetic dataset.
+
+The basic patient chart lives in core (design: docs/design/
+core-chart-expansion.md): profile, family structure and histories, a
+unified problem list (Condition), medications past and active, procedures,
+immunizations, allergies, and stored visit notes. Reference entities
+(Provider, Specialty) are deliberately thin — identifier + name — and gain
+richness through schema-registry extension modules, never core changes.
 """
 
 import enum
@@ -52,11 +59,60 @@ class LabStatus(str, enum.Enum):
     CRITICAL = "critical"
 
 
-# ─── Core Tables ──────────────────────────────────────────────────────────────
+class ConditionStatus(str, enum.Enum):
+    ACTIVE = "active"
+    RESOLVED = "resolved"
+    REMISSION = "remission"
+
+
+class MedicationStatus(str, enum.Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+
+
+class AllergySeverity(str, enum.Enum):
+    MILD = "mild"
+    MODERATE = "moderate"
+    SEVERE = "severe"
+
+
+class NoteType(str, enum.Enum):
+    SOAP = "soap"
+    ADDENDUM = "addendum"
+
+
+# ─── Reference entities (thin: identity only — modules add richness) ─────────
+
+
+class Specialty(Base):
+    """A clinical specialty — thin reference row (code + name)."""
+
+    __tablename__ = "specialties"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(20), unique=True)
+    name: Mapped[str] = mapped_column(String(80))
+
+
+class Provider(Base):
+    """A care provider — thin reference row (identifier + name + specialty)."""
+
+    __tablename__ = "providers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    identifier: Mapped[str] = mapped_column(String(20), unique=True)  # NPI-like
+    name: Mapped[str] = mapped_column(String(100))
+    specialty_id: Mapped[int | None] = mapped_column(ForeignKey("specialties.id"))
+
+    specialty: Mapped["Specialty | None"] = relationship()
+
+
+# ─── Patient and family ──────────────────────────────────────────────────────
 
 
 class Patient(Base):
-    """A patient: demographics, insurance, allergies, family history, lifestyle."""
+    """A patient: demographics, profile, and the chart's root."""
 
     __tablename__ = "patients"
 
@@ -79,14 +135,13 @@ class Patient(Base):
     insurance_name: Mapped[str | None] = mapped_column(String(80))
     insurance_id: Mapped[str | None] = mapped_column(String(20))
     blood_type: Mapped[str | None] = mapped_column(String(4))
-    # Known allergies (pipe-separated string for simplicity)
-    allergies: Mapped[str | None] = mapped_column(Text)
-    # Family history flags
-    fam_hx_diabetes: Mapped[bool | None] = mapped_column(Boolean, default=False)
-    fam_hx_hypertension: Mapped[bool | None] = mapped_column(Boolean, default=False)
-    fam_hx_heart_disease: Mapped[bool | None] = mapped_column(Boolean, default=False)
-    fam_hx_cancer: Mapped[bool | None] = mapped_column(Boolean, default=False)
-    # Smoking / lifestyle
+    marital_status: Mapped[str | None] = mapped_column(String(20))
+    language: Mapped[str | None] = mapped_column(String(30))
+    deceased: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    deceased_date: Mapped[date | None] = mapped_column(Date)
+    # use_alter breaks the patients ↔ family_members FK cycle at create time
+    emergency_contact_id: Mapped[int | None] = mapped_column(ForeignKey("family_members.id", use_alter=True))
+    # Lifestyle
     smoker: Mapped[bool | None] = mapped_column(Boolean, default=False)
     bmi_baseline: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
@@ -94,8 +149,29 @@ class Patient(Base):
     visits: Mapped[list["Visit"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan", order_by="Visit.visit_date"
     )
-    chronic_conditions: Mapped[list["ChronicCondition"]] = relationship(
+    conditions: Mapped[list["Condition"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan"
+    )
+    family_members: Mapped[list["FamilyMember"]] = relationship(
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        foreign_keys="FamilyMember.patient_id",
+    )
+    family_history: Mapped[list["FamilyHistory"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    allergies: Mapped[list["Allergy"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
+    medications: Mapped[list["MedicationStatement"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    procedures: Mapped[list["Procedure"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    immunizations: Mapped[list["Immunization"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    emergency_contact: Mapped["FamilyMember | None"] = relationship(
+        foreign_keys=[emergency_contact_id], post_update=True
     )
 
     @property
@@ -105,23 +181,77 @@ class Patient(Base):
         return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
 
-class ChronicCondition(Base):
-    """Persistent diagnoses that are tracked separately from visit-level diagnoses."""
+class FamilyMember(Base):
+    """One relative: a linked generated patient, or a lightweight row with
+    a narrative summary ("father lived to 75, T2DM/HTN well managed")."""
 
-    __tablename__ = "chronic_conditions"
+    __tablename__ = "family_members"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    relationship_type: Mapped[str] = mapped_column(String(30))  # mother/father/sibling/child/spouse…
+    name: Mapped[str | None] = mapped_column(String(100))
+    date_of_birth: Mapped[date | None] = mapped_column(Date)
+    related_patient_id: Mapped[int | None] = mapped_column(ForeignKey("patients.id"))
+    deceased: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    deceased_age: Mapped[int | None] = mapped_column(Integer)
+    phone: Mapped[str | None] = mapped_column(String(15))
+    summary: Mapped[str | None] = mapped_column(Text)  # narrative life/health summary
+
+    patient: Mapped["Patient"] = relationship(back_populates="family_members", foreign_keys=[patient_id])
+    related_patient: Mapped["Patient | None"] = relationship(foreign_keys=[related_patient_id])
+
+
+class FamilyHistory(Base):
+    """A hereditary-relevant condition in a relative: 'mother, breast
+    cancer, onset 52' — structured, unlike the old boolean flags."""
+
+    __tablename__ = "family_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    family_member_id: Mapped[int | None] = mapped_column(ForeignKey("family_members.id"))
+    relationship_type: Mapped[str] = mapped_column(String(30))
+    condition: Mapped[str] = mapped_column(String(200))
+    icd10_code: Mapped[str | None] = mapped_column(String(10))
+    onset_age: Mapped[int | None] = mapped_column(Integer)
+
+    patient: Mapped["Patient"] = relationship(back_populates="family_history")
+    family_member: Mapped["FamilyMember | None"] = relationship()
+
+
+# ─── The unified problem list ─────────────────────────────────────────────────
+
+
+class Condition(Base):
+    """One problem-list entry — unifies the old ChronicCondition and
+    visit-level Diagnosis (design §11 decision 4). `visit_id` records the
+    encounter where it was recorded/diagnosed, when known."""
+
+    __tablename__ = "conditions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"))
     icd10_code: Mapped[str] = mapped_column(String(10))
     description: Mapped[str] = mapped_column(String(200))
+    chronic: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    status: Mapped[ConditionStatus] = mapped_column(SAEnum(ConditionStatus), default=ConditionStatus.ACTIVE)
+    controlled: Mapped[bool | None] = mapped_column(Boolean)  # chronic + active only
+    is_primary: Mapped[bool | None] = mapped_column(Boolean, default=True)
     onset_date: Mapped[date | None] = mapped_column(Date)
-    controlled: Mapped[bool | None] = mapped_column(Boolean, default=True)  # well-controlled vs not
+    resolved_date: Mapped[date | None] = mapped_column(Date)
 
-    patient: Mapped["Patient"] = relationship(back_populates="chronic_conditions")
+    patient: Mapped["Patient"] = relationship(back_populates="conditions")
+    visit: Mapped["Visit | None"] = relationship(back_populates="conditions")
+
+
+# ─── Encounters and their contents ────────────────────────────────────────────
 
 
 class Visit(Base):
-    """One outpatient encounter; owns vitals, diagnoses, prescriptions, labs."""
+    """One outpatient encounter; owns vitals, conditions recorded,
+    prescriptions, labs, procedures, and the stored note."""
 
     __tablename__ = "visits"
 
@@ -130,19 +260,22 @@ class Visit(Base):
     visit_date: Mapped[date] = mapped_column(Date)
     visit_type: Mapped[VisitType] = mapped_column(SAEnum(VisitType))
     chief_complaint: Mapped[str | None] = mapped_column(String(200))
-    provider_name: Mapped[str | None] = mapped_column(String(80))
+    provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
     # Follow-up scheduling
     follow_up_days: Mapped[int | None] = mapped_column(Integer)  # None = PRN
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
+    provider: Mapped["Provider | None"] = relationship()
     vitals: Mapped["Vital | None"] = relationship(back_populates="visit", cascade="all, delete-orphan")
-    diagnoses: Mapped[list["Diagnosis"]] = relationship(back_populates="visit", cascade="all, delete-orphan")
+    conditions: Mapped[list["Condition"]] = relationship(back_populates="visit")
     prescriptions: Mapped[list["Prescription"]] = relationship(
         back_populates="visit", cascade="all, delete-orphan"
     )
     lab_results: Mapped[list["LabResult"]] = relationship(
         back_populates="visit", cascade="all, delete-orphan"
     )
+    procedures: Mapped[list["Procedure"]] = relationship(back_populates="visit")
+    notes: Mapped[list["VisitNote"]] = relationship(back_populates="visit", cascade="all, delete-orphan")
 
 
 class Vital(Base):
@@ -167,22 +300,9 @@ class Vital(Base):
     visit: Mapped["Visit"] = relationship(back_populates="vitals")
 
 
-class Diagnosis(Base):
-    """An ICD-10 coded diagnosis made at one visit."""
-
-    __tablename__ = "diagnoses"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    visit_id: Mapped[int] = mapped_column(ForeignKey("visits.id"))
-    icd10_code: Mapped[str] = mapped_column(String(10))
-    description: Mapped[str] = mapped_column(String(200))
-    is_primary: Mapped[bool | None] = mapped_column(Boolean, default=True)
-
-    visit: Mapped["Visit"] = relationship(back_populates="diagnoses")
-
-
 class Prescription(Base):
-    """A medication ordered or continued at one visit."""
+    """A medication ordered or continued at one visit (the order event —
+    the cross-visit medication list lives in MedicationStatement)."""
 
     __tablename__ = "prescriptions"
 
@@ -215,6 +335,96 @@ class LabResult(Base):
     loinc_code: Mapped[str | None] = mapped_column(String(10))
 
     visit: Mapped["Visit"] = relationship(back_populates="lab_results")
+
+
+# ─── The rest of the chart ────────────────────────────────────────────────────
+
+
+class Allergy(Base):
+    """A structured allergy: substance, reaction, severity."""
+
+    __tablename__ = "allergies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    substance: Mapped[str] = mapped_column(String(100))
+    reaction: Mapped[str | None] = mapped_column(String(100))
+    severity: Mapped[AllergySeverity | None] = mapped_column(SAEnum(AllergySeverity))
+    noted_date: Mapped[date | None] = mapped_column(Date)
+
+    patient: Mapped["Patient"] = relationship(back_populates="allergies")
+
+
+class MedicationStatement(Base):
+    """The cross-visit medication list: what the patient is (or was) on,
+    with status and indication — fed by Prescription order events."""
+
+    __tablename__ = "medication_statements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    drug_name: Mapped[str] = mapped_column(String(100))
+    drug_class: Mapped[str | None] = mapped_column(String(80))
+    dose: Mapped[str | None] = mapped_column(String(40))
+    frequency: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[MedicationStatus] = mapped_column(
+        SAEnum(MedicationStatus), default=MedicationStatus.ACTIVE
+    )
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    indication_id: Mapped[int | None] = mapped_column(ForeignKey("conditions.id"))
+
+    patient: Mapped["Patient"] = relationship(back_populates="medications")
+    indication: Mapped["Condition | None"] = relationship()
+
+
+class Procedure(Base):
+    """A performed procedure/intervention, optionally tied to a visit."""
+
+    __tablename__ = "procedures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"))
+    description: Mapped[str] = mapped_column(String(200))
+    performed_date: Mapped[date | None] = mapped_column(Date)
+    provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+
+    patient: Mapped["Patient"] = relationship(back_populates="procedures")
+    visit: Mapped["Visit | None"] = relationship(back_populates="procedures")
+    provider: Mapped["Provider | None"] = relationship()
+
+
+class Immunization(Base):
+    """One administered vaccine dose."""
+
+    __tablename__ = "immunizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    vaccine: Mapped[str] = mapped_column(String(100))
+    cvx_code: Mapped[str | None] = mapped_column(String(10))
+    administered_date: Mapped[date] = mapped_column(Date)
+    dose_number: Mapped[int | None] = mapped_column(Integer)
+
+    patient: Mapped["Patient"] = relationship(back_populates="immunizations")
+
+
+class VisitNote(Base):
+    """The stored clinical note for a visit — deterministic SOAP text by
+    default; the comprehension service's input."""
+
+    __tablename__ = "visit_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    visit_id: Mapped[int] = mapped_column(ForeignKey("visits.id"))
+    note_type: Mapped[NoteType] = mapped_column(SAEnum(NoteType), default=NoteType.SOAP)
+    text: Mapped[str] = mapped_column(Text)
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+
+    visit: Mapped["Visit"] = relationship(back_populates="notes")
+    author: Mapped["Provider | None"] = relationship()
 
 
 # ─── Database setup helper ─────────────────────────────────────────────────────

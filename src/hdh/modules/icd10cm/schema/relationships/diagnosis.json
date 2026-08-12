@@ -1,7 +1,0 @@
-{
-  "entity": "Diagnosis",
-  "module": "icd10cm_module",
-  "relationships": [
-    { "name": "concept", "target": "OntologyConcept", "type": "many_to_one", "foreign_keys": ["diagnoses.concept_id"] }
-  ]
-}

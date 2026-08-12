@@ -57,7 +57,7 @@ def test_autogenerate_sees_registry_extensions(alembic_cfg):
 
     command.upgrade(cfg, "head")
     engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
-    cols = {c["name"] for c in inspect(engine).get_columns("diagnoses")}
+    cols = {c["name"] for c in inspect(engine).get_columns("conditions")}
     assert {"icd10_code", "snomed_code", "snomed_display"} <= cols
     engine.dispose()
 

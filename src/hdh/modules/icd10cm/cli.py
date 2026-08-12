@@ -35,7 +35,7 @@ def register_cli(subparsers) -> None:
     lateral_p = sub.add_parser("lateral", help="Contralateral (other-side) code")
     lateral_p.add_argument("code")
 
-    sub.add_parser("link", help="Backfill Diagnosis.concept_id from icd10_code")
+    sub.add_parser("link", help="Backfill Condition.concept_id from icd10_code")
 
     bench_p = sub.add_parser("bench", help="Measure lookup/search/hierarchy latencies")
     bench_p.add_argument("--iterations", type=int, default=200)
@@ -238,7 +238,7 @@ def _cmd_lateral(session, code: str) -> None:
 
 
 def _cmd_link(session) -> None:
-    from hdh.core.models import Diagnosis
+    from hdh.core.models import Condition
 
     concepts_t, _e, _l = _tables()
     codes = dict(
@@ -246,17 +246,17 @@ def _cmd_link(session) -> None:
     )
     # concept_id is registry-injected at runtime — mypy can't see it as a
     # class attribute, so go through the table's dynamic column accessor
-    concept_col = Diagnosis.__table__.c.concept_id
+    concept_col = Condition.__table__.c.concept_id
     linked = 0
     for code, concept_id in codes.items():
         linked += (
-            session.query(Diagnosis)
-            .filter(Diagnosis.icd10_code == code, concept_col.is_(None))
+            session.query(Condition)
+            .filter(Condition.icd10_code == code, concept_col.is_(None))
             .update({"concept_id": concept_id})
         )
     session.commit()
-    unlinked = session.query(Diagnosis).filter(concept_col.is_(None)).count()
-    print(f"🔗 linked {linked:,} diagnoses to concepts ({unlinked:,} not in the loaded catalog)")
+    unlinked = session.query(Condition).filter(concept_col.is_(None)).count()
+    print(f"🔗 linked {linked:,} conditions to concepts ({unlinked:,} not in the loaded catalog)")
 
 
 def _percentiles(samples: list) -> tuple:
