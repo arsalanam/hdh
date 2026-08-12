@@ -74,7 +74,8 @@ UTIs and sports injuries in summer). Chronic disease is seeded from age,
 family history, smoking, and BMI, so comorbidities cluster realistically.
 
 ```bash
-hdh generate --patients 10000 --years 4   # ~87 MB SQLite, reproducible (seeded)
+hdh generate --patients 100 --years 2     # quick panel (seconds), reproducible (seeded)
+# full 10k: download from Releases — v0.4.0 full-chart generation takes a long time locally
 hdh stats                                 # counts, top diagnoses, age pyramid
 hdh show --mrn MRN12345678                # one patient's full chart
 hdh export --format all --limit 500 --output-dir exports/

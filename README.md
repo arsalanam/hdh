@@ -41,8 +41,9 @@ pip install -e ".[all]"       # everything (dev tools need uv or pip install pyt
 ## Quick Start
 
 ```bash
-# Generate 10,000 patients (4 years of history) — or use a pre-built family_medicine.db
-hdh generate --patients 10000 --years 4
+# Generate a quick 100-patient panel (full charts make big runs slow —
+# download the pre-built 10k database from Releases instead of generating it)
+hdh generate --patients 100 --years 2
 
 # Inspect
 hdh stats

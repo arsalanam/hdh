@@ -91,7 +91,9 @@ care-gaps, risk, agent, narrative, serve, trace`, and more.
 ## Part 3 — Generate your synthetic practice
 
 ```powershell
-uv run hdh generate --patients 10000 --years 4
+uv run hdh generate --patients 100 --years 2
+# (100 patients is plenty to explore; the full 10,000-patient practice takes a
+#  long time to generate — download it ready-made from the project's Releases page)
 ```
 
 (Prefer not to wait? Download `family_medicine-10k.zip` from

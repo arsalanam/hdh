@@ -10,8 +10,8 @@ pip install -e .
 ## Generate a dataset
 
 ```bash
-hdh generate --patients 10000 --years 4        # full-size (~87 MB, a few minutes)
-hdh generate --patients 500 --years 2          # small dev dataset (seconds)
+hdh generate --patients 100 --years 2          # quick panel (seconds) — the default advice
+hdh generate --patients 10000 --years 4        # full-size: SLOW since v0.4.0 (full charts) — prefer the release download
 hdh --db mydata.db generate --patients 1000    # custom database path
 ```
 
