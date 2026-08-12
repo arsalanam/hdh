@@ -23,7 +23,7 @@ from typing import ClassVar
 
 from sqlalchemy import func
 
-from hdh.core.models import ChronicCondition, Patient
+from hdh.core.models import Condition, Patient
 
 from .detector import CareGap, reference_date
 
@@ -153,9 +153,10 @@ class AIGapFinder:
             return [patient] if patient else []
         return (
             session.query(Patient)
-            .join(ChronicCondition)
+            .join(Condition)
+            .filter(Condition.chronic.is_(True))
             .group_by(Patient.id)
-            .order_by(func.count(ChronicCondition.id).desc())
+            .order_by(func.count(Condition.id).desc())
             .limit(sample)
             .all()
         )

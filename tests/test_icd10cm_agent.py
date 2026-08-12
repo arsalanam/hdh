@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from hdh.core.models import Base, Diagnosis, Patient, Sex, Visit, VisitType, get_engine, get_session
+from hdh.core.models import Base, Condition, Patient, Sex, Visit, VisitType, get_engine, get_session
 from hdh.core.schema_registry import bootstrap_schema
 from hdh.modules.icd10cm.loader import run_load
 
@@ -37,7 +37,9 @@ def coding_session(tmp_path_factory):
             sex=Sex.FEMALE,
         )
         visit = Visit(patient=patient, visit_date=date(2026, 1, 15), visit_type=VisitType.URGENT)
-        session.add_all([patient, visit, Diagnosis(visit=visit, icd10_code=code, description=code)])
+        session.add_all(
+            [patient, visit, Condition(patient=patient, visit=visit, icd10_code=code, description=code)]
+        )
     session.commit()
     from hdh.modules.icd10cm.cli import _cmd_link
 
@@ -104,8 +106,8 @@ def test_flagship_data_path_laterality_over_patients(coding_session):
     """The flagship demo's join: linked diagnoses × graph laterality."""
     concepts_t = Base.metadata.tables["ontology_concepts"]
     rows = coding_session.execute(
-        select(concepts_t.c.laterality, Diagnosis.icd10_code)
-        .join(concepts_t, Diagnosis.__table__.c.concept_id == concepts_t.c.id)
+        select(concepts_t.c.laterality, Condition.icd10_code)
+        .join(concepts_t, Condition.__table__.c.concept_id == concepts_t.c.id)
         .where(concepts_t.c.laterality.isnot(None))
     ).all()
     counts = {side: 0 for side in ("1", "2")}
@@ -124,7 +126,9 @@ def test_flagship_data_path_excludes1_conflicts(coding_session):
     # a patient carrying codes under BOTH sides of the edge is flagged.
     patient = coding_session.query(Patient).filter_by(mrn="MRN20000001").one()
     visit = patient.visits[0]
-    coding_session.add(Diagnosis(visit=visit, icd10_code="S82.51XA", description="ankle too"))
+    coding_session.add(
+        Condition(patient=patient, visit=visit, icd10_code="S82.51XA", description="ankle too")
+    )
     coding_session.commit()
     from hdh.modules.icd10cm.cli import _cmd_link
 
@@ -133,9 +137,9 @@ def test_flagship_data_path_excludes1_conflicts(coding_session):
     dx_concepts = [
         row[0]
         for row in coding_session.execute(
-            select(Diagnosis.__table__.c.concept_id)
-            .join(Visit, Diagnosis.visit_id == Visit.id)
-            .where(Visit.patient_id == patient.id, Diagnosis.__table__.c.concept_id.isnot(None))
+            select(Condition.__table__.c.concept_id)
+            .join(Visit, Condition.visit_id == Visit.id)
+            .where(Visit.patient_id == patient.id, Condition.__table__.c.concept_id.isnot(None))
         )
     ]
     conflicts = coding_session.execute(

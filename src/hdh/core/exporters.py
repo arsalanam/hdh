@@ -37,7 +37,8 @@ def patient_to_json(patient: Patient) -> dict:
             "onset_date": _date_str(cc.onset_date),
             "controlled": cc.controlled,
         }
-        for cc in patient.chronic_conditions
+        for cc in patient.conditions
+        if cc.chronic
     ]
 
     visits_out = []
@@ -59,7 +60,7 @@ def patient_to_json(patient: Patient) -> dict:
 
         diagnoses = [
             {"icd10": dx.icd10_code, "description": dx.description, "primary": dx.is_primary}
-            for dx in v.diagnoses
+            for dx in v.conditions
         ]
 
         prescriptions = [
@@ -92,7 +93,7 @@ def patient_to_json(patient: Patient) -> dict:
                 "visit_date": _date_str(v.visit_date),
                 "visit_type": str(v.visit_type).split(".")[-1],
                 "chief_complaint": v.chief_complaint,
-                "provider": v.provider_name,
+                "provider": v.provider.name if v.provider else None,
                 "follow_up_days": v.follow_up_days,
                 "vitals": vitals_dict,
                 "diagnoses": diagnoses,
@@ -115,13 +116,23 @@ def patient_to_json(patient: Patient) -> dict:
         "email": patient.email,
         "insurance": patient.insurance_name,
         "blood_type": patient.blood_type,
-        "allergies": patient.allergies.split("|") if patient.allergies else [],
-        "family_history": {
-            "diabetes": patient.fam_hx_diabetes,
-            "hypertension": patient.fam_hx_hypertension,
-            "heart_disease": patient.fam_hx_heart_disease,
-            "cancer": patient.fam_hx_cancer,
-        },
+        "allergies": [
+            {
+                "substance": a.substance,
+                "reaction": a.reaction,
+                "severity": str(a.severity).split(".")[-1].lower() if a.severity else None,
+            }
+            for a in patient.allergies
+        ],
+        "family_history": [
+            {
+                "relationship": h.relationship_type,
+                "condition": h.condition,
+                "icd10_code": h.icd10_code,
+                "onset_age": h.onset_age,
+            }
+            for h in patient.family_history
+        ],
         "smoker": patient.smoker,
         "bmi_baseline": patient.bmi_baseline,
         "chronic_conditions": chronic,
@@ -200,7 +211,7 @@ def _fhir_encounter(v, mrn: str, enc_id: str) -> dict:
         "subject": {"reference": f"Patient/{mrn}"},
         "period": {"start": _date_str(v.visit_date), "end": _date_str(v.visit_date)},
         "reasonCode": [{"text": v.chief_complaint}],
-        "participant": [{"individual": {"display": v.provider_name}}],
+        "participant": [{"individual": {"display": v.provider.name if v.provider else "Unassigned"}}],
     }
 
 
@@ -271,7 +282,7 @@ def _fhir_conditions(v, mrn: str, enc_id: str) -> list[dict]:
             "encounter": {"reference": f"Encounter/{enc_id}"},
             "recordedDate": _date_str(v.visit_date),
         }
-        for dx in v.diagnoses
+        for dx in v.conditions
     ]
 
 
@@ -406,28 +417,20 @@ def patient_to_text(patient: Patient) -> str:
         f"DOB          : {_date_str(patient.date_of_birth)}  |  Age: {patient.age}  |  Sex: {sex_label}",
         f"Blood Type   : {patient.blood_type}",
         f"Insurance    : {patient.insurance_name}  (ID: {patient.insurance_id})",
-        f"Allergies    : {patient.allergies}",
+        "Allergies    : " + (", ".join(a.substance for a in patient.allergies) or "NKDA"),
         "",
         "FAMILY HISTORY",
         "-" * 40,
     ]
-    fh_items = []
-    if patient.fam_hx_diabetes:
-        fh_items.append("Type 2 Diabetes")
-    if patient.fam_hx_hypertension:
-        fh_items.append("Hypertension")
-    if patient.fam_hx_heart_disease:
-        fh_items.append("Heart Disease")
-    if patient.fam_hx_cancer:
-        fh_items.append("Cancer")
-    lines.append(", ".join(fh_items) if fh_items else "None reported")
+    fh_items = [f"{h.relationship_type}: {h.condition}" for h in patient.family_history]
+    lines.append("; ".join(fh_items) if fh_items else "None reported")
     lines.append(f"Smoker       : {'Yes' if patient.smoker else 'No'}")
     lines.append(f"BMI (baseline): {patient.bmi_baseline}")
     lines.append("")
 
-    if patient.chronic_conditions:
+    if any(c.chronic for c in patient.conditions):
         lines += ["ACTIVE CHRONIC CONDITIONS", "-" * 40]
-        for cc in patient.chronic_conditions:
+        for cc in (c for c in patient.conditions if c.chronic):
             controlled = "Controlled" if cc.controlled else "Uncontrolled"
             lines.append(
                 f"  [{cc.icd10_code}] {cc.description}  —  Onset: {_date_str(cc.onset_date)}  ({controlled})"
@@ -443,7 +446,8 @@ def patient_to_text(patient: Patient) -> str:
         vtype = str(v.visit_type).split(".")[-1].replace("_", " ").title()
         lines += [
             "",
-            f"DATE: {_date_str(v.visit_date)}  [{vtype}]  —  Provider: {v.provider_name}",
+            f"DATE: {_date_str(v.visit_date)}  [{vtype}]  —  Provider: "
+            + (v.provider.name if v.provider else "Unassigned"),
             f"CHIEF COMPLAINT: {v.chief_complaint}",
         ]
 
@@ -458,8 +462,8 @@ def patient_to_text(patient: Patient) -> str:
             )
 
         # Diagnoses
-        if v.diagnoses:
-            dx_str = "; ".join(f"{dx.icd10_code} – {dx.description}" for dx in v.diagnoses)
+        if v.conditions:
+            dx_str = "; ".join(f"{dx.icd10_code} – {dx.description}" for dx in v.conditions)
             lines.append(f"ASSESSMENT: {dx_str}")
 
         # Prescriptions

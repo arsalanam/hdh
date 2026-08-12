@@ -1,18 +1,18 @@
 from hdh.core.disease_engine import CONDITIONS, pick_condition
 from hdh.core.exporters import patient_to_fhir_bundle, patient_to_json, patient_to_text
-from hdh.core.models import Diagnosis, Patient, Visit
+from hdh.core.models import Condition, Patient, Visit
 
 
 def test_dataset_generated(db_session):
     assert db_session.query(Patient).count() == 8
     assert db_session.query(Visit).count() > 0
-    assert db_session.query(Diagnosis).count() > 0
+    assert db_session.query(Condition).count() > 0
 
 
 def test_visits_have_clinical_detail(db_session):
     visit = db_session.query(Visit).first()
     assert visit.vitals is not None
-    assert visit.diagnoses
+    assert visit.conditions
     assert visit.chief_complaint
 
 

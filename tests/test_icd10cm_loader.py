@@ -151,7 +151,7 @@ def test_link_diagnoses(loaded_session):
     """hdh icd link backfills concept_id for codes present in the catalog."""
     from datetime import date
 
-    from hdh.core.models import Diagnosis, Patient, Sex, Visit, VisitType
+    from hdh.core.models import Condition, Patient, Sex, Visit, VisitType
     from hdh.modules.icd10cm.cli import _cmd_link
 
     patient = Patient(
@@ -162,8 +162,8 @@ def test_link_diagnoses(loaded_session):
         sex=Sex.FEMALE,
     )
     visit = Visit(patient=patient, visit_date=date(2026, 2, 2), visit_type=VisitType.FOLLOW_UP)
-    in_catalog = Diagnosis(visit=visit, icd10_code="E11.9", description="T2DM")
-    not_in_catalog = Diagnosis(visit=visit, icd10_code="J06.9", description="URI")
+    in_catalog = Condition(patient=patient, visit=visit, icd10_code="E11.9", description="T2DM")
+    not_in_catalog = Condition(patient=patient, visit=visit, icd10_code="J06.9", description="URI")
     loaded_session.add_all([patient, visit, in_catalog, not_in_catalog])
     loaded_session.commit()
 

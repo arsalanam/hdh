@@ -104,20 +104,20 @@ def test_describe_reports_order_and_extensions(tmp_path):
 def test_ontology_module_end_to_end(db_session):
     """The shipped extension: snomed columns exist, tag fills them, FHIR emits them."""
     from hdh.core.exporters import patient_to_fhir_bundle
-    from hdh.core.models import Diagnosis, Patient
+    from hdh.core.models import Condition, Patient
     from hdh.modules.ontology import ICD10_TO_SNOMED
 
     # conftest bootstraps the registry, so the extension columns exist
-    assert hasattr(Diagnosis, "snomed_code")
+    assert hasattr(Condition, "snomed_code")
 
     # backfill (what `hdh ontology tag` does)
     for icd10, (snomed_id, display) in ICD10_TO_SNOMED.items():
-        db_session.query(Diagnosis).filter(
-            Diagnosis.icd10_code == icd10, Diagnosis.snomed_code.is_(None)
+        db_session.query(Condition).filter(
+            Condition.icd10_code == icd10, Condition.snomed_code.is_(None)
         ).update({"snomed_code": snomed_id, "snomed_display": display})
     db_session.commit()
 
-    tagged = db_session.query(Diagnosis).filter(Diagnosis.snomed_code.isnot(None)).first()
+    tagged = db_session.query(Condition).filter(Condition.snomed_code.isnot(None)).first()
     assert tagged is not None, "tiny panel should still contain at least one mapped diagnosis"
 
     patient = db_session.query(Patient).filter(Patient.id == tagged.visit.patient_id).one()

@@ -11,7 +11,7 @@ from datetime import date
 
 from sqlalchemy import func, text
 
-from hdh.core.models import Base, ChronicCondition, Patient
+from hdh.core.models import Base, Condition, Patient
 
 
 def _schema_summary(tables: tuple[str, ...] | None = None) -> str:
@@ -58,12 +58,18 @@ def _sql_tool_description(tables: tuple[str, ...] | None) -> str:
         Schema (one line per table):
 {_schema_summary(tables)}
 
-        Joins: visits.patient_id -> patients.id; chronic_conditions.patient_id
-        -> patients.id; vitals, diagnoses, prescriptions, and lab_results join
-        via visit_id -> visits.id. Enum columns store names: visits.visit_type
-        in ('ACUTE','FOLLOW_UP','PREVENTIVE','URGENT'), lab_results.status in
-        ('NORMAL','HIGH','LOW','CRITICAL'), patients.sex in ('MALE','FEMALE').
-        chronic_conditions.controlled is 0/1. Dates are ISO 'YYYY-MM-DD' text
+        Joins: conditions.patient_id -> patients.id (the unified problem
+        list: chronic=1 rows are ongoing conditions, others are encounter
+        diagnoses; conditions.visit_id links to the recording visit);
+        vitals, prescriptions, lab_results, visit_notes, procedures join via
+        visit_id -> visits.id; allergies, family_history, immunizations,
+        medication_statements join via patient_id. Enum columns store names:
+        visits.visit_type in ('ACUTE','FOLLOW_UP','PREVENTIVE','URGENT'),
+        lab_results.status in ('NORMAL','HIGH','LOW','CRITICAL'),
+        conditions.status in ('ACTIVE','RESOLVED','REMISSION'), patients.sex
+        in ('MALE','FEMALE'). conditions.controlled is 0/1.
+        ontology_concepts.path is ICD-10-CM only; use the icd tools for
+        hierarchy questions. Dates are ISO 'YYYY-MM-DD' text
         (julianday()/strftime() work). Results are capped at 200 rows.
 
         Args:
@@ -120,8 +126,8 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         )
         if icd10_prefix:
             q = (
-                q.join(ChronicCondition)
-                .filter(ChronicCondition.icd10_code.like(f"{icd10_prefix}%"))
+                q.join(Condition)
+                .filter(Condition.chronic.is_(True), Condition.icd10_code.like(f"{icd10_prefix}%"))
                 .distinct()
             )
         rows = []
@@ -132,7 +138,9 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
                     "name": f"{p.first_name} {p.last_name}",
                     "age": p.age,
                     "sex": str(p.sex).split(".")[-1],
-                    "chronic_conditions": [f"[{c.icd10_code}] {c.description}" for c in p.chronic_conditions],
+                    "chronic_conditions": [
+                        f"[{c.icd10_code}] {c.description}" for c in p.conditions if c.chronic
+                    ],
                 }
             )
         return json.dumps(rows, indent=2) if rows else "No matching patients."
@@ -188,12 +196,13 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
     @beta_tool
     def dataset_stats() -> str:
         """Get overall dataset statistics: patient, visit, diagnosis, prescription, and lab counts."""
-        from hdh.core.models import Diagnosis, LabResult, Prescription, Visit
+        from hdh.core.models import Condition as Dx
+        from hdh.core.models import LabResult, Prescription, Visit
 
         stats = {
             "patients": session.query(func.count(Patient.id)).scalar(),
             "visits": session.query(func.count(Visit.id)).scalar(),
-            "diagnoses": session.query(func.count(Diagnosis.id)).scalar(),
+            "diagnoses": session.query(func.count(Dx.id)).scalar(),
             "prescriptions": session.query(func.count(Prescription.id)).scalar(),
             "lab_results": session.query(func.count(LabResult.id)).scalar(),
         }

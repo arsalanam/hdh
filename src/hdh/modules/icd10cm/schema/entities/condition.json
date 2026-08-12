@@ -1,0 +1,22 @@
+{
+  "entity": "Condition",
+  "extends": "base",
+  "module": "icd10cm_module",
+  "columns": [
+    {
+      "name": "concept_id",
+      "type": "String",
+      "length": 64,
+      "foreign_key": "ontology_concepts.id",
+      "nullable": true
+    }
+  ],
+  "indexes": [
+    {
+      "name": "ix_condition_concept",
+      "columns": [
+        "concept_id"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "entity": "Condition",
+  "module": "icd10cm_module",
+  "relationships": [
+    {
+      "name": "concept",
+      "target": "OntologyConcept",
+      "type": "many_to_one",
+      "foreign_keys": [
+        "conditions.concept_id"
+      ]
+    }
+  ]
+}

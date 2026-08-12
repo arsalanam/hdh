@@ -22,7 +22,7 @@ from datetime import date, timedelta
 from hdh.core.disease_engine import CONDITIONS
 from hdh.core.exporters import export_fhir, export_json, export_text, patient_to_text
 from hdh.core.generators import build_dataset, generate_visit_history
-from hdh.core.models import ChronicCondition, Patient, Visit, get_engine, get_session
+from hdh.core.models import Condition, Patient, Visit, get_engine, get_session
 
 # ─── Stats ────────────────────────────────────────────────────────────────────
 
@@ -31,11 +31,11 @@ def cmd_stats(session):
     """Print dataset statistics: counts, top diagnoses, and age distribution."""
     from sqlalchemy import func
 
-    from hdh.core.models import Diagnosis, LabResult, Prescription, Visit
+    from hdh.core.models import Condition, LabResult, Prescription, Visit
 
     n_patients = session.query(func.count(Patient.id)).scalar()
     n_visits = session.query(func.count(Visit.id)).scalar()
-    n_dx = session.query(func.count(Diagnosis.id)).scalar()
+    n_dx = session.query(func.count(Condition.id)).scalar()
     n_rx = session.query(func.count(Prescription.id)).scalar()
     n_labs = session.query(func.count(LabResult.id)).scalar()
 
@@ -53,9 +53,9 @@ def cmd_stats(session):
 
     # Top 10 diagnoses
     top_dx = (
-        session.query(Diagnosis.icd10_code, Diagnosis.description, func.count(Diagnosis.id).label("cnt"))
-        .group_by(Diagnosis.icd10_code)
-        .order_by(func.count(Diagnosis.id).desc())
+        session.query(Condition.icd10_code, Condition.description, func.count(Condition.id).label("cnt"))
+        .group_by(Condition.icd10_code)
+        .order_by(func.count(Condition.id).desc())
         .limit(10)
         .all()
     )
@@ -99,7 +99,9 @@ def cmd_advance(session, months: int):
     print(f"\n⏩ Advancing dataset by {months} months...")
 
     # Focus on patients with chronic conditions — they get follow-up visits
-    chronic_patients = session.query(Patient).join(ChronicCondition).distinct().all()
+    chronic_patients = (
+        session.query(Patient).join(Condition).filter(Condition.chronic.is_(True)).distinct().all()
+    )
 
     added = 0
     today = date.today()
@@ -108,15 +110,18 @@ def cmd_advance(session, months: int):
         if random.random() > 0.35:
             continue
 
-        fam_hx = {"diabetes": p.fam_hx_diabetes, "hypertension": p.fam_hx_hypertension}
-        visit_tuples, _ = generate_visit_history(p, fam_hx, p.smoker, years=1)
+        fam_hx = {
+            "diabetes": any("diabetes" in h.condition.lower() for h in p.family_history),
+            "hypertension": any("hypertension" in h.condition.lower() for h in p.family_history),
+        }
+        visit_tuples, _ = generate_visit_history(p, fam_hx, bool(p.smoker), years=1)
 
         # Keep only visits that fall in the new window
         cutoff = today - timedelta(days=months * 30)
         new_visits = [(v, cp, cn) for v, cp, cn in visit_tuples if v.visit_date >= cutoff]
 
         from hdh.core.generators import generate_lab, generate_vital
-        from hdh.core.models import Diagnosis, Prescription
+        from hdh.core.models import ConditionStatus, Prescription
 
         for visit, cprofile, _cname in new_visits[:2]:  # cap at 2 new visits per advance
             visit.patient_id = p.id
@@ -126,13 +131,18 @@ def cmd_advance(session, months: int):
             vital = generate_vital(visit.id, p.age, p.sex, p.bmi_baseline, cprofile)
             session.add(vital)
 
-            dx = Diagnosis(
-                visit_id=visit.id,
-                icd10_code=cprofile.icd10_code,
-                description=cprofile.description,
-                is_primary=True,
+            session.add(
+                Condition(
+                    patient_id=p.id,
+                    visit_id=visit.id,
+                    icd10_code=cprofile.icd10_code,
+                    description=cprofile.description,
+                    chronic=False,
+                    status=ConditionStatus.RESOLVED,
+                    onset_date=visit.visit_date,
+                    resolved_date=visit.visit_date + timedelta(days=14),
+                )
             )
-            session.add(dx)
 
             if cprofile.rx_options:
                 rx_spec = random.choice(cprofile.rx_options)
@@ -175,7 +185,7 @@ def cmd_add_spike(session, condition_name: str, multiplier: float, month: int, n
         return
 
     from hdh.core.generators import generate_lab, generate_vital
-    from hdh.core.models import Diagnosis, Prescription
+    from hdh.core.models import ConditionStatus, Prescription
 
     # Pick a random day in the requested month (current or last year)
     year = date.today().year if month <= date.today().month else date.today().year - 1
@@ -193,7 +203,6 @@ def cmd_add_spike(session, condition_name: str, multiplier: float, month: int, n
             visit_date=vdate,
             visit_type=cprofile.visit_type,
             chief_complaint=cprofile.chief_complaint,
-            provider_name=random.choice(["Dr. Sarah Mitchell, MD", "Dr. James O'Brien, MD"]),
             follow_up_days=cprofile.follow_up_days,
         )
         session.add(visit)
@@ -202,13 +211,18 @@ def cmd_add_spike(session, condition_name: str, multiplier: float, month: int, n
         vital = generate_vital(visit.id, p.age, p.sex, p.bmi_baseline, cprofile)
         session.add(vital)
 
-        dx = Diagnosis(
-            visit_id=visit.id,
-            icd10_code=cprofile.icd10_code,
-            description=cprofile.description,
-            is_primary=True,
+        session.add(
+            Condition(
+                patient_id=p.id,
+                visit_id=visit.id,
+                icd10_code=cprofile.icd10_code,
+                description=cprofile.description,
+                chronic=False,
+                status=ConditionStatus.RESOLVED,
+                onset_date=vdate,
+                resolved_date=vdate + timedelta(days=14),
+            )
         )
-        session.add(dx)
 
         if cprofile.rx_options:
             rx_spec = random.choice(cprofile.rx_options)

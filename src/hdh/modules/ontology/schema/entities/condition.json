@@ -1,0 +1,19 @@
+{
+  "entity": "Condition",
+  "extends": "base",
+  "module": "ontology_module",
+  "columns": [
+    {
+      "name": "snomed_code",
+      "type": "String",
+      "length": 20,
+      "nullable": true
+    },
+    {
+      "name": "snomed_display",
+      "type": "String",
+      "length": 200,
+      "nullable": true
+    }
+  ]
+}

@@ -16,8 +16,7 @@ from .exporters import (
 from .generators import build_dataset, generate_patient, generate_visit_history
 from .models import (
     Base,
-    ChronicCondition,
-    Diagnosis,
+    Condition,
     LabResult,
     LabStatus,
     Patient,
@@ -45,8 +44,7 @@ __all__ = [
     "generate_patient",
     "generate_visit_history",
     "Base",
-    "ChronicCondition",
-    "Diagnosis",
+    "Condition",
     "LabResult",
     "LabStatus",
     "Patient",

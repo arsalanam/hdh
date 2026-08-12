@@ -1,5 +1,12 @@
 """
 Generators for synthetic Family Medicine patients and their visit histories.
+
+The chart expansion (docs/design/core-chart-expansion.md §6) makes the
+generator family-aware: patients are built as households, hereditary risk
+derives from relatives' ACTUAL generated conditions (not random flags),
+providers have continuity, every visit stores a SOAP note, and the chart
+entities — allergies, medication statements, immunizations, procedures —
+are populated with medically coherent data.
 """
 
 import random
@@ -14,14 +21,33 @@ from .disease_engine import (
     comorbidity_seeds,
     pick_condition,
 )
-from .models import ChronicCondition, Diagnosis, LabResult, LabStatus, Patient, Prescription, Visit, Vital
+from .models import (
+    Allergy,
+    AllergySeverity,
+    Condition,
+    ConditionStatus,
+    FamilyHistory,
+    FamilyMember,
+    Immunization,
+    LabResult,
+    LabStatus,
+    MedicationStatement,
+    MedicationStatus,
+    Patient,
+    Prescription,
+    Provider,
+    Specialty,
+    Visit,
+    VisitNote,
+    Vital,
+)
 
 fake = Faker("en_US")
 Faker.seed(42)
 random.seed(42)
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ─── Reference data ───────────────────────────────────────────────────────────
 
 INSURERS = (
     "Blue Cross Blue Shield",
@@ -38,30 +64,34 @@ INSURERS = (
 
 BLOOD_TYPES = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 
-ALLERGENS = (
-    "Penicillin",
-    "Sulfa drugs",
-    "Aspirin",
-    "Ibuprofen",
-    "Codeine",
-    "Latex",
-    "Shellfish",
-    "Peanuts",
-    "Tree nuts",
-    "Bee stings",
-    "Amoxicillin",
-    "Erythromycin",
-    "Ciprofloxacin",
+ALLERGY_SPECS = (
+    ("Penicillin", "rash", "moderate"),
+    ("Sulfa drugs", "hives", "moderate"),
+    ("Aspirin", "GI upset", "mild"),
+    ("Ibuprofen", "swelling", "mild"),
+    ("Codeine", "nausea", "mild"),
+    ("Latex", "contact dermatitis", "mild"),
+    ("Shellfish", "anaphylaxis", "severe"),
+    ("Peanuts", "anaphylaxis", "severe"),
+    ("Tree nuts", "hives", "moderate"),
+    ("Bee stings", "local swelling", "moderate"),
+    ("Amoxicillin", "rash", "moderate"),
+    ("Erythromycin", "GI upset", "mild"),
 )
 
-PROVIDERS = (
-    "Dr. Sarah Mitchell, MD",
-    "Dr. James O'Brien, MD",
-    "Dr. Priya Sharma, MD",
-    "Dr. Robert Chen, MD",
-    "Dr. Angela Torres, DO",
-    "Dr. Michael Park, MD",
+PRACTICE = (
+    # (identifier, name, specialty code)
+    ("NPI1000001", "Dr. Sarah Mitchell, MD", "FM"),
+    ("NPI1000002", "Dr. James O'Brien, MD", "FM"),
+    ("NPI1000003", "Dr. Priya Sharma, MD", "FM"),
+    ("NPI1000004", "Dr. Robert Chen, MD", "IM"),
+    ("NPI1000005", "Dr. Angela Torres, DO", "FM"),
+    ("NPI1000006", "Dr. Michael Park, MD", "PED"),
+    ("NPI1000007", "Jordan Reyes, NP", "FM"),
+    ("NPI1000008", "Casey Lin, PA-C", "FM"),
 )
+
+SPECIALTIES = (("FM", "Family Medicine"), ("IM", "Internal Medicine"), ("PED", "Pediatrics"))
 
 RACES = (
     "White",
@@ -74,22 +104,54 @@ RACES = (
 
 ETHNICITIES = ("Non-Hispanic or Latino", "Hispanic or Latino")
 
+MARITAL = ("single", "married", "divorced", "widowed")
+LANGUAGES = ("English", "English", "English", "Spanish", "Mandarin", "Vietnamese")
+
+CHRONIC_NAMES = frozenset(
+    {
+        "hypertension",
+        "type2_diabetes",
+        "hyperlipidemia",
+        "copd",
+        "osteoarthritis",
+        "hypothyroidism",
+        "obesity",
+    }
+)
+
+# condition-name → hereditary-risk key consumed by comorbidity_seeds
+HEREDITARY_KEYS = {"type2_diabetes": "diabetes", "hypertension": "hypertension"}
+
+# relative summaries for lightweight FamilyMember rows: (conditions…, hereditary keys…)
+RELATIVE_CONDITIONS = (
+    ("type 2 diabetes", "E11.9", ("diabetes",)),
+    ("hypertension", "I10", ("hypertension",)),
+    ("coronary artery disease", "I25.10", ("hypertension",)),
+    ("breast cancer", "C50.911", ()),
+    ("colon cancer", "C18.9", ()),
+    ("stroke", "I63.9", ("hypertension",)),
+    ("COPD", "J44.9", ()),
+)
+
+# condition name → procedure performed at that visit (sometimes)
+PROCEDURE_MAP = {
+    "laceration": ("Laceration repair with sutures", 0.9),
+    "sports_injury": ("Splint application", 0.4),
+    "otitis_media": ("Cerumen removal", 0.1),
+}
+
+CHILDHOOD_VACCINES = (
+    # (vaccine, cvx, doses, last-dose age in months)
+    ("DTaP", "20", 5, 60),
+    ("MMR", "03", 2, 60),
+    ("IPV (polio)", "10", 4, 60),
+    ("Hepatitis B", "08", 3, 18),
+    ("Varicella", "21", 2, 60),
+)
+
 
 def _random_mrn() -> str:
     return "MRN" + "".join(random.choices(string.digits, k=8))
-
-
-def _weighted_age() -> int:
-    """Return an age sampled from a realistic family medicine age distribution."""
-    # Rough distribution: children 20%, teens 8%, adults 45%, seniors 27%
-    bucket = random.choices(["child", "teen", "adult", "senior"], weights=[20, 8, 45, 27], k=1)[0]
-    if bucket == "child":
-        return random.randint(0, 12)
-    if bucket == "teen":
-        return random.randint(13, 17)
-    if bucket == "adult":
-        return random.randint(18, 65)
-    return random.randint(66, 90)
 
 
 def _height_cm(age: int, sex: str) -> float:
@@ -109,76 +171,223 @@ def _baseline_bmi(age: int) -> float:
     return round(max(18.0, random.gauss(27.0, 4.5)), 1)
 
 
-# ─── Patient Generator ────────────────────────────────────────────────────────
+# ─── Providers ────────────────────────────────────────────────────────────────
 
 
-def generate_patient() -> tuple[Patient, dict[str, bool], bool]:
-    """Generate one synthetic patient; returns (patient, family_history, smoker)."""
-    age = _weighted_age()
+def seed_providers(session) -> list[Provider]:
+    """Create (or fetch) the practice's providers and specialties."""
+    existing = session.query(Provider).all()
+    if existing:
+        return existing
+    by_code = {}
+    for code, name in SPECIALTIES:
+        spec = Specialty(code=code, name=name)
+        session.add(spec)
+        by_code[code] = spec
+    session.flush()
+    providers = []
+    for identifier, name, spec_code in PRACTICE:
+        provider = Provider(identifier=identifier, name=name, specialty=by_code[spec_code])
+        session.add(provider)
+        providers.append(provider)
+    session.flush()
+    return providers
+
+
+def _primary_provider(providers: list[Provider], age: int) -> Provider:
+    """Continuity of care: children see the pediatrician when there is one."""
+    if age < 13:
+        peds = [p for p in providers if p.specialty and p.specialty.code == "PED"]
+        if peds and random.random() < 0.7:
+            return random.choice(peds)
+    return random.choice([p for p in providers if not p.specialty or p.specialty.code != "PED"])
+
+
+# ─── Patient generation ───────────────────────────────────────────────────────
+
+
+def generate_patient(
+    age: int,
+    surname: str | None = None,
+    address: tuple[str, str, str, str] | None = None,
+) -> Patient:
+    """Generate one synthetic patient of a given age (household-aware)."""
     sex = random.choice(["M", "F"])
     dob = date.today() - timedelta(days=age * 365 + random.randint(0, 364))
-    bmi = _baseline_bmi(age)
-
-    # Family history (more likely in older patients)
-    fam_htn = random.random() < (0.4 if age > 40 else 0.25)
-    fam_dm = random.random() < (0.35 if age > 40 else 0.20)
-    fam_hd = random.random() < 0.25
-    fam_ca = random.random() < 0.20
-
-    # Smoker (15% adults)
-    smoker = age >= 18 and random.random() < 0.15
-
-    # Allergies
-    n_allergies = random.choices([0, 1, 2], weights=[60, 30, 10], k=1)[0]
-    allergies = "|".join(random.sample(ALLERGENS, n_allergies)) if n_allergies else "NKDA"
-
-    # Name — use child-appropriate or adult names
-    if sex == "M":
-        fname = fake.first_name_male()
-    else:
-        fname = fake.first_name_female()
-
-    p = Patient(
+    fname = fake.first_name_male() if sex == "M" else fake.first_name_female()
+    street, city, state, zipc = address or (
+        fake.street_address(),
+        fake.city(),
+        fake.state_abbr(),
+        fake.zipcode(),
+    )
+    return Patient(
         mrn=_random_mrn(),
         first_name=fname,
-        last_name=fake.last_name(),
+        last_name=surname or fake.last_name(),
         date_of_birth=dob,
         sex=sex,
         race=random.choice(RACES),
         ethnicity=random.choices(ETHNICITIES, weights=[80, 20], k=1)[0],
-        address=fake.street_address(),
-        city=fake.city(),
-        state=fake.state_abbr(),
-        zip_code=fake.zipcode(),
+        address=street,
+        city=city,
+        state=state,
+        zip_code=zipc,
         phone=fake.phone_number()[:15],
         email=fake.email() if age >= 14 else "",
         insurance_name=random.choice(INSURERS),
         insurance_id=fake.bothify("???-########"),
         blood_type=random.choice(BLOOD_TYPES),
-        allergies=allergies,
-        fam_hx_diabetes=fam_dm,
-        fam_hx_hypertension=fam_htn,
-        fam_hx_heart_disease=fam_hd,
-        fam_hx_cancer=fam_ca,
-        smoker=smoker,
-        bmi_baseline=bmi,
+        marital_status=(random.choices(MARITAL, weights=[30, 50, 12, 8], k=1)[0] if age >= 25 else "single"),
+        language=random.choice(LANGUAGES),
+        smoker=age >= 18 and random.random() < 0.15,
+        bmi_baseline=_baseline_bmi(age),
     )
-    return p, {"diabetes": fam_dm, "hypertension": fam_htn}, smoker
 
 
-# ─── Vital Generator ──────────────────────────────────────────────────────────
+def generate_allergies(session, patient: Patient) -> None:
+    """0–2 structured allergies (~40% of patients have at least one)."""
+    n = random.choices([0, 1, 2], weights=[60, 30, 10], k=1)[0]
+    for substance, reaction, severity in random.sample(ALLERGY_SPECS, n):
+        session.add(
+            Allergy(
+                patient_id=patient.id,
+                substance=substance,
+                reaction=reaction,
+                severity=AllergySeverity(severity),
+                noted_date=patient.date_of_birth + timedelta(days=random.randint(365, 365 * 20)),
+            )
+        )
+
+
+def generate_extended_relatives(session, patient: Patient, age: int) -> dict[str, bool]:
+    """Lightweight relatives with narrative summaries + FamilyHistory rows.
+
+    Returns the hereditary-risk flags their conditions imply — these feed
+    comorbidity_seeds, so family history has real consequences.
+    """
+    hereditary: dict[str, bool] = {}
+    if age < 18:
+        return hereditary
+    relationships = ["father", "mother"]
+    if random.random() < 0.4:
+        relationships.append(random.choice(["brother", "sister"]))
+    for rel in relationships:
+        conditions = random.sample(
+            RELATIVE_CONDITIONS, random.choices([0, 1, 2], weights=[35, 45, 20], k=1)[0]
+        )
+        deceased = rel in ("father", "mother") and random.random() < (0.5 if age > 50 else 0.15)
+        deceased_age = random.randint(60, 92) if deceased else None
+        cond_text = ", ".join(c[0] for c in conditions) if conditions else "no significant conditions"
+        summary = (
+            f"{rel.title()} lived to {deceased_age}; history of {cond_text}; died of natural causes."
+            if deceased
+            else f"{rel.title()}, alive; history of {cond_text}."
+        )
+        member = FamilyMember(
+            patient_id=patient.id,
+            relationship_type=rel,
+            name=f"{fake.first_name()} {patient.last_name}",
+            deceased=deceased,
+            deceased_age=deceased_age,
+            summary=summary,
+        )
+        session.add(member)
+        session.flush()
+        for cond_name, icd10, keys in conditions:
+            session.add(
+                FamilyHistory(
+                    patient_id=patient.id,
+                    family_member_id=member.id,
+                    relationship_type=rel,
+                    condition=cond_name,
+                    icd10_code=icd10,
+                    onset_age=random.randint(35, 70),
+                )
+            )
+            for key in keys:
+                hereditary[key] = True
+    return hereditary
+
+
+def link_household(session, members: list[Patient]) -> None:
+    """FamilyMember rows between household patients + emergency contacts."""
+    adults = [m for m in members if m.age >= 18]
+    for person in members:
+        contact_member_id = None
+        for other in members:
+            if other.id == person.id:
+                continue
+            if person.age >= 18 and other.age >= 18:
+                rel = "spouse"
+            elif person.age >= 18:
+                rel = "child"
+            elif other.age >= 18:
+                rel = (
+                    random.choice(["mother", "father"])
+                    if other.sex is None
+                    else ("mother" if str(other.sex).endswith("F") else "father")
+                )
+            else:
+                rel = "sibling"
+            fm = FamilyMember(
+                patient_id=person.id,
+                relationship_type=rel,
+                name=f"{other.first_name} {other.last_name}",
+                date_of_birth=other.date_of_birth,
+                related_patient_id=other.id,
+                phone=other.phone,
+            )
+            session.add(fm)
+            session.flush()
+            if contact_member_id is None and (
+                rel == "spouse" or (person.age < 18 and rel in ("mother", "father"))
+            ):
+                contact_member_id = fm.id
+        if contact_member_id is None and adults and person.age < 18:
+            pass  # parent link above always exists for children in multi-member households
+        person.emergency_contact_id = contact_member_id
+
+
+def hereditary_from_patients(parents: list[Patient], parent_conditions: dict[int, set]) -> dict[str, bool]:
+    """Derive a child's hereditary-risk flags from parents' ACTUAL conditions."""
+    flags: dict[str, bool] = {}
+    for parent in parents:
+        for cname in parent_conditions.get(parent.id, set()):
+            key = HEREDITARY_KEYS.get(cname)
+            if key:
+                flags[key] = True
+    return flags
+
+
+def record_parent_history(
+    session, child: Patient, parents: list[Patient], parent_conditions: dict[int, set]
+) -> None:
+    """FamilyHistory rows on the child for each parent's chronic conditions."""
+    for parent in parents:
+        rel = "mother" if str(parent.sex).endswith("F") else "father"
+        for cname in parent_conditions.get(parent.id, set()):
+            profile = CONDITIONS.get(cname)
+            if profile:
+                session.add(
+                    FamilyHistory(
+                        patient_id=child.id,
+                        relationship_type=rel,
+                        condition=profile.description,
+                        icd10_code=profile.icd10_code,
+                        onset_age=max(25, parent.age - random.randint(0, 15)),
+                    )
+                )
+
+
+# ─── Vitals / labs (unchanged mechanics) ─────────────────────────────────────
 
 
 def _baseline_vitals(age: int, sex: str, bmi: float):
     """Return baseline (healthy) vitals for this patient."""
-    # BP rises with age
     sys_base = 110 + min(age // 4, 20) + (5 if sex == "M" else 0)
     dia_base = 70 + min(age // 6, 12)
-    hr_base = 72
-    rr_base = 16
-    temp_base = 98.6
-    spo2_base = 98
-    return sys_base, dia_base, hr_base, rr_base, temp_base, spo2_base
+    return sys_base, dia_base, 72, 16, 98.6, 98
 
 
 def _clamp(val, lo, hi):
@@ -197,7 +406,6 @@ def generate_vital(visit_id: int, age: int, sex: str, bmi: float, condition_prof
     temp = round(_clamp(random.gauss(temp_b + cp.temp_delta[0], cp.temp_delta[1]), 96.0, 105.0), 1)
     spo2 = int(_clamp(random.gauss(spo2_b + cp.spo2_delta[0], cp.spo2_delta[1]), 80, 100))
 
-    # BMI fluctuates slightly visit to visit
     bmi_v = round(max(12.0, random.gauss(bmi, 0.8)), 1)
     ht_cm = _height_cm(age, sex)
     wt_kg = round(bmi_v * (ht_cm / 100) ** 2, 1)
@@ -218,9 +426,6 @@ def generate_vital(visit_id: int, age: int, sex: str, bmi: float, condition_prof
     )
 
 
-# ─── Lab Generator ────────────────────────────────────────────────────────────
-
-
 def generate_lab(visit_id: int, spec: LabSpec, has_condition: bool = True) -> LabResult:
     """Generate one lab result from its spec, shifted when the condition is present."""
     if has_condition and spec.condition_shift != 0:
@@ -236,7 +441,6 @@ def generate_lab(visit_id: int, spec: LabSpec, has_condition: bool = True) -> La
         status = LabStatus.HIGH
     else:
         status = LabStatus.NORMAL
-    # Critical thresholds
     if spec.test_name == "Glucose (stat)" and val > 400:
         status = LabStatus.CRITICAL
     if spec.test_name == "WBC" and val > 20:
@@ -254,7 +458,7 @@ def generate_lab(visit_id: int, spec: LabSpec, has_condition: bool = True) -> La
     )
 
 
-# ─── Visit Generator ──────────────────────────────────────────────────────────
+# ─── Visit history ────────────────────────────────────────────────────────────
 
 
 def _visits_per_year(age: int, established_conditions: set) -> float:
@@ -268,7 +472,6 @@ def _visits_per_year(age: int, established_conditions: set) -> float:
         base = 5.0
     elif age > 45:
         base = 3.5
-    # Each chronic condition adds ~1 visit/year
     base += len(established_conditions) * 0.9
     return base
 
@@ -282,7 +485,7 @@ def _bmi(patient: Patient) -> float:
 def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: int = 4) -> tuple[list, set]:
     """
     Generate a realistic multi-year visit history for a patient.
-    Returns a list of Visit objects (with vitals, diagnoses, Rx, labs attached).
+    Returns (list of (Visit, profile, condition-name) tuples, final chronic set).
     """
     age_at_start = max(0, patient.age - years)
     established = comorbidity_seeds(patient.age, fam_hx, smoker, _bmi(patient))
@@ -294,7 +497,6 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: 
     total_visits = max(1, int(random.gauss(visits_per_yr * years, years * 0.5)))
     total_visits = _clamp(total_visits, 1, 80)
 
-    # Spread visits across the date range with slight clustering
     visit_dates = sorted(
         random.sample(
             [start_date + timedelta(days=d) for d in range(years * 365)], k=min(total_visits, years * 365)
@@ -304,92 +506,214 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: 
     for vdate in visit_dates:
         visit_age = age_at_start + (vdate - start_date).days // 365
 
-        # Female-only conditions
         eligible_established = established.copy()
-        if patient.sex == "F":
-            eligible_established.discard("contraception_consult")  # keep it eligible
-
         cprofile, cname = pick_condition(visit_age, vdate.month, eligible_established)
-
-        # Skip female-only for males
         if patient.sex == "M" and cname in ("uti", "contraception_consult"):
-            # Re-pick
             cprofile, cname = pick_condition(visit_age, vdate.month, eligible_established)
 
-        # Build the visit (id assigned by DB, use placeholder)
         visit = Visit(
             patient_id=patient.id,
             visit_date=vdate,
             visit_type=cprofile.visit_type,
             chief_complaint=cprofile.chief_complaint,
-            provider_name=random.choice(PROVIDERS),
             follow_up_days=cprofile.follow_up_days,
         )
         all_visits.append((visit, cprofile, cname))
 
-        # Track new chronic diagnoses
-        if cname in (
-            "hypertension",
-            "type2_diabetes",
-            "hyperlipidemia",
-            "copd",
-            "osteoarthritis",
-            "hypothyroidism",
-            "obesity",
-        ):
+        if cname in CHRONIC_NAMES:
             established.add(cname)
 
     return all_visits, established
 
 
-# ─── Full Dataset Builder ─────────────────────────────────────────────────────
-
-
-def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, verbose: bool = True):
-    """
-    Generate n_patients patients with full visit histories and commit to DB.
-    """
-
-    CHUNK = 500
-    total_visits = 0
-
-    for i in range(n_patients):
-        patient, fam_hx, smoker = generate_patient()
-        session.add(patient)
-        session.flush()  # get patient.id
-
-        visit_tuples, final_conditions = generate_visit_history(
-            patient, fam_hx, smoker, years=years_of_history
-        )
-
-        for visit, cprofile, cname in visit_tuples:
-            visit.patient_id = patient.id
-            session.add(visit)
-            session.flush()  # get visit.id
-
-            # Vitals
-            vital = generate_vital(visit.id, patient.age, patient.sex, _bmi(patient), cprofile)
-            session.add(vital)
-
-            # Primary diagnosis
-            dx = Diagnosis(
+def _emit_conditions(
+    session, patient: Patient, visit: Visit, cprofile, cname: str, chronic_seen: dict
+) -> None:
+    """Unified problem list: acute visits get resolved encounter conditions;
+    chronic conditions get ONE active row at first diagnosis."""
+    if cname in CHRONIC_NAMES:
+        if cname not in chronic_seen:
+            cond = Condition(
+                patient_id=patient.id,
                 visit_id=visit.id,
                 icd10_code=cprofile.icd10_code,
                 description=cprofile.description,
-                is_primary=True,
+                chronic=True,
+                status=ConditionStatus.ACTIVE,
+                controlled=random.random() > 0.25,
+                onset_date=visit.visit_date,
             )
-            session.add(dx)
+            session.add(cond)
+            session.flush()
+            chronic_seen[cname] = cond
+    else:
+        duration = random.randint(7, 30)
+        session.add(
+            Condition(
+                patient_id=patient.id,
+                visit_id=visit.id,
+                icd10_code=cprofile.icd10_code,
+                description=cprofile.description,
+                chronic=False,
+                status=ConditionStatus.RESOLVED,
+                onset_date=visit.visit_date,
+                resolved_date=visit.visit_date + timedelta(days=duration),
+            )
+        )
 
-            # Prescriptions
-            if cprofile.rx_options:
-                if cprofile.rx_pick_all:
-                    rx_list = cprofile.rx_options
-                else:
-                    n_rx = random.choices([1, 2], weights=[75, 25], k=1)[0]
-                    rx_list = random.sample(cprofile.rx_options, k=min(n_rx, len(cprofile.rx_options)))
-                for rx_spec in rx_list:
-                    is_new = cname not in final_conditions or random.random() > 0.5
-                    rx = Prescription(
+
+def _emit_procedure(session, patient: Patient, visit: Visit, cname: str) -> None:
+    spec = PROCEDURE_MAP.get(cname)
+    if spec and random.random() < spec[1]:
+        session.add(hdh_procedure(patient, visit, spec[0]))
+    # screening colonoscopy at preventive visits, age 50+, roughly decennial
+    if "preventive" in str(visit.visit_type).lower() and patient.age >= 50 and random.random() < 0.1:
+        session.add(hdh_procedure(patient, visit, "Screening colonoscopy"))
+
+
+def hdh_procedure(patient: Patient, visit: Visit, description: str):
+    """Build a Procedure row tied to a visit."""
+    from .models import Procedure
+
+    return Procedure(
+        patient_id=patient.id,
+        visit_id=visit.id,
+        description=description,
+        performed_date=visit.visit_date,
+        provider_id=visit.provider_id,
+    )
+
+
+def generate_immunizations(session, patient: Patient, chronic: set) -> None:
+    """Age-appropriate immunization history (simplified CDC shape)."""
+    age = patient.age
+    for vaccine, cvx, doses, last_month in CHILDHOOD_VACCINES:
+        given = min(doses, max(0, int(doses * min(1.0, (age * 12) / last_month))))
+        for dose in range(1, given + 1):
+            offset_days = int((last_month / doses) * dose * 30.4)
+            session.add(
+                Immunization(
+                    patient_id=patient.id,
+                    vaccine=vaccine,
+                    cvx_code=cvx,
+                    administered_date=patient.date_of_birth + timedelta(days=offset_days),
+                    dose_number=dose,
+                )
+            )
+    # Annual flu shots for seniors and chronic patients (last few seasons, ~70% uptake)
+    if age >= 65 or chronic:
+        for years_back in range(1, 4):
+            if random.random() < 0.7:
+                season = date.today().year - years_back
+                session.add(
+                    Immunization(
+                        patient_id=patient.id,
+                        vaccine="Influenza, seasonal",
+                        cvx_code="141",
+                        administered_date=date(season, random.randint(9, 11), random.randint(1, 28)),
+                        dose_number=1,
+                    )
+                )
+    # Td booster roughly every 10 years for adults
+    if age >= 19:
+        session.add(
+            Immunization(
+                patient_id=patient.id,
+                vaccine="Td (tetanus, diphtheria)",
+                cvx_code="139",
+                administered_date=date.today() - timedelta(days=random.randint(0, 3650)),
+                dose_number=1,
+            )
+        )
+
+
+def generate_medication_statements(session, patient: Patient, chronic_seen: dict) -> None:
+    """Derive the cross-visit medication list from the prescription stream."""
+    seen: dict[str, MedicationStatement] = {}
+    for visit in patient.visits:
+        for rx in visit.prescriptions:
+            stmt = seen.get(rx.drug_name)
+            if stmt is None:
+                is_chronic_drug = rx.duration_days is None
+                indication = None
+                if is_chronic_drug:
+                    for cond in chronic_seen.values():
+                        indication = cond.id
+                        break
+                stmt = MedicationStatement(
+                    patient_id=patient.id,
+                    drug_name=rx.drug_name,
+                    drug_class=rx.drug_class,
+                    dose=rx.dose,
+                    frequency=rx.frequency,
+                    status=MedicationStatus.ACTIVE if is_chronic_drug else MedicationStatus.COMPLETED,
+                    start_date=visit.visit_date,
+                    end_date=(
+                        None if is_chronic_drug else visit.visit_date + timedelta(days=rx.duration_days or 10)
+                    ),
+                    indication_id=indication,
+                )
+                session.add(stmt)
+                seen[rx.drug_name] = stmt
+            else:
+                if stmt.end_date and stmt.status == MedicationStatus.COMPLETED:
+                    stmt.end_date = visit.visit_date + timedelta(days=rx.duration_days or 10)
+
+
+# ─── Full dataset builder ─────────────────────────────────────────────────────
+
+
+def _household_sizes(n_patients: int) -> list[int]:
+    sizes = []
+    remaining = n_patients
+    while remaining > 0:
+        size = random.choices([1, 2, 3, 4, 5], weights=[30, 30, 18, 15, 7], k=1)[0]
+        size = min(size, remaining)
+        sizes.append(size)
+        remaining -= size
+    return sizes
+
+
+def _household_ages(size: int) -> list[int]:
+    """Coherent ages: adults first, children 20–40 years younger."""
+    if size == 1:
+        return [random.choice([random.randint(18, 65), random.randint(66, 90)])]
+    parent_age = random.randint(28, 62)
+    ages = [parent_age]
+    if size >= 2 and random.random() < 0.75:
+        ages.append(_clamp(parent_age + random.randint(-6, 6), 20, 90))
+    while len(ages) < size:
+        child_age = parent_age - random.randint(20, 40)
+        ages.append(int(_clamp(child_age, 0, 17)))
+    return ages[:size]
+
+
+def _generate_one(session, patient: Patient, fam_hx: dict, providers, years: int) -> tuple[int, set]:
+    """Visits, conditions, notes, and per-patient chart entities. Returns
+    (visit count, final chronic set)."""
+    from .notes import visit_to_soap
+
+    primary = _primary_provider(providers, patient.age)
+    visit_tuples, final_chronic = generate_visit_history(patient, fam_hx, bool(patient.smoker), years)
+    chronic_seen: dict = {}
+    for visit, cprofile, cname in visit_tuples:
+        visit.patient_id = patient.id
+        visit.provider_id = (primary if random.random() < 0.8 else random.choice(providers)).id
+        session.add(visit)
+        session.flush()
+
+        session.add(generate_vital(visit.id, patient.age, patient.sex, _bmi(patient), cprofile))
+        _emit_conditions(session, patient, visit, cprofile, cname, chronic_seen)
+
+        if cprofile.rx_options:
+            if cprofile.rx_pick_all:
+                rx_list = cprofile.rx_options
+            else:
+                n_rx = random.choices([1, 2], weights=[75, 25], k=1)[0]
+                rx_list = random.sample(cprofile.rx_options, k=min(n_rx, len(cprofile.rx_options)))
+            for rx_spec in rx_list:
+                session.add(
+                    Prescription(
                         visit_id=visit.id,
                         drug_name=rx_spec.drug_name,
                         drug_class=rx_spec.drug_class,
@@ -397,37 +721,80 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
                         frequency=rx_spec.frequency,
                         duration_days=rx_spec.duration_days,
                         refills=rx_spec.refills,
-                        is_new=is_new,
+                        is_new=cname not in final_chronic or random.random() > 0.5,
                     )
-                    session.add(rx)
-
-            # Labs
-            for lab_spec in cprofile.labs:
-                lr = generate_lab(visit.id, lab_spec, has_condition=True)
-                session.add(lr)
-
-            total_visits += 1
-
-        # Add chronic conditions summary to patient record
-        for cname in final_conditions:
-            cond = CONDITIONS.get(cname)
-            if cond:
-                cc = ChronicCondition(
-                    patient_id=patient.id,
-                    icd10_code=cond.icd10_code,
-                    description=cond.description,
-                    onset_date=date.today() - timedelta(days=random.randint(180, years_of_history * 365)),
-                    controlled=random.random() > 0.25,
                 )
-                session.add(cc)
+        for lab_spec in cprofile.labs:
+            session.add(generate_lab(visit.id, lab_spec, has_condition=True))
+        _emit_procedure(session, patient, visit, cname)
 
-        # Commit in chunks
-        if (i + 1) % CHUNK == 0:
+    session.flush()
+    session.refresh(patient)
+    for visit in patient.visits:
+        session.add(
+            VisitNote(
+                visit_id=visit.id,
+                text=visit_to_soap(visit, patient),
+                author_id=visit.provider_id,
+            )
+        )
+    generate_medication_statements(session, patient, chronic_seen)
+    generate_immunizations(session, patient, set(chronic_seen))
+    return len(visit_tuples), final_chronic
+
+
+def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, verbose: bool = True):
+    """
+    Generate n_patients patients (as households) with full charts and commit.
+    """
+    CHUNK = 500
+    total_visits = 0
+    generated = 0
+
+    providers = seed_providers(session)
+
+    for size in _household_sizes(n_patients):
+        surname = fake.last_name()
+        address = (fake.street_address(), fake.city(), fake.state_abbr(), fake.zipcode())
+        ages = _household_ages(size)
+
+        members: list[Patient] = []
+        parent_conditions: dict[int, set] = {}
+        adults = [a for a in ages if a >= 18]
+        children = [a for a in ages if a < 18]
+
+        # adults first — their real conditions drive the children's heredity
+        for age in adults:
+            patient = generate_patient(age, surname=surname, address=address)
+            session.add(patient)
+            session.flush()
+            generate_allergies(session, patient)
+            fam_hx = generate_extended_relatives(session, patient, age)
+            n_visits, chronic = _generate_one(session, patient, fam_hx, providers, years_of_history)
+            parent_conditions[patient.id] = chronic
+            total_visits += n_visits
+            members.append(patient)
+
+        for age in children:
+            patient = generate_patient(age, surname=surname, address=address)
+            session.add(patient)
+            session.flush()
+            generate_allergies(session, patient)
+            fam_hx = hereditary_from_patients(members, parent_conditions)
+            record_parent_history(session, patient, [m for m in members if m.age >= 18], parent_conditions)
+            n_visits, _chronic = _generate_one(session, patient, fam_hx, providers, years_of_history)
+            total_visits += n_visits
+            members.append(patient)
+
+        link_household(session, members)
+        generated += len(members)
+
+        if generated // CHUNK != (generated - len(members)) // CHUNK:
             session.commit()
             if verbose:
-                print(f"  ✓ {i + 1:,} patients committed  ({total_visits:,} visits so far)")
+                print(f"  ✓ {generated:,} patients committed  ({total_visits:,} visits so far)")
 
     session.commit()
     if verbose:
-        print(f"\n✅ Done — {n_patients:,} patients, {total_visits:,} visits generated.")
-    return n_patients, total_visits
+        print(f"\n✅ Done — {generated:,} patients, {total_visits:,} visits generated.")
+    return generated, total_visits

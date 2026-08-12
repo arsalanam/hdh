@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from hdh.core.models import (
-    ChronicCondition,
+    Condition,
     LabResult,
     LabStatus,
     Patient,
@@ -110,10 +110,9 @@ def extract_features(
 
     chronic: dict[int, tuple[int, int]] = {}
     for pid, controlled, cnt in (
-        session.query(
-            ChronicCondition.patient_id, ChronicCondition.controlled, func.count(ChronicCondition.id)
-        )
-        .group_by(ChronicCondition.patient_id, ChronicCondition.controlled)
+        session.query(Condition.patient_id, Condition.controlled, func.count(Condition.id))
+        .filter(Condition.chronic.is_(True))
+        .group_by(Condition.patient_id, Condition.controlled)
         .all()
     ):
         total, unc = chronic.get(pid, (0, 0))
@@ -154,14 +153,8 @@ def extract_features(
         lc = lab_counts.get(p.id, {})
         total_ch, unc_ch = chronic.get(p.id, (0, 0))
         mean_sys, max_sys, min_spo2, mean_pain = vitals_agg.get(p.id, (120.0, 120.0, 98.0, 0.0))
-        fam_hx = sum(
-            [
-                bool(p.fam_hx_diabetes),
-                bool(p.fam_hx_hypertension),
-                bool(p.fam_hx_heart_disease),
-                bool(p.fam_hx_cancer),
-            ]
-        )
+        # family-history burden from the structured FamilyHistory rows
+        fam_hx = min(4, len(p.family_history))
 
         rows.append(
             [
