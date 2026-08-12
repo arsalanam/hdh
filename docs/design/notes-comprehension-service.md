@@ -113,10 +113,10 @@ Comprehension routes each mention type to its **home ontology**:
 
 | Mention type | Home ontology | Module | Status |
 |---|---|---|---|
-| Problems / diagnoses / findings | SNOMED CT (clinical primary) + ICD-10-CM (billing view via maps_to) | `icd10cm` ✅ · `snomed` §10 | icd10cm built |
+| Problems / diagnoses / findings | SNOMED CT (clinical primary) + ICD-10-CM (billing view via maps_to) | `icd10cm` ✅ · `snomed` §10 | icd10cm built · snomed **designed** ([snomed-module.md](snomed-module.md)) |
 | Medications | RxNorm | `rxnorm` §11 | needed |
 | Labs / vitals / measurements | LOINC | `loinc` §12 | needed |
-| Procedures / orders | SNOMED procedures (CPT deferred — licensing) | `snomed` | deferred |
+| Procedures / orders | SNOMED procedures (CPT deferred — licensing) | `snomed` | designed — attribute edges in v1 carry intervention semantics |
 
 **Settled decision — the `OntologyService` protocol.** Every vocabulary
 module implements one typed interface (the `GapFinder`/`LoadStage` move
@@ -130,6 +130,10 @@ class OntologyService(Protocol):
     def descendants(code) -> tuple[Concept, ...] #   the degenerate tree case
     def synonyms(code) -> tuple[str, ...]
     def normalize(mention, context) -> tuple[Candidate, ...]   # the funnel
+    def subsumes(ancestor, descendant) -> bool   # promoted to the protocol by
+                                                 # the SNOMED design: one closure
+                                                 # hit; disambiguation + care
+                                                 # gaps both want it cheap
 ```
 
 Comprehension, the pattern compiler, and agent tools consume **the
@@ -269,8 +273,8 @@ closure; normalize() pairs a mention with its **value and unit** ("A1c
 
 | Phase | Delivers | Proves |
 |---|---|---|
-| 1 | `OntologyService` protocol + §5 items 1–4 retrofit on icd10cm | encapsulation contract before a second ontology exists |
-| 2 | SNOMED module (own design → build) | DAG strategy, synonym index, protocol #2 |
+| 1 | `OntologyService` protocol + §5 items 1–4 retrofit on icd10cm (item 5 lands with each module's loader) — = snomed-module.md **milestone A** | encapsulation contract before a second ontology exists |
+| 2 | SNOMED module — **designed** ([snomed-module.md](snomed-module.md)); build per its milestones B–D | DAG strategy, synonym index, protocol #2 |
 | 3 | RxNorm + LOINC modules | protocol scales; med/lab normalize |
 | 4 | Comprehension pipeline on synthetic notes, lexical-only | the spine end-to-end, measured (§8) |
 | 5 | Hybrid + SapBERT, bench-gated | Q10 answered with numbers |
@@ -285,8 +289,10 @@ closure; normalize() pairs a mention with its **value and unit** ("A1c
    section-scoped assertion defaults.
 2. **Ground-truth bias**: synthetic notes as primary eval vs bootstrap-only
    — the generator's phrasing is kin to the templates being parsed.
-3. **SNOMED attribute relationships**: load with the module or defer until
-   disambiguation demonstrably needs finding-site?
+3. ~~**SNOMED attribute relationships**: load with the module or defer?~~
+   **Resolved** by the SNOMED design (§1/§6 there): loaded in v1 as a
+   generic `attribute` edge type — intervention semantics (method,
+   procedure-site) demand them, per the thrombectomy analysis.
 4. **Problem-list reconciliation**: when a note's comprehension disagrees
    with the chart's existing diagnoses, who wins and where is that
    recorded?
