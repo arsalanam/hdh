@@ -9,9 +9,12 @@
 10,000 patients · 165,000+ visits · 777,000+ lab results · no PHI, ever.
 
 `hdh` generates outpatient (OPD) records driven by age, sex, and seasonal disease
-probabilities, and layers optional feature modules on top of that core: care-gap
-detection, ML risk stratification, an agentic AI care assistant, SOAP-note
-narratives, and a FHIR R4 REST API.
+probabilities — as **households**: family structure, hereditary risk derived from
+relatives' actual generated conditions, structured allergies, medication lists,
+immunizations, procedures, and a stored SOAP note for every visit. Optional
+feature modules layer on top: care-gap detection, ML risk stratification, an
+agentic AI care assistant with an ICD-10-CM knowledge graph, narratives, and a
+FHIR R4 REST API.
 
 📖 **[Feature Guide](docs/FEATURE_GUIDE.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[User Guides (per module)](docs/guides/README.md)** · **[Practitioner Guide (start here if you're not a developer)](docs/guides/practitioner-guide.md)**
 
@@ -140,7 +143,10 @@ summer) and comorbidities are seeded from age, family history, smoking, and BMI.
 
 ## The Database
 
-The generator writes `family_medicine.db` (SQLite, ~95 MB for 10k patients).
+The generator writes `family_medicine.db` (SQLite; 10k patients with full
+charts). **v0.4.0 is a breaking schema change** — the chart expansion unified
+the problem list and added family/medication/note entities; datasets from
+earlier versions must be regenerated (or re-download the release asset).
 It is **not** checked into git. Either build one (`hdh generate`) or download
 the pre-built 10,000-patient database from the
 [latest release](https://github.com/arsalanam/hdh/releases/latest)

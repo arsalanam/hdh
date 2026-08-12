@@ -82,6 +82,13 @@ hdh add-spike --condition influenza --month 1 --n 300
 hdh advance --months 6                    # follow-up visits for chronic patients
 ```
 
+**The chart is complete, not just visits** (v0.4.0): patients generate as
+households — family members and structured family histories (hereditary risk
+flows from relatives' actual conditions), a unified problem list with status
+lifecycle, cross-visit medication lists, immunizations, procedures, structured
+allergies, provider continuity, and a stored SOAP note per visit
+([design](design/core-chart-expansion.md)).
+
 Coverage spans well-child visits and RSV in infants through polypharmacy
 reviews and falls in seniors — the shipped 10k dataset averages 16.6 visits
 per patient with hypertension, T2DM, and hyperlipidemia as the top chronic
