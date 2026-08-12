@@ -150,8 +150,17 @@ CHILDHOOD_VACCINES = (
 )
 
 
+_issued_mrns: set[str] = set()
+
+
 def _random_mrn() -> str:
-    return "MRN" + "".join(random.choices(string.digits, k=8))
+    """A unique MRN — 8 random digits re-drawn on collision (the birthday
+    paradox makes collisions likely by ~10k patients)."""
+    while True:
+        mrn = "MRN" + "".join(random.choices(string.digits, k=8))
+        if mrn not in _issued_mrns:
+            _issued_mrns.add(mrn)
+            return mrn
 
 
 def _height_cm(age: int, sex: str) -> float:
