@@ -760,6 +760,10 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
     total_visits = 0
     generated = 0
 
+    # Generating into an existing database is legal (appending a panel) —
+    # seed the MRN uniqueness set with what's already there
+    _issued_mrns.update(mrn for (mrn,) in session.query(Patient.mrn))
+
     providers = seed_providers(session)
 
     for size in _household_sizes(n_patients):
