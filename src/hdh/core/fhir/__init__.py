@@ -49,7 +49,11 @@ class ExportContext:
 class FhirEmitter(Protocol):
     """Builds all resources of one type for a patient's chart."""
 
-    resource_type: ClassVar[str]
+    @property
+    def resource_type(self) -> str:
+        """Satisfied by a ClassVar (hand-written emitters) or an instance
+        attribute (registry-declared emitters)."""
+        ...
 
     def emit(self, ctx: ExportContext) -> list[tuple[Any, Any]]:
         """Return ``(typed R4B resource model, source entity)`` pairs; the
@@ -89,6 +93,23 @@ def _core_emitters() -> list[FhirEmitter]:
     ]
 
 
+def _declared_emitters() -> list[FhirEmitter]:
+    """Emitters synthesized from schema-registry ``fhir`` hints (design §7).
+
+    Reads the process-wide registry at call time: nothing registered (or
+    bootstrap not run) simply means no declared resources — never an error."""
+    from hdh.core.fhir.declared import DeclaredEntityEmitter
+    from hdh.core.schema_registry import registry
+
+    emitters: list[FhirEmitter] = []
+    for entity, merged in registry.merged_entities.items():
+        hint = merged.get("fhir")
+        cls = registry.new_classes.get(entity)
+        if hint and cls is not None:
+            emitters.append(DeclaredEntityEmitter(entity, cls, hint[0]))
+    return emitters
+
+
 def module_enrichers(strict: bool = False) -> list[FhirEnricher]:
     """Enrichers contributed by feature modules (``FHIR_MODULES``).
 
@@ -116,7 +137,7 @@ def build_bundle(patient: Patient, strict: bool = False) -> dict:
 
     ctx = ExportContext(patient=patient, mrn=patient.mrn)
     built: list[tuple[Any, Any]] = []  # (typed model, source entity)
-    for emitter in _core_emitters():
+    for emitter in _core_emitters() + _declared_emitters():
         built.extend(emitter.emit(ctx))
 
     by_type: dict[str, list[tuple[Any, Any]]] = {}

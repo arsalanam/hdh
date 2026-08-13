@@ -220,11 +220,13 @@ class SchemaRegistry:
                         "columns": {},
                         "indexes": [],
                         "is_new": not is_base_entity,
+                        "fhir": None,
                     },
                 )
                 if merged["is_new"] and spec.get("tablename"):
                     merged["tablename"] = spec["tablename"]
                 merged["indexes"].extend(spec.get("indexes", []))
+                self._merge_fhir_hint(spec, merged, module, spec_file, is_base_entity)
                 base_columns = {c.name for c in base[entity].__table__.columns} if is_base_entity else set()
                 for column_spec in spec.get("columns", []):
                     name = column_spec["name"]
@@ -246,6 +248,47 @@ class SchemaRegistry:
         for entity, merged in self.merged_entities.items():
             if merged["is_new"] and not merged["tablename"]:
                 raise SchemaError(f"new entity {entity} defines no tablename")
+            if merged["fhir"]:
+                self._validate_fhir_hint(entity, merged)
+
+    @staticmethod
+    def _merge_fhir_hint(spec, merged, module, spec_file, is_base_entity: bool) -> None:
+        """Capture an entity spec's optional ``fhir`` export hint (design
+        fhir-emitters.md §7). Hints are for NEW entities only — base chart
+        resources have hand-written typed emitters in hdh.core.fhir."""
+        hint = spec.get("fhir")
+        if hint is None:
+            return
+        if is_base_entity:
+            raise SchemaError(
+                f"{module.name}/{spec_file.name}: fhir hints are for new (module-declared) "
+                f"entities; {spec['entity']} is a base entity with a hand-written emitter"
+            )
+        if merged["fhir"] is not None:
+            log.warning(
+                "schema merge: fhir hint for %s from %s overrides %s (later module wins)",
+                spec["entity"],
+                module.name,
+                merged["fhir"][1],
+            )
+        merged["fhir"] = (hint, module.name)
+
+    @staticmethod
+    def _validate_fhir_hint(entity: str, merged: dict) -> None:
+        """Fail at bootstrap, not export: hints must be complete and only
+        reference declared columns."""
+        hint, module = merged["fhir"]
+        for key in ("resourceType", "patient_link"):
+            if not hint.get(key):
+                raise SchemaError(f"{module}: fhir hint for {entity} is missing '{key}'")
+        declared = set(merged["columns"])
+        unknown = (
+            {hint["patient_link"], *hint.get("fields", {})} | set(hint.get("id_fields", []))
+        ) - declared
+        if unknown:
+            raise SchemaError(
+                f"{module}: fhir hint for {entity} references unknown column(s): {', '.join(sorted(unknown))}"
+            )
 
     def _load_and_merge_relationships(self, ordered: list[_Module], base: dict) -> None:
         """Phases 3–4: read relationship specs, validate targets, merge."""
@@ -383,7 +426,8 @@ class SchemaRegistry:
         for entity, merged in sorted(self.merged_entities.items()):
             kind = "NEW entity" if merged["is_new"] else "extends base"
             cols = ", ".join(f"{n} ({m})" for n, (_s, m) in merged["columns"].items())
-            lines.append(f"  {entity} [{kind}]: {cols}")
+            fhir = f" → FHIR {merged['fhir'][0]['resourceType']}" if merged.get("fhir") else ""
+            lines.append(f"  {entity} [{kind}]: {cols}{fhir}")
         for entity, rels in sorted(self.merged_relationships.items()):
             names = ", ".join(rels)
             lines.append(f"  {entity} relationships: {names}")
