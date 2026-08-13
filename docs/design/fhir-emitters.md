@@ -181,21 +181,45 @@ guardrail available for both human and AI authors of future emitters
 (comprehension, care-plan). Measured costs are negligible for a batch
 exporter: ~0.2 ms validation per resource, ~1.8 s one-time import.
 
-## 7. Phase 2: schema-registry `fhir` hints
+## 7. Phase 2: schema-registry `fhir` hints — BUILT (2026-08-13)
 
-Future synergy, recorded not built: an entity JSON may carry an optional
-hint block —
+A schema module's **new** entity JSON may carry an optional hint block:
 
 ```json
-"fhir": {"resourceType": "Observation", "fields": {"value": "valueQuantity.value"}}
+"fhir": {
+  "resourceType": "Observation",
+  "patient_link": "patient_id",
+  "fields": {"status_text": "valueCodeableConcept.text",
+             "recorded_date": "effectiveDateTime"},
+  "set": {"status": "final", "code": {"coding": [{"system": "http://loinc.org", "code": "72166-2"}]}},
+  "id_fields": ["recorded_date"],
+  "subject_field": "subject"
+}
 ```
 
-— and a generic `DeclaredEntityEmitter` exports *flat* declared entities
-for free, with hand-written emitters reserved for resources with real
-logic. This is the mapping-DSL idea returning at the right altitude:
-per-entity hints for trivial shapes, never a whole-bundle language.
-Build it when a schema module actually ships a flat entity that needs
-export, not before.
+A generic `DeclaredEntityEmitter` (`hdh/core/fhir/declared.py`) then
+exports the entity's rows inside the patient bundle with zero core
+edits: `fields` maps flat columns onto dotted FHIR paths (None skipped,
+dates ISO-formatted), `set` contributes the literal fragments that
+aren't per-row data, and the stable content-hash id (`id_fields`) and
+patient reference (`subject_field`, default `subject`) are added
+automatically. The payload is validated through the official
+`fhir.resources` R4B class — the same conformance bar as hand-written
+emitters — and module enrichers apply to declared resources too, since
+the bundle groups by resource type.
+
+Rules, enforced at bootstrap (fail loud in `load_all`, never at export):
+
+- hints are for **new** entities only — base chart resources have
+  hand-written typed emitters (hard error otherwise);
+- `resourceType` and `patient_link` are required, and every referenced
+  column must be declared (hard error otherwise);
+- on hint collision the later module wins with a logged warning, like
+  columns.
+
+This is the mapping-DSL idea returning at the right altitude: per-entity
+hints for trivially flat shapes, never a whole-bundle language.
+Resources with real logic get real emitters.
 
 ## 8. Testing and migration
 
