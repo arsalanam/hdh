@@ -19,6 +19,10 @@ CLI_MODULES = {
     "hdh.modules.fhir_api.cli": "api",
 }
 
+# Modules contributing FHIR enrichers/emitters (each exposes fhir_enrichers();
+# see hdh.core.fhir — design docs/design/fhir-emitters.md)
+FHIR_MODULES = ("hdh.modules.ontology.fhir",)
+
 # Modules that extend the data model via the schema registry (each ships a
 # manifest.json + schema/ directory; see hdh.core.schema_registry).
 SCHEMA_MODULES = (

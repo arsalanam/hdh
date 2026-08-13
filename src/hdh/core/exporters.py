@@ -3,7 +3,6 @@ Exporters: JSON (per-patient), FHIR R4 Bundle, plain-text clinical notes.
 """
 
 import json
-import uuid
 from datetime import date, datetime
 from pathlib import Path
 
@@ -178,207 +177,15 @@ def export_json_bulk(
 # ─── 2. FHIR R4 Exporter ─────────────────────────────────────────────────────
 
 
-def _fhir_patient_resource(patient: Patient) -> dict:
-    """The FHIR Patient resource for one patient."""
-    return {
-        "resourceType": "Patient",
-        "id": patient.mrn,
-        "identifier": [{"system": "urn:family-medicine-mrn", "value": patient.mrn}],
-        "name": [{"use": "official", "family": patient.last_name, "given": [patient.first_name]}],
-        "gender": "male" if str(patient.sex).endswith("MALE") or str(patient.sex).endswith("M") else "female",
-        "birthDate": _date_str(patient.date_of_birth),
-        "address": [
-            {
-                "line": [patient.address],
-                "city": patient.city,
-                "state": patient.state,
-                "postalCode": patient.zip_code,
-            }
-        ],
-        "telecom": [{"system": "phone", "value": patient.phone}],
-    }
-
-
-def _fhir_encounter(v, mrn: str, enc_id: str) -> dict:
-    """The FHIR Encounter resource for one visit."""
-    visit_type_map = {"acute": "AMB", "follow_up": "AMB", "preventive": "AMB", "urgent": "EMER"}
-    vtype = str(v.visit_type).split(".")[-1]
-    return {
-        "resourceType": "Encounter",
-        "id": enc_id,
-        "status": "finished",
-        "class": {"code": visit_type_map.get(vtype, "AMB")},
-        "subject": {"reference": f"Patient/{mrn}"},
-        "period": {"start": _date_str(v.visit_date), "end": _date_str(v.visit_date)},
-        "reasonCode": [{"text": v.chief_complaint}],
-        "participant": [{"individual": {"display": v.provider.name if v.provider else "Unassigned"}}],
-    }
-
-
-def _fhir_vitals_observations(v, mrn: str, enc_id: str) -> list[dict]:
-    """LOINC-coded Observation resources for a visit's vitals panel."""
-    if not v.vitals:
-        return []
-    vt = v.vitals
-    observations = [
-        ("55284-4", "BP", f"{vt.bp_systolic}/{vt.bp_diastolic}", "mm[Hg]"),
-        ("8867-4", "Heart rate", vt.heart_rate, "/min"),
-        ("9279-1", "Respiratory rate", vt.respiratory_rate, "/min"),
-        ("8310-5", "Body temperature", vt.temperature_f, "degF"),
-        ("59408-5", "SpO2", vt.oxygen_sat, "%"),
-        ("29463-7", "Body weight", vt.weight_kg, "kg"),
-        ("8302-2", "Body height", vt.height_cm, "cm"),
-        ("39156-5", "BMI", vt.bmi, "kg/m2"),
-    ]
-    return [
-        {
-            "resourceType": "Observation",
-            "id": str(uuid.uuid4()),
-            "status": "final",
-            "code": {"coding": [{"system": "http://loinc.org", "code": loinc, "display": display}]},
-            "subject": {"reference": f"Patient/{mrn}"},
-            "encounter": {"reference": f"Encounter/{enc_id}"},
-            "effectiveDateTime": _date_str(v.visit_date),
-            "valueQuantity": {"value": val, "unit": unit},
-        }
-        for loinc, display, val, unit in observations
-    ]
-
-
-def _dx_codings(dx) -> list[dict]:
-    """ICD-10 coding, plus SNOMED when the ontology schema module added it.
-
-    getattr because snomed_code is an optional extension column contributed
-    by the schema registry — core stays importable without the module.
-    """
-    codings = [
-        {
-            "system": "http://hl7.org/fhir/sid/icd-10",
-            "code": dx.icd10_code,
-            "display": dx.description,
-        }
-    ]
-    snomed = getattr(dx, "snomed_code", None)
-    if snomed:
-        codings.append(
-            {
-                "system": "http://snomed.info/sct",
-                "code": snomed,
-                "display": getattr(dx, "snomed_display", None) or dx.description,
-            }
-        )
-    return codings
-
-
-def _fhir_conditions(v, mrn: str, enc_id: str) -> list[dict]:
-    """Coded Condition resources for a visit's diagnoses (ICD-10 + SNOMED)."""
-    return [
-        {
-            "resourceType": "Condition",
-            "id": str(uuid.uuid4()),
-            "clinicalStatus": {"coding": [{"code": "active"}]},
-            "code": {"coding": _dx_codings(dx)},
-            "subject": {"reference": f"Patient/{mrn}"},
-            "encounter": {"reference": f"Encounter/{enc_id}"},
-            "recordedDate": _date_str(v.visit_date),
-        }
-        for dx in v.conditions
-    ]
-
-
-def _fhir_medication_requests(v, mrn: str, enc_id: str) -> list[dict]:
-    """MedicationRequest resources for a visit's prescriptions."""
-    return [
-        {
-            "resourceType": "MedicationRequest",
-            "id": str(uuid.uuid4()),
-            "status": "active",
-            "intent": "order",
-            "medicationCodeableConcept": {"text": f"{rx.drug_name} {rx.dose}"},
-            "subject": {"reference": f"Patient/{mrn}"},
-            "encounter": {"reference": f"Encounter/{enc_id}"},
-            "authoredOn": _date_str(v.visit_date),
-            "dosageInstruction": [
-                {
-                    "text": f"{rx.dose} {rx.frequency}",
-                    "timing": {"repeat": {"frequency": 1}},
-                }
-            ],
-            "dispenseRequest": {"numberOfRepeatsAllowed": rx.refills},
-            "note": [{"text": rx.drug_class}],
-        }
-        for rx in v.prescriptions
-    ]
-
-
-def _fhir_lab_observations(v, mrn: str, enc_id: str) -> list[dict]:
-    """LOINC-coded Observation resources for a visit's lab results."""
-    return [
-        {
-            "resourceType": "Observation",
-            "id": str(uuid.uuid4()),
-            "status": "final",
-            "category": [
-                {
-                    "coding": [
-                        {
-                            "system": "http://terminology.hl7.org/CodeSystem/observation-category",
-                            "code": "laboratory",
-                        }
-                    ]
-                }
-            ],
-            "code": {
-                "coding": [{"system": "http://loinc.org", "code": lr.loinc_code, "display": lr.test_name}]
-            },
-            "subject": {"reference": f"Patient/{mrn}"},
-            "encounter": {"reference": f"Encounter/{enc_id}"},
-            "effectiveDateTime": _date_str(v.visit_date),
-            "valueQuantity": {"value": lr.value, "unit": lr.unit},
-            "referenceRange": [
-                {
-                    "low": {"value": lr.reference_low, "unit": lr.unit},
-                    "high": {"value": lr.reference_high, "unit": lr.unit},
-                }
-            ],
-            "interpretation": [
-                {
-                    "coding": [
-                        {
-                            "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
-                            "code": str(lr.status).split(".")[-1].upper()[0],
-                        }
-                    ]
-                }
-            ],
-        }
-        for lr in v.lab_results
-    ]
-
-
 def patient_to_fhir_bundle(patient: Patient) -> dict:
-    """Generate a FHIR R4 Bundle for one patient: Patient, then per visit an
-    Encounter with its Observations, Conditions, and MedicationRequests."""
-    entries = [{"resource": _fhir_patient_resource(patient)}]
-    for v in patient.visits:
-        enc_id = str(uuid.uuid4())
-        resources = (
-            [_fhir_encounter(v, patient.mrn, enc_id)]
-            + _fhir_vitals_observations(v, patient.mrn, enc_id)
-            + _fhir_conditions(v, patient.mrn, enc_id)
-            + _fhir_medication_requests(v, patient.mrn, enc_id)
-            + _fhir_lab_observations(v, patient.mrn, enc_id)
-        )
-        entries.extend({"resource": r} for r in resources)
+    """Generate a FHIR R4 Bundle for one patient.
 
-    return {
-        "resourceType": "Bundle",
-        "id": str(uuid.uuid4()),
-        "type": "collection",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "total": len(entries),
-        "entry": entries,
-    }
+    Assembly lives in hdh.core.fhir: pluggable per-resource emitters plus
+    module-contributed enrichers (design docs/design/fhir-emitters.md).
+    """
+    from hdh.core.fhir import build_bundle
+
+    return build_bundle(patient)
 
 
 def export_fhir(session: Session, output_dir: str = "exports/fhir", limit: int | None = None):
