@@ -27,6 +27,8 @@ dependencies = [
     "psycopg[binary]>=3.1",
     # Schema migrations from registry-merged metadata (issue #7)
     "alembic>=1.13",
+    # Typed FHIR R4B construction in the emitters (design fhir-emitters.md §6)
+    "fhir.resources>=8.0",
 ]
 
 [project.optional-dependencies]
@@ -45,7 +47,6 @@ all = ["hdh[risk,agent,api,docs]"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    "fhir.resources>=8.0",  # test-only FHIR R4B conformance gate (design fhir-emitters.md §6)
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",

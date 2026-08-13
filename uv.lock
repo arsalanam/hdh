@@ -519,6 +519,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "faker" },
+    { name = "fhir-resources" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
 ]
@@ -563,7 +564,6 @@ risk = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "fhir-resources" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -576,6 +576,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.40" },
     { name = "faker", specifier = ">=19.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.110" },
+    { name = "fhir-resources", specifier = ">=8.0" },
     { name = "hdh", extras = ["risk", "agent", "api", "docs"], marker = "extra == 'all'" },
     { name = "joblib", marker = "extra == 'risk'", specifier = ">=1.3" },
     { name = "langgraph", marker = "extra == 'agent'", specifier = ">=1.2.10" },
@@ -592,7 +593,6 @@ provides-extras = ["risk", "agent", "api", "docs", "all"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "fhir-resources", specifier = ">=8.0" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=5.0" },

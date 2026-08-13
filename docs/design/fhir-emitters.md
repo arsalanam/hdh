@@ -154,14 +154,32 @@ file the quality gate keeps flagging):
 The FHIR API module (`hdh serve`) needs no change: it serves
 `patient_to_fhir_bundle`, which now simply returns more.
 
-## 6. Typed resources (fhir.resources) — follow-up, not blocker
+## 6. Typed resources (fhir.resources) — ADOPTED (2026-08-13)
 
-The `fhir.resources` pydantic package would make every emitter construct
-validated, typed R4 resources instead of bare dicts — fixing the quality
-gate's standing `bare dict` warnings at the root. Deliberately **out of
-scope for the refactor PR** (it multiplies the diff without changing
-structure); queued as its own follow-up where emitters swap dict literals
-for model constructors one at a time.
+The `fhir.resources` pydantic package makes every emitter construct
+validated, typed R4B resources instead of bare dicts — fixing the quality
+gate's standing `bare dict` warnings at the root. Deliberately kept out
+of the refactor PR (it multiplies the diff without changing structure),
+then landed in two steps:
+
+1. **Conformance gate first** (PR #24): a test validates every emitted
+   resource and the whole Bundle against the official R4B models. This
+   alone surfaced two real defects — the `"142/88"` BP string in a FHIR
+   decimal (now a component-based Observation, LOINC 8480-6/8462-4) and
+   a bare date in `DocumentReference.date` (a FHIR *instant*).
+2. **Full typed construction**: emitters build `fhir.resources.R4B`
+   models directly and return `(model, entity)` pairs; enrichers mutate
+   typed models (e.g. appending a typed `Coding`); the bundle assembler
+   wraps them in a typed `Bundle` and serializes **once** with
+   `model_dump(mode="json", exclude_none=True)`. `fhir.resources` moved
+   from the dev group to a core dependency.
+
+Rationale for adopting rather than deferring indefinitely: malformed
+resources now fail *at the line that builds them* with a pydantic error
+naming the field, and every legal field autocompletes — the strongest
+guardrail available for both human and AI authors of future emitters
+(comprehension, care-plan). Measured costs are negligible for a batch
+exporter: ~0.2 ms validation per resource, ~1.8 s one-time import.
 
 ## 7. Phase 2: schema-registry `fhir` hints
 

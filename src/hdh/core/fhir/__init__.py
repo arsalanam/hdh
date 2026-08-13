@@ -1,10 +1,13 @@
-"""Pluggable FHIR R4 export (design: docs/design/fhir-emitters.md).
+"""Pluggable FHIR R4B export with typed construction (design:
+docs/design/fhir-emitters.md; typed adoption decided 2026-08-13).
 
 Core ships one small :class:`FhirEmitter` per resource type; feature
 modules contribute :class:`FhirEnricher`\\s through ``FHIR_MODULES``
-discovery — the schema-registry move applied to output. Resource ids are
-**stable content hashes** (review decision Q1): re-exporting an unchanged
-chart yields identical ids, so bundles diff cleanly.
+discovery. Emitters construct **official ``fhir.resources`` R4B models**
+— malformed resources fail at the line that builds them, and every legal
+field autocompletes, for human and AI authors alike. Resource ids are
+stable content hashes: re-exporting an unchanged chart yields identical
+ids, so bundles diff cleanly.
 """
 
 from __future__ import annotations
@@ -12,15 +15,13 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from importlib import import_module
 from typing import Any, ClassVar, Protocol
 
 from hdh.core.models import Patient
 
 log = logging.getLogger("hdh.fhir")
-
-_ENTITY_KEY = "_entity"  # transient link resource → source entity for enrichers
 
 
 def stable_id(*parts) -> str:
@@ -50,20 +51,21 @@ class FhirEmitter(Protocol):
 
     resource_type: ClassVar[str]
 
-    def emit(self, ctx: ExportContext) -> list[dict]:
-        """Return resources; each may carry ``_entity`` for enrichers."""
+    def emit(self, ctx: ExportContext) -> list[tuple[Any, Any]]:
+        """Return ``(typed R4B resource model, source entity)`` pairs; the
+        entity rides along so enrichers never re-query (None if not useful)."""
         ...
 
 
 class FhirEnricher(Protocol):
-    """Decorates already-built resources of one type. ADDITIVE ONLY:
+    """Decorates already-built typed resources of one type. ADDITIVE ONLY:
     enrichers may append codings/extensions/fields but must never delete
     or replace what an emitter built (test-enforced)."""
 
     resource_type: ClassVar[str]
 
-    def enrich(self, resource: dict, entity: Any, ctx: ExportContext) -> None:
-        """Mutate ``resource`` in place with additions."""
+    def enrich(self, resource: Any, entity: Any, ctx: ExportContext) -> None:
+        """Mutate the typed ``resource`` model in place with additions."""
         ...
 
 
@@ -91,9 +93,7 @@ def module_enrichers(strict: bool = False) -> list[FhirEnricher]:
     """Enrichers contributed by feature modules (``FHIR_MODULES``).
 
     Runtime is fail-soft (an absent optional module never breaks export);
-    tests load with ``strict=True`` so real defects fail loud (review
-    decision Q3).
-    """
+    tests load with ``strict=True`` so real defects fail loud."""
     from hdh.modules import FHIR_MODULES
 
     enrichers: list[FhirEnricher] = []
@@ -109,28 +109,28 @@ def module_enrichers(strict: bool = False) -> list[FhirEnricher]:
 
 
 def build_bundle(patient: Patient, strict: bool = False) -> dict:
-    """Assemble the patient's FHIR R4 Bundle: every emitter, then every
-    matching enricher (additive), then the Bundle wrapper."""
+    """Assemble the patient's FHIR R4B Bundle: every emitter (typed
+    construction), then every matching enricher (additive, typed), then
+    one serialization at the end."""
+    from fhir.resources.R4B.bundle import Bundle, BundleEntry
+
     ctx = ExportContext(patient=patient, mrn=patient.mrn)
-    resources: list[dict] = []
+    built: list[tuple[Any, Any]] = []  # (typed model, source entity)
     for emitter in _core_emitters():
-        resources.extend(emitter.emit(ctx))
+        built.extend(emitter.emit(ctx))
 
-    by_type: dict[str, list[dict]] = {}
-    for resource in resources:
-        by_type.setdefault(resource["resourceType"], []).append(resource)
+    by_type: dict[str, list[tuple[Any, Any]]] = {}
+    for model, entity in built:
+        by_type.setdefault(type(model).__name__, []).append((model, entity))
     for enricher in module_enrichers(strict=strict):
-        for resource in by_type.get(enricher.resource_type, []):
-            enricher.enrich(resource, resource.get(_ENTITY_KEY), ctx)
+        for model, entity in by_type.get(enricher.resource_type, []):
+            enricher.enrich(model, entity, ctx)
 
-    for resource in resources:
-        resource.pop(_ENTITY_KEY, None)
-
-    return {
-        "resourceType": "Bundle",
-        "id": f"bundle-{patient.mrn}",
-        "type": "collection",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "total": len(resources),
-        "entry": [{"resource": r} for r in resources],
-    }
+    bundle = Bundle(
+        id=f"bundle-{patient.mrn}",
+        type="collection",
+        timestamp=datetime.now(UTC),
+        total=len(built),
+        entry=[BundleEntry(resource=model) for model, _entity in built],
+    )
+    return bundle.model_dump(mode="json", exclude_none=True)
