@@ -18,9 +18,16 @@ SYSTEMS = {
 
 ENCOUNTER_CLASS = {"acute": "AMB", "follow_up": "AMB", "preventive": "AMB", "urgent": "EMER"}
 
-# (LOINC, display, Vital attribute or None for composite BP, unit)
+# Blood pressure is a component-based Observation (FHIR decimal values —
+# the old "142/88" string was non-conformant, caught by fhir.resources)
+BP_PANEL = ("55284-4", "BP")
+BP_COMPONENTS = (
+    ("8480-6", "Systolic blood pressure", "bp_systolic"),
+    ("8462-4", "Diastolic blood pressure", "bp_diastolic"),
+)
+
+# (LOINC, display, Vital attribute, unit)
 VITALS_PANEL = (
-    ("55284-4", "BP", None, "mm[Hg]"),
     ("8867-4", "Heart rate", "heart_rate", "/min"),
     ("9279-1", "Respiratory rate", "respiratory_rate", "/min"),
     ("8310-5", "Body temperature", "temperature_f", "degF"),

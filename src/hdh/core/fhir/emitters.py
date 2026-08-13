@@ -13,6 +13,8 @@ from typing import ClassVar
 
 from hdh.core.fhir import _ENTITY_KEY, ExportContext
 from hdh.core.fhir.terminology import (
+    BP_COMPONENTS,
+    BP_PANEL,
     CONDITION_CLINICAL_STATUS,
     ENCOUNTER_CLASS,
     SYSTEMS,
@@ -141,8 +143,29 @@ class VitalsObservationEmitter:
             vt = v.vitals
             if not vt:
                 continue
+            bp_code, bp_display = BP_PANEL
+            out.append(
+                {
+                    "resourceType": "Observation",
+                    "id": ctx.rid("Observation", v.id, bp_code),
+                    "status": "final",
+                    "code": {
+                        "coding": [{"system": SYSTEMS["loinc"], "code": bp_code, "display": bp_display}]
+                    },
+                    "subject": {"reference": f"Patient/{ctx.mrn}"},
+                    "encounter": ctx.encounter_ref(v),
+                    "effectiveDateTime": _d(v.visit_date),
+                    "component": [
+                        {
+                            "code": {"coding": [{"system": SYSTEMS["loinc"], "code": c, "display": d}]},
+                            "valueQuantity": {"value": getattr(vt, attr), "unit": "mm[Hg]"},
+                        }
+                        for c, d, attr in BP_COMPONENTS
+                    ],
+                    _ENTITY_KEY: vt,
+                }
+            )
             for loinc, display, attr, unit in VITALS_PANEL:
-                value = f"{vt.bp_systolic}/{vt.bp_diastolic}" if attr is None else getattr(vt, attr)
                 out.append(
                     {
                         "resourceType": "Observation",
@@ -152,7 +175,7 @@ class VitalsObservationEmitter:
                         "subject": {"reference": f"Patient/{ctx.mrn}"},
                         "encounter": ctx.encounter_ref(v),
                         "effectiveDateTime": _d(v.visit_date),
-                        "valueQuantity": {"value": value, "unit": unit},
+                        "valueQuantity": {"value": getattr(vt, attr), "unit": unit},
                         _ENTITY_KEY: vt,
                     }
                 )
@@ -409,7 +432,8 @@ class DocumentReferenceEmitter:
                         "status": "current",
                         "type": {"text": f"{str(note.note_type).split('.')[-1]} note"},
                         "subject": {"reference": f"Patient/{ctx.mrn}"},
-                        "date": _d(v.visit_date),
+                        # FHIR instant requires time + zone (conformance-gate catch)
+                        "date": f"{_d(v.visit_date)}T00:00:00Z",
                         "context": {"encounter": [ctx.encounter_ref(v)]},
                         "content": [
                             {

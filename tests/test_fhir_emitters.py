@@ -10,6 +10,10 @@ timestamps) and for three DELIBERATE changes recorded here:
   from parity and asserted correct separately.
 - Condition.clinicalStatus / recordedDate: now the unified problem list's
   real status and onset date, not hardcoded "active" + visit date.
+- BP Observation: now a component-based resource (systolic 8480-6 /
+  diastolic 8462-4 decimals). The old ``valueQuantity.value = "142/88"``
+  string was non-conformant FHIR — caught by the fhir.resources gate —
+  so BP observations are excluded from parity and asserted separately.
 """
 
 import json
@@ -207,6 +211,9 @@ def _normalize(resources: list[dict], ported_only: bool) -> list[dict]:
         r = json.loads(json.dumps(r))
         if ported_only and r["resourceType"] not in PORTED_TYPES:
             continue
+        codings = r.get("code", {}).get("coding", [{}])
+        if r["resourceType"] == "Observation" and codings and codings[0].get("code") == "55284-4":
+            continue  # BP: deliberately reshaped (component-based) — asserted separately
         r.pop("id", None)
         r.pop("encounter", None)
         for field in DELIBERATE.get(r["resourceType"], ()):
@@ -236,6 +243,10 @@ def test_deliberate_changes(golden_patient):
         c["code"]["coding"][0]["code"]: c["clinicalStatus"]["coding"][0]["code"] for c in by_type["Condition"]
     }
     assert statuses == {"E11.9": "active", "J06.9": "resolved"}
+    bp = next(o for o in by_type["Observation"] if o["code"]["coding"][0]["code"] == "55284-4")
+    components = {c["code"]["coding"][0]["code"]: c["valueQuantity"]["value"] for c in bp["component"]}
+    assert components == {"8480-6": 142, "8462-4": 88}  # decimals, not "142/88"
+    assert "valueQuantity" not in bp
 
 
 def test_new_chart_resources_present(golden_patient):
@@ -291,3 +302,19 @@ def test_strict_discovery_loads_cleanly():
     enrichers = module_enrichers(strict=True)
     assert any(type(e).__name__ == "ConditionCodingEnricher" for e in enrichers)
     assert all(hasattr(e, "resource_type") and hasattr(e, "enrich") for e in enrichers)
+
+
+def test_every_emitted_resource_is_conformant_r4b(golden_patient):
+    """The fhir.resources validation gate (design §6, examined 2026-08-13):
+    every resource build_bundle emits — including module enrichments —
+    must validate against its official FHIR R4B model. Test-only
+    dependency; any malformed emitter or enricher output fails CI here
+    with pydantic's precise error."""
+    fhir_r4b = pytest.importorskip("fhir.resources.R4B")
+
+    bundle = build_bundle(golden_patient, strict=True)
+    for entry in bundle["entry"]:
+        resource = entry["resource"]
+        model = fhir_r4b.get_fhir_model_class(resource["resourceType"])
+        model.model_validate(resource)  # raises with field-level detail on any violation
+    fhir_r4b.get_fhir_model_class("Bundle").model_validate(bundle)
