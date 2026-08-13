@@ -14,7 +14,7 @@ Two entry points, one text format:
 from hdh.core.models import Patient, Visit
 
 
-def render_soap(
+def render_soap(  # quality: allow(no-god-class) — a pure renderer's keyword-only params ARE its data contract
     *,
     provider_name: str,
     visit_date,

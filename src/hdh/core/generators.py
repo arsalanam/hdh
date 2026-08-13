@@ -11,6 +11,7 @@ are populated with medically coherent data.
 
 import random
 import string
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from faker import Faker
@@ -728,14 +729,21 @@ def _row(obj, model) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class NoteFacts:
+    """Patient-level facts the note renderer needs (built in memory)."""
+
+    allergies: tuple[str, ...] = ()
+    family_lines: tuple[str, ...] = ()
+
+
 def _generate_one(
     session,
     patient: Patient,
     fam_hx: dict,
     providers,
     years: int,
-    allergies: list[str] | None = None,
-    family_lines: list[str] | None = None,
+    facts: NoteFacts | None = None,
 ) -> tuple[int, set]:
     """Visits, conditions, notes, and per-patient chart entities.
 
@@ -743,6 +751,8 @@ def _generate_one(
     in-memory objects (zero lazy loads), children bulk-inserted.
     Returns (visit count, final chronic set)."""
     from .notes import render_soap
+
+    facts = facts or NoteFacts()
 
     primary = _primary_provider(providers, patient.age)
     visit_tuples, final_chronic = generate_visit_history(patient, fam_hx, bool(patient.smoker), years)
@@ -808,9 +818,9 @@ def _generate_one(
                     follow_up_days=visit.follow_up_days,
                     age=patient.age,
                     sex=sex_word,
-                    allergies=allergies or [],
+                    allergies=list(facts.allergies),
                     chronic_history=[c.description for c in chronic_seen.values()],
-                    family_history=family_lines or [],
+                    family_history=list(facts.family_lines),
                     vital=vital,
                     conditions=[(cprofile.description, cprofile.icd10_code)],
                     prescriptions=visit_rx,
@@ -824,15 +834,15 @@ def _generate_one(
             }
         )
 
-    for table, rows in (
-        (Vital.__table__, vital_rows),
-        (Prescription.__table__, rx_rows),
-        (LabResult.__table__, lab_rows),
-        (Procedure.__table__, proc_rows),
-        (VisitNote.__table__, note_rows),
+    for model, rows in (
+        (Vital, vital_rows),
+        (Prescription, rx_rows),
+        (LabResult, lab_rows),
+        (Procedure, proc_rows),
+        (VisitNote, note_rows),
     ):
         if rows:
-            session.execute(sa_insert(table), rows)
+            session.execute(sa_insert(model), rows)
 
     generate_medication_statements(session, patient, chronic_seen, rx_stream)
     generate_immunizations(session, patient, set(chronic_seen))
@@ -886,8 +896,7 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
                 fam_hx,
                 providers,
                 years_of_history,
-                allergies=allergy_names,
-                family_lines=fam_lines,
+                NoteFacts(tuple(allergy_names), tuple(fam_lines)),
             )
             parent_conditions[patient.id] = chronic
             total_visits += n_visits
@@ -908,8 +917,7 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
                 fam_hx,
                 providers,
                 years_of_history,
-                allergies=allergy_names,
-                family_lines=fam_lines,
+                NoteFacts(tuple(allergy_names), tuple(fam_lines)),
             )
             total_visits += n_visits
             members.append(patient)
