@@ -13,17 +13,19 @@ class ConditionCodingEnricher:
 
     resource_type: ClassVar[str] = "Condition"
 
-    def enrich(self, resource: dict, entity: Any, ctx) -> None:
-        """Additive only: appends a coding; never touches existing ones."""
+    def enrich(self, resource: Any, entity: Any, ctx) -> None:
+        """Additive only: appends a typed Coding; never touches existing ones."""
+        from fhir.resources.R4B.coding import Coding
+
         snomed = getattr(entity, "snomed_code", None) if entity is not None else None
         if not snomed:
             return
-        resource["code"]["coding"].append(
-            {
-                "system": "http://snomed.info/sct",
-                "code": snomed,
-                "display": getattr(entity, "snomed_display", None) or entity.description,
-            }
+        resource.code.coding.append(
+            Coding(
+                system="http://snomed.info/sct",
+                code=snomed,
+                display=getattr(entity, "snomed_display", None) or entity.description,
+            )
         )
 
 

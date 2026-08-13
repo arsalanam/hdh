@@ -290,10 +290,16 @@ def test_ids_are_stable_across_exports(golden_patient):
     assert len(set(ids_a)) == len(ids_a)  # and unique within a bundle
 
 
-def test_no_entity_leaks_into_output(golden_patient):
-    """The transient _entity link never reaches the serialized bundle."""
-    bundle = build_bundle(golden_patient, strict=True)
-    assert "_entity" not in json.dumps(bundle)
+def test_typed_construction_rejects_malformed(golden_patient):
+    """Typed construction fails at the line that builds a bad resource —
+    the property the 2026-08-13 adoption decision bought."""
+    import pydantic
+    from fhir.resources.R4B.observation import Observation
+
+    with pytest.raises(pydantic.ValidationError):
+        Observation(status="final", code={"coding": []}, valueQuantity={"value": "142/88"})
+    with pytest.raises(pydantic.ValidationError):
+        Observation(status="final", code={"coding": []}, efectiveDateTime="2026-01-10")
 
 
 def test_strict_discovery_loads_cleanly():
