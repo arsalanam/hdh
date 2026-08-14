@@ -1,0 +1,6 @@
+{
+  "name": "snomed_module",
+  "version": "1.0.0",
+  "depends_on": ["base", "icd10cm_module"],
+  "priority": 20
+}

@@ -1,0 +1,13 @@
+{
+  "entity": "OntologyClosure",
+  "tablename": "ontology_closure",
+  "module": "snomed_module",
+  "columns": [
+    { "name": "ancestor_id", "type": "String", "length": 64, "foreign_key": "ontology_concepts.id", "primary_key": true },
+    { "name": "descendant_id", "type": "String", "length": 64, "foreign_key": "ontology_concepts.id", "primary_key": true },
+    { "name": "min_depth", "type": "Integer", "nullable": false }
+  ],
+  "indexes": [
+    { "name": "ix_closure_descendant", "columns": ["descendant_id", "ancestor_id"] }
+  ]
+}

@@ -416,6 +416,49 @@ class DataAbstractionCheck:
         return [f for f in findings if not module.waived(self.name, f.line)]
 
 
+class HierarchyEncapsulationCheck:
+    """Tree-strategy columns are the owning module's private storage.
+
+    ``ontology_concepts.path`` / ``hierarchy_depth`` are ICD-10-CM's
+    materialized-tree strategy; both are NULL by contract for DAG
+    ontologies (SNOMED), so direct queries elsewhere return silently
+    empty results — the worst failure class. Outside the owner, dispatch
+    through ``hdh.core.ontology.get_ontology_service`` instead (design
+    notes-comprehension-service.md §5 item 2).
+    """
+
+    name = "hierarchy-encapsulation"
+    principle = "Per-ontology hierarchy strategy stays module-private"
+
+    OWNER_PREFIX = "src/hdh/modules/icd10cm/"
+    PRIVATE_COLUMNS = frozenset({"path", "hierarchy_depth"})
+
+    def run(self, module: Module) -> list[Finding]:
+        """Flag `<table>.c.path` / `.c.hierarchy_depth` outside the owner."""
+        if module.path.startswith(self.OWNER_PREFIX):
+            return []
+        findings = []
+        for node in ast.walk(module.tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in self.PRIVATE_COLUMNS
+                and isinstance(node.value, ast.Attribute)
+                and node.value.attr == "c"
+            ):
+                findings.append(
+                    _finding(
+                        self,
+                        "error",
+                        module,
+                        node.lineno,
+                        f"column `{node.attr}` is the icd10cm module's private tree "
+                        f"strategy (NULL for DAG ontologies) — dispatch through "
+                        f"get_ontology_service() instead",
+                    )
+                )
+        return [f for f in findings if not module.waived(self.name, f.line)]
+
+
 CHECKS: tuple[QualityCheck, ...] = (
     ContractCheck(),
     GodClassCheck(),
@@ -424,6 +467,7 @@ CHECKS: tuple[QualityCheck, ...] = (
     ImmutabilityCheck(),
     InjectionSafetyCheck(),
     DataAbstractionCheck(),
+    HierarchyEncapsulationCheck(),
 )
 
 

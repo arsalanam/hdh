@@ -54,7 +54,9 @@ def cmd_stats(session):
     # Top 10 diagnoses
     top_dx = (
         session.query(Condition.icd10_code, Condition.description, func.count(Condition.id).label("cnt"))
-        .group_by(Condition.icd10_code)
+        # description is functionally dependent on the code, but PostgreSQL
+        # requires every selected column in the GROUP BY (SQLite is lax)
+        .group_by(Condition.icd10_code, Condition.description)
         .order_by(func.count(Condition.id).desc())
         .limit(10)
         .all()

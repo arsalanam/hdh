@@ -100,3 +100,31 @@ def test_check_env_connectivity_query(pg_engine):
     """The SELECT 1 probe check-env uses works on the pg dialect."""
     with pg_engine.connect() as conn:
         assert conn.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_agent_tools_recover_from_failed_query(pg_engine):
+    """A failed tool query must not poison the shared session.
+
+    PostgreSQL aborts the transaction after any error; without the
+    tool_guard rollback every later tool call died with
+    InFailedSqlTransaction (the agent-chat cascade this reproduces)."""
+    engine = get_engine(db_url=PG_URL)
+    session = get_session(engine)
+    try:
+        build_dataset(session, n_patients=3, years_of_history=1, verbose=False)
+        from hdh.modules.agent.tools import build_tools
+
+        tools = {t.name: t for t in build_tools(session)}
+        # a SQLite-ism the model used to be TOLD works — fails on pg
+        error = tools["query_database"].call({"sql": "SELECT strftime('%Y', date_of_birth) FROM patients"})
+        assert "SQL error" in error
+        # the very next tool call must succeed — the guard rolled back
+        result = tools["search_patients"].call({"min_age": 0, "max_age": 120, "limit": 5})
+        assert "mrn" in result.lower()
+        # and the dialect-aware description no longer advertises SQLite functions
+        from hdh.modules.agent.tools import _sql_tool_description
+
+        assert "do NOT exist" in _sql_tool_description(None, "postgresql")
+    finally:
+        session.close()
+        engine.dispose()

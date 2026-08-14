@@ -1,0 +1,72 @@
+{
+  "entity": "OntologyTerm",
+  "tablename": "ontology_terms",
+  "module": "icd10cm_module",
+  "columns": [
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "concept_id",
+      "type": "String",
+      "length": 64,
+      "foreign_key": "ontology_concepts.id",
+      "nullable": false
+    },
+    {
+      "name": "term",
+      "type": "String",
+      "length": 512,
+      "nullable": false
+    },
+    {
+      "name": "term_type",
+      "type": "Enum",
+      "values": [
+        "fsn",
+        "preferred",
+        "synonym"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "language",
+      "type": "String",
+      "length": 8,
+      "server_default": "'en'"
+    },
+    {
+      "name": "active",
+      "type": "Boolean",
+      "server_default": "true"
+    },
+    {
+      "name": "properties",
+      "type": "JSON"
+    }
+  ],
+  "indexes": [
+    {
+      "name": "ix_term_concept",
+      "columns": [
+        "concept_id"
+      ]
+    },
+    {
+      "name": "ix_term_term",
+      "columns": [
+        "term"
+      ]
+    },
+    {
+      "name": "ix_term_concept_type",
+      "columns": [
+        "concept_id",
+        "term_type"
+      ]
+    }
+  ]
+}

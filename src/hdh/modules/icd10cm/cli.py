@@ -37,6 +37,8 @@ def register_cli(subparsers) -> None:
 
     sub.add_parser("link", help="Backfill Condition.concept_id from icd10_code")
 
+    sub.add_parser("terms", help="Backfill the shared term index from a loaded catalog (no reload)")
+
     bench_p = sub.add_parser("bench", help="Measure lookup/search/hierarchy latencies")
     bench_p.add_argument("--iterations", type=int, default=200)
 
@@ -66,6 +68,7 @@ def run(session, args) -> None:
         "search": lambda: _cmd_search(session, " ".join(args.term), args.limit),
         "lateral": lambda: _cmd_lateral(session, args.code),
         "link": lambda: _cmd_link(session),
+        "terms": lambda: _cmd_terms(session),
         "bench": lambda: _cmd_bench(session, args.iterations),
         "codify": lambda: _cmd_codify(session, args),
         "pattern": lambda: _cmd_pattern(session, args),
@@ -409,3 +412,46 @@ def _cmd_pattern(session, args) -> None:
     for hit in hits:
         marker = "•" if hit.is_billable else "○"
         print(f" {marker} {hit.code:<10} {hit.display}")
+
+
+def _cmd_terms(session) -> None:
+    """Backfill ontology_terms from an already-loaded catalog — the
+    no-reload path to the unified search surface (snomed design Q2)."""
+    from sqlalchemy import delete, insert
+
+    from hdh.core.models import Base
+
+    concepts_t, _e, _l = _tables()
+    terms_t = Base.metadata.tables["ontology_terms"]
+    session.execute(delete(terms_t).where(terms_t.c.concept_id.like("icd10cm:%")))
+    rows = []
+    for concept in session.execute(
+        select(concepts_t.c.id, concepts_t.c.display, concepts_t.c.short_display).where(
+            concepts_t.c.ontology == "icd10cm"
+        )
+    ):
+        rows.append(
+            {
+                "concept_id": concept.id,
+                "term": concept.display,
+                "term_type": "preferred",
+                "language": "en",
+                "active": True,
+                "properties": {},
+            }
+        )
+        if concept.short_display and concept.short_display != concept.display:
+            rows.append(
+                {
+                    "concept_id": concept.id,
+                    "term": concept.short_display,
+                    "term_type": "synonym",
+                    "language": "en",
+                    "active": True,
+                    "properties": {"source": "short_display"},
+                }
+            )
+    for i in range(0, len(rows), 5000):
+        session.execute(insert(terms_t), rows[i : i + 5000])
+    session.commit()
+    print(f"{len(rows):,} ICD-10-CM term rows in the shared index")

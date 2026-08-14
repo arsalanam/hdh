@@ -63,6 +63,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "fullload: needs a real, licensee-loaded SNOMED CT edition (HDH_SNOMED_DB_URL); CI never runs these",
+]
+addopts = "-m 'not fullload'"
 
 [tool.coverage.run]
 source = ["hdh"]

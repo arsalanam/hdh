@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from hdh.modules.icd10cm.service import AXIS_VALUES
 
@@ -138,10 +138,28 @@ def _anchor_ids(session, anchor: dict, concepts_t, search_concepts) -> list[str]
 
 
 def _descend(session, ids: list[str], concepts_t) -> list[str]:
-    paths = [row[0] for row in session.execute(select(concepts_t.c.path).where(concepts_t.c.id.in_(ids)))]
-    if not paths:
-        return []
-    prefix_filters = [or_(concepts_t.c.path == p, concepts_t.c.path.like(p + ".%")) for p in paths]
-    return [
-        row[0] for row in session.execute(select(concepts_t.c.id).where(or_(*prefix_filters)).limit(5000))
-    ]
+    """Subtree descent, dispatched to each anchor's owning ontology service
+    (design notes-comprehension-service.md §5 item 1). This module's own
+    anchors use its private bulk path helper; anchors from any other
+    ontology go through the protocol — an unregistered ontology raises
+    loudly instead of matching silently nothing."""
+    rows = session.execute(
+        select(concepts_t.c.ontology, concepts_t.c.id, concepts_t.c.code).where(concepts_t.c.id.in_(ids))
+    ).all()
+    by_ontology: dict[str, list] = {}
+    for row in rows:
+        by_ontology.setdefault(row.ontology, []).append(row)
+    out: list[str] = []
+    for ontology, group in sorted(by_ontology.items()):
+        if ontology == "icd10cm":
+            from hdh.modules.icd10cm.ontology import descendant_ids
+
+            out += descendant_ids(session, [row.id for row in group])
+        else:
+            from hdh.core.ontology import get_ontology_service
+
+            service = get_ontology_service(ontology, session)
+            for row in group:
+                out.append(row.id)
+                out += [concept.id for concept in service.descendants(row.code)]
+    return out

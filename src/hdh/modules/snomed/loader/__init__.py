@@ -1,15 +1,15 @@
-"""ICD-10-CM load pipeline: pluggable stages over a shared context.
+"""SNOMED CT load pipeline: pluggable stages over a shared context.
 
-The design's nine-stage pipeline (§4.2), realized as small ``LoadStage``
-implementations composed by ``run_load`` — the same pluggable-check pattern
-as the quality gate. Milestone B covers the order file end-to-end
-(acquire → parse → structure → enrich → load → edges → verify → finalize);
-the tabular-XML stages (blocks, Excludes1/2, code-first) join in
-milestone C alongside ``--download``.
+The design's eight-stage pipeline (snomed-module.md §4), in the house
+``LoadStage`` shape (the icd10cm loader's pattern, re-stated here — modules
+never import each other's internals). Every stage receives the same
+mutable :class:`LoadContext` and returns a one-line summary; a raising
+stage aborts before ``finalize`` writes the ledger row, so a failed load
+is never recorded as complete.
 
-Every stage receives the same mutable :class:`LoadContext` and returns a
-one-line summary; a raising stage aborts the load before ``finalize``
-writes the ledger row, so a failed load is never recorded as complete.
+Milestone B runs the pipeline from a ``--source`` RF2 directory (the
+committed synthetic fixture or any legitimately obtained extract); the
+UTS download joins in milestone C.
 """
 
 from __future__ import annotations
@@ -22,21 +22,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+ONTOLOGY = "snomed_ct"
+
 
 class LoadError(Exception):
     """A load precondition, parse, or verification failure."""
-
-
-@dataclass(frozen=True)
-class CodeRow:
-    """One parsed order-file row."""
-
-    order: int
-    code: str  # dotless, as in the file (e.g. "S52001A")
-    dotted: str  # display form (e.g. "S52.001A")
-    billable: bool
-    short: str
-    long: str
 
 
 @dataclass
@@ -45,17 +35,17 @@ class LoadContext:
 
     session: Session
     source_dir: Path
-    fiscal_year: int
+    release: int | None = None  # YYYYMM; detected from filenames if None
     force: bool = False
     started: float = field(default_factory=time.monotonic)
     # populated by stages:
     files: dict[str, Path] = field(default_factory=dict)
     checksums: dict[str, str] = field(default_factory=dict)
-    rows: list[CodeRow] = field(default_factory=list)
-    concepts: dict[str, dict[str, Any]] = field(default_factory=dict)  # id -> column values
-    edges: list[dict[str, Any]] = field(default_factory=list)
+    concepts: dict[str, dict[str, Any]] = field(default_factory=dict)  # id -> concept column values
+    terms: list[dict[str, Any]] = field(default_factory=list)  # ontology_terms rows
+    edges: list[dict[str, Any]] = field(default_factory=list)  # ontology_edges rows
+    parents: dict[str, list[str]] = field(default_factory=dict)  # child id -> parent ids (is-a)
     counters: dict[str, int] = field(default_factory=dict)
-    tabular: Any = None  # TabularData when the XML is present (loader.tabular)
 
 
 class LoadStage(Protocol):
@@ -70,17 +60,14 @@ class LoadStage(Protocol):
 
 def default_stages() -> tuple[LoadStage, ...]:
     """The milestone-B pipeline, in execution order."""
-    from hdh.modules.icd10cm.loader import stages as s
+    from hdh.modules.snomed.loader import stages as s
 
     return (
         s.AcquireStage(),
         s.ParseStage(),
-        s.StructureStage(),
-        s.TabularStage(),
-        s.EnrichStage(),
-        s.LoadConceptsStage(),
-        s.EdgesStage(),
-        s.TermsStage(),
+        s.BuildStage(),
+        s.LoadRowsStage(),
+        s.ClosureStage(),
         s.AccelerateStage(),
         s.VerifyStage(),
         s.FinalizeStage(),
@@ -90,12 +77,12 @@ def default_stages() -> tuple[LoadStage, ...]:
 def run_load(
     session: Session,
     source_dir: str | Path,
-    fiscal_year: int,
+    release: int | None = None,
     force: bool = False,
     stages: tuple[LoadStage, ...] | None = None,
 ) -> list[tuple[str, str]]:
     """Run the pipeline; returns (stage name, summary) pairs in order."""
-    ctx = LoadContext(session=session, source_dir=Path(source_dir), fiscal_year=fiscal_year, force=force)
+    ctx = LoadContext(session=session, source_dir=Path(source_dir), release=release, force=force)
     report = []
     for stage in stages if stages is not None else default_stages():
         report.append((stage.name, stage.run(ctx)))

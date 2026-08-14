@@ -18,6 +18,12 @@ def main() -> None:
     if model:
         print(f"HDH_AGENT_MODEL override: {model}")
 
+    umls = os.environ.get("UMLS_API_KEY") or os.environ.get("HDH_UMLS_API_KEY")
+    if umls:
+        print(f"UMLS_API_KEY is set (ends with ...{umls[-4:]}) — `hdh snomed load --download` available")
+    else:
+        print("UMLS_API_KEY not set — SNOMED download disabled (sign up at https://uts.nlm.nih.gov)")
+
     db_url = os.environ.get("HDH_DB_URL")
     if not db_url:
         print("HDH_DB_URL not set — using the SQLite file (transitional default).")

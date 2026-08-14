@@ -1,6 +1,6 @@
-# SNOMED CT Module — Design (Draft)
+# SNOMED CT Module — Design
 
-**Module:** `hdh.modules.snomed` · **Status:** draft for review ·
+**Module:** `hdh.modules.snomed` · **Status:** IMPLEMENTED (milestones A–D, 2026-08-13/14) ·
 **Date:** 2026-08-11 · **Parent design:** [notes-comprehension-service.md](notes-comprehension-service.md) §10
 
 ### Contributors
@@ -65,7 +65,7 @@ SNOMED CT is licensed.** Everything downstream respects that line.
 |---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Source | SNOMED CT US Edition, RF2 format, via NLM's UMLS Terminology Services (UTS)                                                                                                                                                                                                 |
 | License | Free **UMLS Metathesaurus License** — individual signs up at uts.nlm.nih.gov (the US is a SNOMED International member, so US affiliate use is no-cost); approval is days, with an annual usage-report attestation to keep it active.Hdh will never ship with SNOMED CT data |
-| Credential | a personal **UTS API key** (from the UTS profile page) enables scripted download — `HDH_UMLS_API_KEY` in `.env` (gitignored; `.env.example` documents it, `just check-env` verifies it)                                                                                     |
+| Credential | a personal **UTS API key** (from the UTS profile page) enables scripted download — `UMLS_API_KEY` in `.env` (gitignored; `.env.example` documents it, `just check-env` verifies it). *Implementation note (milestone C): the vendor-key convention `UMLS_API_KEY` was adopted, matching `ANTHROPIC_API_KEY`; `HDH_UMLS_API_KEY` is accepted as a fallback.* |
 | Cadence | US Edition publishes **twice yearly (March 1 / September 1)**                                                                                                                                                                                                               |
 | Redistribution | **prohibited** — hdh ships the loader and a synthetic fixture (§9), never RF2 content; the release zip is cached per-user in `~/.hdh/snomed/<release>/`, exactly like the ICD cache but sourced from the user's own credential                                              |
 | Non-US users | member-country affiliates license via their national release center; the loader takes `--source <dir>` so any legitimately obtained RF2 loads                                                                                                                               |
@@ -208,12 +208,19 @@ descendant sweep).
 
 ## 10. Milestones
 
-| | Delivers | Proves |
-|---|---|---|
-| **A** | OntologyService protocol + full §8 retrofit; `OntologyTerm` + `OntologyClosure` entities; enum migrations (kind `concept`, edge `attribute`) via Alembic | encapsulation closed before DAG rows exist; registry v2 handles the new entities |
-| **B** | RF2 parser + full pipeline on the synthetic fixture; `hdh snomed` CLI | DAG load, closure, preferred terms — offline, license-clean |
-| **C** | UTS download; full US Edition load + closure + bench on `just deps` | scale reality (360k/1.6M/10M) and honest numbers |
-| **D** | `normalize()` funnel over terms + agent tools + `subsumes` | the comprehension service's primary dependency is ready |
+| | Delivers | Proves | Status |
+|---|---|---|---|
+| **A** | OntologyService protocol + full §8 retrofit; `OntologyTerm` + `OntologyClosure` entities; enum migrations (kind `concept`, edge `attribute`) via Alembic | encapsulation closed before DAG rows exist; registry v2 handles the new entities | ✅ done |
+| **B** | RF2 parser + full pipeline on the synthetic fixture; `hdh snomed` CLI | DAG load, closure, preferred terms — offline, license-clean | ✅ done |
+| **C** | UTS download; full US Edition load + closure + bench on `just deps` | scale reality (386k concepts / 1.03M terms / 7.77M closure rows loaded and benched) | ✅ done |
+| **D** | `normalize()` funnel over terms + agent tools + `subsumes`; ICD term retro-load (Q2) | the comprehension service's primary dependency is ready; agent answers cohort questions by graph semantics | ✅ done |
+
+*Implementation notes:* `OntologyTerm` ownership landed in the icd10cm
+module (which already owns the shared ontology tables) so the ICD term
+retro-load never inverts the dependency direction; `OntologyClosure`
+stays snomed-private as designed. Bulk loads use PostgreSQL COPY
+(psycopg3). The agent's tools ship as `build_snomed_tools` — a published
+API mirroring `build_icd_tools`, catalog-gated.
 
 After review, the master doc's §10 placeholder collapses to a pointer at
 this document, and comprehension drill-down resumes at "what is a mention"
@@ -237,3 +244,19 @@ with its hardest dependency secured.
 5. **Preferred-term language**: US English refset only in v1 — is that
    acceptable for the synthetic corpus, or does the fixture need to prove
    multi-language selection works?. V1 US English
+
+## 12. Deferred: vector search (SapBERT + pgvector) — trigger recorded
+
+Bench-gated per the master doc §6 and RFC Q10. The trigger: once the
+comprehension service produces real mentions, measure the lexical
+funnel's recall@k against them; the miss list (surface-form gaps like
+"heart attack" → *Myocardial infarction* with no bridging synonym row)
+is the benchmark that justifies embeddings — not before.
+
+Shape when it lands: SapBERT (BERT-base, trained on UMLS synonym pairs —
+exactly this mention→concept task) embedding per term row, pgvector HNSW
+index owned by the accelerate stage, hybrid-ranked as one more funnel
+stage behind the same `normalize()` contract. CPU feasibility (measured
+expectations, 2026-08-13): query-time encode ~10–50 ms (ONNX int8);
+one-time bulk embed of 1.6M terms ~2–5 h per biannual release (cached);
+HNSW serving RAM ~5 GB float32 / ~2.5 GB float16. No GPU required.
