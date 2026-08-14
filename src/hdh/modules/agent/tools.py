@@ -51,9 +51,21 @@ def clip_tool_results(tool_response: Mapping | None, cap: int) -> Mapping | None
     return tool_response
 
 
-def _sql_tool_description(tables: tuple[str, ...] | None) -> str:
-    """The query_database tool description, with an intent-scoped schema."""
-    return f"""Run a read-only SQL SELECT against the synthetic SQLite database.
+def _sql_tool_description(tables: tuple[str, ...] | None, dialect: str = "sqlite") -> str:
+    """The query_database tool description, with an intent-scoped schema.
+
+    Dialect-aware date guidance: telling the model julianday()/strftime()
+    "work" while it queries PostgreSQL produces a guaranteed first-query
+    failure (and, before the tool_guard, an aborted transaction)."""
+    if dialect == "postgresql":
+        date_note = (
+            "Dates are native DATE columns — use date arithmetic, "
+            "AGE(), EXTRACT(), and casts like '2026-01-01'::date "
+            "(julianday()/strftime() do NOT exist here)."
+        )
+    else:
+        date_note = "Dates are ISO 'YYYY-MM-DD' text (julianday()/strftime() work)."
+    return f"""Run a read-only SQL SELECT against the synthetic {dialect} database.
 
         Schema (one line per table):
 {_schema_summary(tables)}
@@ -69,12 +81,42 @@ def _sql_tool_description(tables: tuple[str, ...] | None) -> str:
         conditions.status in ('ACTIVE','RESOLVED','REMISSION'), patients.sex
         in ('MALE','FEMALE'). conditions.controlled is 0/1.
         ontology_concepts.path is ICD-10-CM only; use the icd tools for
-        hierarchy questions. Dates are ISO 'YYYY-MM-DD' text
-        (julianday()/strftime() work). Results are capped at 200 rows.
+        hierarchy questions. {date_note} Results are capped at 200 rows.
 
         Args:
             sql: A single SELECT statement (no writes, no multiple statements).
         """
+
+
+def _search_patient_rows(session, name: str, min_age: int, max_age: int, icd10_prefix: str, limit: int):
+    """The search_patients query, kept out of the tool-builder closure."""
+    from datetime import timedelta
+
+    today = date.today()
+    q = session.query(Patient)
+    if name:
+        like = f"%{name}%"
+        q = q.filter(Patient.first_name.ilike(like) | Patient.last_name.ilike(like))
+    q = q.filter(
+        Patient.date_of_birth <= today - timedelta(days=min_age * 365),
+        Patient.date_of_birth >= today - timedelta(days=(max_age + 1) * 365),
+    )
+    if icd10_prefix:
+        q = (
+            q.join(Condition)
+            .filter(Condition.chronic.is_(True), Condition.icd10_code.like(f"{icd10_prefix}%"))
+            .distinct()
+        )
+    return [
+        {
+            "mrn": p.mrn,
+            "name": f"{p.first_name} {p.last_name}",
+            "age": p.age,
+            "sex": str(p.sex).split(".")[-1],
+            "chronic_conditions": [f"[{c.icd10_code}] {c.description}" for c in p.conditions if c.chronic],
+        }
+        for p in q.limit(limit).all()
+    ]
 
 
 def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str] | None = None):
@@ -86,7 +128,12 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
     """
     from anthropic import beta_tool
 
+    from hdh.core.models import tool_guard
+
+    guard = tool_guard(session)
+
     @beta_tool
+    @guard
     def get_patient_chart(mrn: str) -> str:
         """Retrieve a patient's full clinical chart as plain text.
 
@@ -101,6 +148,7 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         return patient_to_text(p)
 
     @beta_tool
+    @guard
     def search_patients(
         name: str = "", min_age: int = 0, max_age: int = 120, icd10_prefix: str = "", limit: int = 20
     ) -> str:
@@ -113,39 +161,11 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
             icd10_prefix: ICD-10 code prefix of a chronic condition, e.g. "E11" (optional).
             limit: Maximum number of patients to return.
         """
-        from datetime import timedelta
-
-        today = date.today()
-        q = session.query(Patient)
-        if name:
-            like = f"%{name}%"
-            q = q.filter(Patient.first_name.ilike(like) | Patient.last_name.ilike(like))
-        q = q.filter(
-            Patient.date_of_birth <= today - timedelta(days=min_age * 365),
-            Patient.date_of_birth >= today - timedelta(days=(max_age + 1) * 365),
-        )
-        if icd10_prefix:
-            q = (
-                q.join(Condition)
-                .filter(Condition.chronic.is_(True), Condition.icd10_code.like(f"{icd10_prefix}%"))
-                .distinct()
-            )
-        rows = []
-        for p in q.limit(limit).all():
-            rows.append(
-                {
-                    "mrn": p.mrn,
-                    "name": f"{p.first_name} {p.last_name}",
-                    "age": p.age,
-                    "sex": str(p.sex).split(".")[-1],
-                    "chronic_conditions": [
-                        f"[{c.icd10_code}] {c.description}" for c in p.conditions if c.chronic
-                    ],
-                }
-            )
+        rows = _search_patient_rows(session, name, min_age, max_age, icd10_prefix, limit)
         return json.dumps(rows, indent=2) if rows else "No matching patients."
 
     @beta_tool
+    @guard
     def get_care_gaps(mrn: str = "", limit: int = 25) -> str:
         """List care gaps: overdue preventive visits, uncontrolled chronic conditions without follow-up, missed follow-ups, and senior polypharmacy.
 
@@ -159,6 +179,7 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         return json.dumps([g.to_dict() for g in gaps], indent=2) if gaps else "No care gaps found."
 
     @beta_tool
+    @guard
     def get_risk_scores(mrn: str = "", top: int = 20) -> str:
         """Get ML risk-stratification scores (probability of urgent visit or critical lab within 180 days), highest risk first.
 
@@ -187,13 +208,16 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
             cols = list(result.keys())
             rows = [dict(zip(cols, r, strict=False)) for r in result.fetchmany(200)]
         except Exception as e:
+            session.rollback()  # a failed SELECT must not poison the shared transaction (PG)
             return f"SQL error: {e}"
         return json.dumps(rows, indent=2, default=str) if rows else "Query returned no rows."
 
-    query_database.__doc__ = _sql_tool_description(tables)
-    query_database = beta_tool(query_database)
+    dialect = session.get_bind().dialect.name if session is not None else "sqlite"
+    query_database.__doc__ = _sql_tool_description(tables, dialect)
+    query_database = beta_tool(guard(query_database))
 
     @beta_tool
+    @guard
     def dataset_stats() -> str:
         """Get overall dataset statistics: patient, visit, diagnosis, prescription, and lab counts."""
         from hdh.core.models import Condition as Dx
@@ -216,14 +240,24 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         query_database,
         dataset_stats,
     ]
-    # ICD-10-CM coding tools via the icd10cm module's published API —
-    # optional: the agent runs fine without the module or its catalog
-    try:
-        from hdh.modules.icd10cm.agent_tools import build_icd_tools
-
-        all_tools.extend(build_icd_tools(session))
-    except Exception:  # noqa: BLE001 — absent module/catalog must never break the agent
-        pass
+    all_tools.extend(_ontology_tools(session))
     if include is None:
         return all_tools
     return [tool for tool in all_tools if tool.name in include]
+
+
+def _ontology_tools(session) -> list:
+    """Coding tools via each ontology module's published API — optional:
+    the agent runs fine without the modules or their catalogs."""
+    tools: list = []
+    for module_path, builder_name in (
+        ("hdh.modules.icd10cm.agent_tools", "build_icd_tools"),
+        ("hdh.modules.snomed.agent_tools", "build_snomed_tools"),
+    ):
+        try:
+            from importlib import import_module
+
+            tools.extend(getattr(import_module(module_path), builder_name)(session))
+        except Exception:  # noqa: BLE001 — absent module/catalog must never break the agent
+            continue
+    return tools

@@ -69,7 +69,39 @@ hdh narrative --mrn MRN12345678           # SOAP-note narratives
 hdh serve --port 8000                     # FHIR R4 REST API
 hdh icd load --download && hdh icd codify "broke her left ankle, first visit"
                                           # ICD-10-CM knowledge graph + coding
+hdh snomed load --download                # SNOMED CT US Edition (needs a free
+                                          # UMLS key — see .env.example; data is
+                                          # licensed and never ships with hdh)
+hdh snomed search "heart attack"          # synonym-aware concept search
+hdh snomed subsumes 64572001 73211009     # is diabetes a kind of disease? True
 ```
+
+### Ask the agent ontology-grounded questions
+
+With the ICD-10-CM and SNOMED CT catalogs loaded, the agent holds coding
+tools from both ontology modules alongside its chart/SQL tools — so
+population questions can be answered by **graph semantics instead of
+string-matching**, and every cited code is grounded in tool evidence:
+
+```bash
+hdh agent "Which patients have a disorder under cerebrovascular disease?"
+#   → snomed_descendants sweeps the SNOMED subtree (transitive closure),
+#     maps to ICD-10 prefixes, then search_patients finds the cohort
+
+hdh agent "Is atrial fibrillation a kind of heart disease?"
+#   → snomed_subsumes answers authoritatively — one closure hit, no guessing
+
+hdh agent "Normalize the mention 'stomach flu' and code it for billing"
+#   → snomed_normalize (synonym funnel: FTS → trigram → semantic-tag fit),
+#     then icd_codify for the billing view
+
+hdh agent "What are the defining attributes of a mechanical thrombectomy?"
+#   → snomed_lookup returns method / procedure-site attribute edges
+```
+
+The toolsets are discovered through each module's published API and are
+offered only when the catalog is actually loaded — the agent runs fine
+without them.
 
 ### The agent pipeline
 
@@ -122,7 +154,8 @@ src/hdh/
 │   ├── narrative/          # SOAP-note narrative generation
 │   ├── fhir_api/           # FHIR R4 REST API (FastAPI)
 │   ├── icd10cm/            # ICD-10-CM knowledge graph: loader, retrieval funnel, agent tools
-│   ├── ontology/           # SNOMED CT mapping (scaffold)
+│   ├── snomed/             # SNOMED CT US Edition: RF2 loader, closure DAG, normalize() funnel, agent tools
+│   ├── ontology/           # SNOMED tagging demo (schema-registry extension)
 │   └── billing/            # CPT / RVU / claims simulation (scaffold)
 └── cli.py           # `hdh` CLI — core commands + auto-discovered module subcommands
 ```
@@ -162,6 +195,7 @@ release copy is already SNOMED-tagged via `hdh ontology tag`.
   [core](docs/guides/core.md) · [care-gaps](docs/guides/caregaps.md) ·
   [risk](docs/guides/risk.md) · [agent](docs/guides/agent.md) ·
   [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
+  [snomed](docs/guides/snomed.md) ·
   [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md)
 
 ## Build pipeline

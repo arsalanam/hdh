@@ -19,6 +19,10 @@ def build_icd_tools(session) -> list:
     """The agent's ICD toolset bound to an open session (empty if no catalog)."""
     from anthropic import beta_tool
 
+    from hdh.core.models import tool_guard
+
+    guard = tool_guard(session)
+
     from hdh.core.models import Base
 
     concepts_t = Base.metadata.tables["ontology_concepts"]
@@ -27,6 +31,7 @@ def build_icd_tools(session) -> list:
     edges_t = Base.metadata.tables["ontology_edges"]
 
     @beta_tool
+    @guard
     def icd_codify(  # quality: allow(no-god-class) — flat params ARE the tool schema the model fills; one per clinical axis
         terms: str,
         laterality: str = "",
@@ -80,6 +85,7 @@ def build_icd_tools(session) -> list:
         )
 
     @beta_tool
+    @guard
     def icd_lookup(code: str) -> str:
         """Full context for one ICD-10-CM code: hierarchy, axes, laterality variants, coding-rule notes.
 
@@ -117,6 +123,7 @@ def build_icd_tools(session) -> list:
         return json.dumps(out, indent=1)
 
     @beta_tool
+    @guard
     def icd_search(term: str, limit: int = 10) -> str:
         """Search ICD-10-CM code descriptions (full-text; most specific first).
 
@@ -134,6 +141,7 @@ def build_icd_tools(session) -> list:
         )
 
     @beta_tool
+    @guard
     def icd_pattern(pattern_json: str) -> str:
         """Run a graph-pattern query over the ICD-10-CM knowledge graph. Pattern is JSON with: anchor {terms|code}, optional traverse [{edge: parent_of|contralateral|axis_variant|episode_variant|excludes1|excludes2|code_first|use_additional, depth: "*" for parent_of descendants}], optional axes {laterality|aspect|displacement|encounter|exposure: value}, optional constraints {billable: true}. Example: all left-sided billable codes under S52.0: {"anchor":{"code":"S52.0"},"traverse":[{"edge":"parent_of","depth":"*"}],"axes":{"laterality":"left"},"constraints":{"billable":true}}. On a validation error, fix the pattern per the message and retry.
 

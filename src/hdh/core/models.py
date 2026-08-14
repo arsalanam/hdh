@@ -459,3 +459,29 @@ def get_engine(db_path: str = "family_medicine.db", db_url: str | None = None):
 def get_session(engine):
     Session = sessionmaker(bind=engine)
     return Session()
+
+
+def tool_guard(session):
+    """Decorator for agent tools sharing one session: an exception rolls
+    the transaction back and becomes a readable message for the model.
+
+    PostgreSQL aborts the whole transaction after any failed statement
+    (``InFailedSqlTransaction``) — without the rollback, one bad query
+    poisons every later tool call in the chat. The returned message keeps
+    the agent's retry-with-feedback loop alive instead of surfacing a
+    traceback."""
+    import functools
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as err:  # noqa: BLE001 — any tool failure must reset the session
+                if session is not None:
+                    session.rollback()
+                return f"Tool failed ({type(err).__name__}): {err} — the transaction was reset; adjust the arguments and retry."
+
+        return wrapped
+
+    return decorator

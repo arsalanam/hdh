@@ -645,3 +645,49 @@ class FinalizeStage:
         )
         ctx.session.commit()
         return f"ledger written ({duration:.1f}s)"
+
+
+class TermsStage:
+    """Stage 6b: ICD rows for the shared term index (snomed design Q2).
+
+    Retro-loading long/short descriptions as ``ontology_terms`` rows
+    unifies the normalize() search surface across ontologies before the
+    comprehension service arrives. Idempotent: this ontology's term rows
+    are replaced wholesale on every load."""
+
+    name: ClassVar[str] = "terms"
+
+    def run(self, ctx: LoadContext) -> str:
+        """Replace this ontology's rows in the shared term index."""
+        from hdh.core.models import Base
+
+        terms_t = Base.metadata.tables["ontology_terms"]
+        ctx.session.execute(delete(terms_t).where(terms_t.c.concept_id.like(f"{ONTOLOGY}:%")))
+        rows = []
+        for concept in ctx.concepts.values():
+            rows.append(
+                {
+                    "concept_id": concept["id"],
+                    "term": concept["display"],
+                    "term_type": "preferred",
+                    "language": "en",
+                    "active": True,
+                    "properties": {},
+                }
+            )
+            short = concept.get("short_display")
+            if short and short != concept["display"]:
+                rows.append(
+                    {
+                        "concept_id": concept["id"],
+                        "term": short,
+                        "term_type": "synonym",
+                        "language": "en",
+                        "active": True,
+                        "properties": {"source": "short_display"},
+                    }
+                )
+        for i in range(0, len(rows), BATCH):
+            ctx.session.execute(insert(terms_t), rows[i : i + BATCH])
+        ctx.session.flush()
+        return f"{len(rows):,} term rows into the shared index"

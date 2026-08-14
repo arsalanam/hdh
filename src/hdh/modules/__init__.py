@@ -15,6 +15,7 @@ CLI_MODULES = {
     "hdh.modules.agent.pipeline.trace_cli": "agent",
     "hdh.modules.ontology.cli": None,
     "hdh.modules.icd10cm.cli": None,
+    "hdh.modules.snomed.cli": None,
     "hdh.modules.narrative.cli": None,
     "hdh.modules.fhir_api.cli": "api",
 }
@@ -23,9 +24,18 @@ CLI_MODULES = {
 # see hdh.core.fhir — design docs/design/fhir-emitters.md)
 FHIR_MODULES = ("hdh.modules.ontology.fhir",)
 
+# Vocabulary modules implementing the OntologyService protocol (each exposes
+# build_service(session); see hdh.core.ontology — consumers dispatch through
+# get_ontology_service and never query hierarchy storage directly).
+ONTOLOGY_MODULES = {
+    "icd10cm": "hdh.modules.icd10cm.ontology",
+    "snomed_ct": "hdh.modules.snomed.ontology",
+}
+
 # Modules that extend the data model via the schema registry (each ships a
 # manifest.json + schema/ directory; see hdh.core.schema_registry).
 SCHEMA_MODULES = (
     "hdh.modules.ontology",
     "hdh.modules.icd10cm",
+    "hdh.modules.snomed",
 )
