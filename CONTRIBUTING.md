@@ -70,3 +70,25 @@ in `pick_condition`.
 - Keep PRs focused; one feature or fix per PR.
 - Include tests for new behavior.
 - Run `pytest` before submitting.
+
+## Releasing
+
+Release assets ship whole databases (SQLite zip and/or `pg_dump`), so
+every asset build runs the licensing gate first:
+
+```bash
+just release-check family_medicine.db          # or a .zip, or a DB URL
+```
+
+The check **fails if the database contains any SNOMED CT content**
+(concepts, terms, edges, closure rows, or a ledger entry). The rule:
+
+- **ICD-10-CM in release assets: allowed** — CMS files are public domain.
+- **SNOMED CT in release assets: never** — it is licensed (UMLS
+  Metathesaurus License) and must not be redistributed in any form.
+
+If the gate fails, strip the licensed catalog from the release candidate
+with `hdh snomed purge --yes` (chart data and ICD are untouched; you can
+reload SNOMED later from your `~/.hdh/snomed/` cache), then re-run the
+check. Run the gate against the **source database before** `pg_dump` —
+compressed dumps cannot be scanned reliably.

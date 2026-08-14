@@ -47,6 +47,12 @@ def register_cli(subparsers) -> None:
     bench_p = sub.add_parser("bench", help="Measure lookup/search/closure latencies")
     bench_p.add_argument("--iterations", type=int, default=200)
 
+    purge_p = sub.add_parser(
+        "purge",
+        help="Remove ALL SNOMED CT content (licensed — required before building release assets)",
+    )
+    purge_p.add_argument("--yes", action="store_true", help="Confirm the deletion")
+
     p.set_defaults(func=run)
 
 
@@ -67,6 +73,8 @@ def run(session, args) -> None:
         _cmd_attributes(session, args.code)
     elif command == "bench":
         _cmd_bench(session, args.iterations)
+    elif command == "purge":
+        _cmd_purge(session, args.yes)
 
 
 def _cmd_load(session, args) -> None:
@@ -252,3 +260,41 @@ def _cmd_attributes(session, code: str) -> None:
     for name, targets in sorted(grouped.items()):
         for target in targets:
             print(f"  {name:<24} -> {target.code}  {target.display}")
+
+
+def _cmd_purge(session, confirmed: bool) -> None:
+    """Delete every SNOMED CT row — the inverse of load (issue #31).
+
+    SNOMED CT is licensed: a database destined for a release asset must
+    pass scripts/release_check.py, and this is the remediation when it
+    doesn't. Chart data and the ICD-10-CM catalog are untouched; the
+    ~/.hdh/snomed cache stays (it is per-user, never distributed)."""
+    from sqlalchemy import delete
+
+    from hdh.core.models import Base
+
+    if not confirmed:
+        raise SystemExit(
+            "hdh snomed purge deletes the ENTIRE loaded SNOMED CT catalog "
+            "(concepts, terms, edges, closure, ledger). Re-run with --yes to confirm; "
+            "reload later from the ~/.hdh/snomed cache with: hdh snomed load --download"
+        )
+    tables = Base.metadata.tables
+    prefix = "snomed_ct:%"
+    deleted: list[str] = []
+    for label, table, where in (
+        ("closure rows", tables["ontology_closure"], lambda t: t.c.ancestor_id.like(prefix)),
+        ("term rows", tables["ontology_terms"], lambda t: t.c.concept_id.like(prefix)),
+        (
+            "edges",
+            tables["ontology_edges"],
+            lambda t: t.c.source_id.like(prefix) | t.c.target_id.like(prefix),
+        ),
+        ("concepts", tables["ontology_concepts"], lambda t: t.c.ontology == "snomed_ct"),
+        ("ledger rows", tables["ontology_loads"], lambda t: t.c.ontology == "snomed_ct"),
+    ):
+        result = session.execute(delete(table).where(where(table)))
+        deleted.append(f"{result.rowcount:,} {label}")
+    session.commit()
+    print("purged SNOMED CT content: " + ", ".join(deleted))
+    print("verify before building any asset:  uv run python scripts/release_check.py <db>")

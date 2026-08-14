@@ -135,3 +135,10 @@ docker-serve:
 # Remove caches, coverage output, and build artifacts
 clean:
     {{run}} python scripts/dev_clean.py
+
+# ── Releasing ────────────────────────────────────────────────────────────────
+
+# Gate a release-asset candidate: FAILS if it contains licensed SNOMED CT
+# content (issue #31). Target: a .db file, a .zip holding one, or a DB URL.
+release-check target:
+    {{run}} python scripts/release_check.py "{{target}}"
