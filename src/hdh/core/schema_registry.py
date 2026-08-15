@@ -391,29 +391,12 @@ class SchemaRegistry:
         TABLE ADD COLUMN) — the lightweight stand-in for databases not yet
         under Alembic. Once a database carries an ``alembic_version`` table,
         Alembic owns its schema and this auto-ADD path steps aside
-        (issue #7; run `just db-upgrade` instead)."""
-        added: list[str] = []
-        inspector = inspect(engine)
-        if inspector.has_table("alembic_version"):
-            return added
-        from hdh.core.models import Base
-
-        for table in Base.metadata.tables.values():
-            if not inspector.has_table(table.name):
-                continue
-            existing = {c["name"] for c in inspector.get_columns(table.name)}
-            for column in table.columns:
-                if column.name in existing:
-                    continue
-                ddl = (
-                    f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column.type.compile(engine.dialect)}"
-                )
-                with engine.begin() as conn:
-                    conn.execute(text(ddl))
-                added.append(f"{table.name}.{column.name}")
-        if added:
-            log.info("schema: added missing columns: %s", ", ".join(added))
-        return added
+        (issue #7; run `just db-upgrade` instead — migration 0003 performs
+        this same reconciliation under Alembic's ownership, issue #30)."""
+        if inspect(engine).has_table("alembic_version"):
+            return []
+        with engine.begin() as conn:
+            return reconcile_missing_columns(conn)
 
     def describe(self) -> str:
         """Human-readable summary: module order, extensions, new entities."""
@@ -432,6 +415,38 @@ class SchemaRegistry:
             names = ", ".join(rels)
             lines.append(f"  {entity} relationships: {names}")
         return "\n".join(lines)
+
+
+def reconcile_missing_columns(connection) -> list[str]:
+    """ALTER TABLE ADD COLUMN for every registry-merged metadata column
+    absent from the connected database; returns ``table.column`` names.
+
+    Add-only and inspector-guarded, so it is idempotent and safe from any
+    drift state. Missing TABLES are not created here — ``get_engine``'s
+    ``create_all`` owns those. Shared by ``ensure_columns`` (pre-Alembic
+    databases) and migration 0003 (Alembic-stamped databases, issue #30).
+    Like the auto-ADD path it replaces, added columns carry type only —
+    constraint fidelity beyond that is autogenerate's job."""
+    from hdh.core.models import Base
+
+    inspector = inspect(connection)
+    added: list[str] = []
+    for table in Base.metadata.tables.values():
+        if not inspector.has_table(table.name):
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            compiled = column.type.compile(connection.dialect)
+            ddl = f"ALTER TABLE {table.name} ADD COLUMN {column.name} {compiled}"
+            # DDL takes no bound parameters; every identifier here comes from
+            # our own registry-merged metadata, never from user input.
+            connection.execute(text(ddl))  # quality: allow(injection-safety)
+            added.append(f"{table.name}.{column.name}")
+    if added:
+        log.info("schema: added missing columns: %s", ", ".join(added))
+    return added
 
 
 # ── Process-wide bootstrap (the app.py sequence from the design) ─────────────
