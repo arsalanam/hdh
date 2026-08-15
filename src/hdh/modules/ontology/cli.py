@@ -15,10 +15,11 @@ def register_cli(subparsers):
 
 
 def run(session, args):
-    """Backfill SNOMED codes onto conditions using the registry-added columns."""
+    """Backfill SNOMED codes onto conditions from the derived mapping table
+    (profile-authored > curated map > catalog-normalize; issue #29)."""
     from hdh.core.models import Condition
 
-    from . import ICD10_TO_SNOMED
+    from .derive import derive_mappings, record_maps_to_edges, tag_conditions
 
     if not hasattr(Condition, "snomed_code"):
         raise SystemExit(
@@ -26,13 +27,14 @@ def run(session, args):
             "was not bootstrapped (this should not happen via the hdh CLI)."
         )
 
-    tagged = 0
-    for icd10, (snomed_id, display) in ICD10_TO_SNOMED.items():
-        tagged += (
-            session.query(Condition)
-            .filter(Condition.icd10_code == icd10, Condition.snomed_code.is_(None))
-            .update({"snomed_code": snomed_id, "snomed_display": display})
-        )
-    session.commit()
+    mappings = derive_mappings(session)
+    counts = tag_conditions(session, mappings)
+    edges = record_maps_to_edges(session, mappings)
+    tagged = sum(counts.values())
     untagged = session.query(Condition).filter(Condition.snomed_code.is_(None)).count()
-    print(f"🏷  SNOMED-tagged {tagged:,} conditions ({untagged:,} remain unmapped — extend ICD10_TO_SNOMED)")
+    print(
+        f"🏷  SNOMED-tagged {tagged:,} conditions "
+        f"({counts['profile']:,} profile-authored, {counts['curated']:,} curated, "
+        f"{counts['derived']:,} derived from the loaded catalogs) · "
+        f"{edges:,} maps_to edges recorded · {untagged:,} remain unmapped"
+    )
