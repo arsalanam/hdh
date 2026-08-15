@@ -1,0 +1,13 @@
+Patient seen in clinic for evaluation of elevated blood pressure readings
+taken at home over the past month. She reports occasional headaches in the
+mornings but denies chest pain, visual changes, or shortness of breath.
+
+On examination, blood pressure is 152/94 mmHg, confirmed on repeat
+measurement. Heart rate is 88 and regular. Weight 82.5kg, BMI 30.1.
+
+Based on today's readings and the home log, she meets criteria for
+essential hypertension. We discussed lifestyle modification including
+sodium reduction and regular exercise. Start Lisinopril 10mg once daily
+for hypertension. She will monitor blood pressure at home and return in
+30 days for follow-up; basic metabolic panel to be drawn before that
+visit to establish baseline renal function.
