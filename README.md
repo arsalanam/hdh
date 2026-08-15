@@ -144,7 +144,9 @@ The compaction logic itself is exercised offline in
 src/hdh/
 ├── core/            # Stable synthetic-data engine (no module may be imported here)
 │   ├── models.py           # SQLAlchemy ORM: Patient, Visit, Vital, Diagnosis, Rx, Lab
-│   ├── disease_engine.py   # 30+ ConditionProfiles: ICD-10, vitals deltas, labs, formularies
+│   ├── conditions.py       # Condition contracts + catalog: frozen profiles, packs, comorbidity webs
+│   ├── disease_engine.py   # family-medicine-core pack (32 conditions)
+│   ├── cardiometabolic.py  # cardiometabolic pack (7): CKD staged, CAD, HF, AFib, stroke hx
 │   ├── generators.py       # Patient & visit-history generators (Faker-based)
 │   └── exporters.py        # JSON, FHIR R4 Bundle, plain-text chart exporters
 ├── modules/         # Optional feature modules (each depends only on core)
@@ -199,7 +201,9 @@ It is **not** checked into git. Either build one (`hdh generate`) or download
 the pre-built 10,000-patient database from the
 [latest release](https://github.com/arsalanam/hdh/releases/latest)
 (`family_medicine-10k.zip`, ~28 MB — unzip into the project folder). The
-release copy is already SNOMED-tagged via `hdh ontology tag`.
+release copy is already SNOMED-tagged via `hdh ontology tag`. (Tagged
+concept IDs are fine to ship; the licensed SNOMED CT *catalog* never is —
+release builds are gated by `just release-check`, see CONTRIBUTING.)
 
 ## Documentation
 
