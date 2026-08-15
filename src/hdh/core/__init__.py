@@ -4,7 +4,15 @@ This package is intentionally self-contained: it must never import from
 ``hdh.modules``. Feature modules depend on the core, not the other way around.
 """
 
-from .disease_engine import CONDITIONS, ConditionProfile, comorbidity_seeds, pick_condition
+from .conditions import (
+    ConditionCatalog,
+    ConditionProfile,
+    ConditionSource,
+    SamplingContext,
+    build_catalog,
+    default_catalog,
+)
+from .disease_engine import FamilyMedicineCorePack
 from .exporters import (
     export_fhir,
     export_json,
@@ -30,10 +38,13 @@ from .models import (
 )
 
 __all__ = [
-    "CONDITIONS",
+    "ConditionCatalog",
     "ConditionProfile",
-    "comorbidity_seeds",
-    "pick_condition",
+    "ConditionSource",
+    "SamplingContext",
+    "build_catalog",
+    "default_catalog",
+    "FamilyMedicineCorePack",
     "export_fhir",
     "export_json",
     "export_text",

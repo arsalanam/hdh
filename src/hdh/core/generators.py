@@ -11,18 +11,14 @@ are populated with medically coherent data.
 
 import random
 import string
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 from faker import Faker
 from sqlalchemy import insert as sa_insert
 
-from .disease_engine import (
-    CONDITIONS,
-    LabSpec,
-    comorbidity_seeds,
-    pick_condition,
-)
+from .conditions import ConditionCatalog, LabSpec, SamplingContext, Stage, default_catalog
 from .models import (
     Allergy,
     AllergySeverity,
@@ -47,6 +43,21 @@ from .models import (
 )
 
 fake = Faker("en_US")
+
+
+@dataclass(frozen=True)
+class RunScope:
+    """Per-run generation dependencies, injected once by build_dataset:
+    the condition catalog, the practice providers, the history depth,
+    and the run RNG (deterministic seeding lands with milestone B)."""
+
+    catalog: ConditionCatalog
+    providers: tuple
+    years: int
+    rng: random.Random
+    periods_per_year: int = 1  # staging cadence: 1=yearly, 4=quarterly
+
+
 Faker.seed(42)
 random.seed(42)
 
@@ -110,21 +121,6 @@ ETHNICITIES = ("Non-Hispanic or Latino", "Hispanic or Latino")
 
 MARITAL = ("single", "married", "divorced", "widowed")
 LANGUAGES = ("English", "English", "English", "Spanish", "Mandarin", "Vietnamese")
-
-CHRONIC_NAMES = frozenset(
-    {
-        "hypertension",
-        "type2_diabetes",
-        "hyperlipidemia",
-        "copd",
-        "osteoarthritis",
-        "hypothyroidism",
-        "obesity",
-    }
-)
-
-# condition-name → hereditary-risk key consumed by comorbidity_seeds
-HEREDITARY_KEYS = {"type2_diabetes": "diabetes", "hypertension": "hypertension"}
 
 # relative summaries for lightweight FamilyMember rows: (conditions…, hereditary keys…)
 RELATIVE_CONDITIONS = (
@@ -207,7 +203,7 @@ def seed_providers(session) -> list[Provider]:
     return providers
 
 
-def _primary_provider(providers: list[Provider], age: int) -> Provider:
+def _primary_provider(providers: Sequence[Provider], age: int) -> Provider:
     """Continuity of care: children see the pediatrician when there is one."""
     if age < 13:
         peds = [p for p in providers if p.specialty and p.specialty.code == "PED"]
@@ -368,19 +364,25 @@ def link_household(session, members: list[Patient]) -> None:
         person.emergency_contact_id = contact_member_id
 
 
-def hereditary_from_patients(parents: list[Patient], parent_conditions: dict[int, set]) -> dict[str, bool]:
+def hereditary_from_patients(
+    parents: list[Patient], parent_conditions: dict[int, set], catalog: ConditionCatalog
+) -> dict[str, bool]:
     """Derive a child's hereditary-risk flags from parents' ACTUAL conditions."""
     flags: dict[str, bool] = {}
     for parent in parents:
         for cname in parent_conditions.get(parent.id, set()):
-            key = HEREDITARY_KEYS.get(cname)
-            if key:
-                flags[key] = True
+            onset = catalog.get(cname).onset
+            if onset is not None and onset.hereditary_key:
+                flags[onset.hereditary_key] = True
     return flags
 
 
 def record_parent_history(
-    session, child: Patient, parents: list[Patient], parent_conditions: dict[int, set]
+    session,
+    child: Patient,
+    parents: list[Patient],
+    parent_conditions: dict[int, set],
+    catalog: ConditionCatalog,
 ) -> list[str]:
     """FamilyHistory rows on the child for each parent's chronic conditions;
     returns display lines for note rendering."""
@@ -388,7 +390,7 @@ def record_parent_history(
     for parent in parents:
         rel = "mother" if str(parent.sex).endswith("F") else "father"
         for cname in parent_conditions.get(parent.id, set()):
-            profile = CONDITIONS.get(cname)
+            profile = catalog.get(cname)
             if profile:
                 session.add(
                     FamilyHistory(
@@ -505,15 +507,58 @@ def _bmi(patient: Patient) -> float:
     return patient.bmi_baseline
 
 
-def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: int = 4) -> tuple[list, set]:
-    """
-    Generate a realistic multi-year visit history for a patient.
-    Returns (list of (Visit, profile, condition-name) tuples, final chronic set).
-    """
+@dataclass(frozen=True)
+class HistoryResult:
+    """One patient's generated history: the visit triples, the final
+    chronic set, when each rolled-onset condition actually began, and
+    each staged condition's final severity stage."""
+
+    visits: tuple
+    established: frozenset[str]
+    onset_dates: dict[str, date]
+    final_stages: dict[str, Stage]
+
+
+def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, scope: RunScope) -> HistoryResult:
+    """Generate a realistic multi-year visit history for a patient.
+
+    Two-phase chronic onset (design clinical-breadth.md §5): baseline
+    seeding at chart start, then ANNUAL onset rolls interleaved with the
+    visit timeline — the comorbidity webs multiply the rates, so CKD
+    arrives after (and because of) the hypertension years. Staged
+    conditions evolve on the run's cadence; the roll date becomes the
+    condition's clinical onset date."""
+    years = scope.years
     age_at_start = max(0, patient.age - years)
-    established = comorbidity_seeds(patient.age, fam_hx, smoker, _bmi(patient))
+    family_keys = frozenset(key for key, present in fam_hx.items() if present)
+
+    def ctx(age: int, month: int, established: frozenset) -> SamplingContext:
+        return SamplingContext(
+            age=age,
+            sex=patient.sex,
+            month=month,
+            established=established,
+            family_history=family_keys,
+            smoker=smoker,
+            bmi=_bmi(patient),
+            rng=scope.rng,
+        )
+
+    established = {profile.name for profile in scope.catalog.seed_chronic(ctx(patient.age, 1, frozenset()))}
+    stage_index: dict[str, int] = {
+        name: staging.start_index
+        for name in established
+        if (staging := scope.catalog.get(name).staging) is not None
+    }
 
     start_date = date.today() - timedelta(days=years * 365)
+    # Baseline-seeded conditions predate the chart window: the patient
+    # ARRIVED with them, so their clinical onset lands before it (first
+    # visit merely records them) — this is what keeps rolled onsets like
+    # CKD chronologically AFTER their drivers.
+    onset_dates: dict[str, date] = {
+        name: start_date - timedelta(days=scope.rng.randint(180, 365 * 6)) for name in established
+    }
     all_visits = []
 
     visits_per_yr = _visits_per_year(patient.age, established)
@@ -526,14 +571,35 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: 
         )
     )
 
+    period_days = 365 // scope.periods_per_year
+    total_periods = years * scope.periods_per_year
+    next_period = 1
+
+    def roll_period(period: int) -> None:
+        """One cadence boundary: staging steps; yearly boundaries also
+        roll new chronic onsets through the comorbidity webs."""
+        boundary = start_date + timedelta(days=period * period_days)
+        boundary_age = age_at_start + (boundary - start_date).days // 365
+        if period % scope.periods_per_year == 0:
+            for profile in scope.catalog.annual_onsets(
+                ctx(boundary_age, boundary.month, frozenset(established))
+            ):
+                established.add(profile.name)
+                onset_dates[profile.name] = boundary
+                if profile.staging is not None:
+                    stage_index[profile.name] = profile.staging.start_index
+        for name in list(stage_index):
+            staging = scope.catalog.get(name).staging
+            if staging is not None:
+                stage_index[name] = staging.step(stage_index[name], scope.rng, scope.periods_per_year)
+
     for vdate in visit_dates:
-        visit_age = age_at_start + (vdate - start_date).days // 365
-
-        eligible_established = established.copy()
-        cprofile, cname = pick_condition(visit_age, vdate.month, eligible_established)
-        if patient.sex == "M" and cname in ("uti", "contraception_consult"):
-            cprofile, cname = pick_condition(visit_age, vdate.month, eligible_established)
-
+        day = (vdate - start_date).days
+        while next_period <= total_periods and day >= next_period * period_days:
+            roll_period(next_period)
+            next_period += 1
+        visit_age = age_at_start + day // 365
+        cprofile = scope.catalog.sample_visit_condition(ctx(visit_age, vdate.month, frozenset(established)))
         visit = Visit(
             patient_id=patient.id,
             visit_date=vdate,
@@ -541,21 +607,42 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, years: 
             chief_complaint=cprofile.chief_complaint,
             follow_up_days=cprofile.follow_up_days,
         )
-        all_visits.append((visit, cprofile, cname))
+        all_visits.append((visit, cprofile, cprofile.name))
 
-        if cname in CHRONIC_NAMES:
-            established.add(cname)
+        if cprofile.chronic:
+            established.add(cprofile.name)
+            if cprofile.staging is not None and cprofile.name not in stage_index:
+                stage_index[cprofile.name] = cprofile.staging.start_index
 
-    return all_visits, established
+    while next_period <= total_periods:  # stages keep evolving after the last visit
+        roll_period(next_period)
+        next_period += 1
+
+    final_stages = {
+        name: staging.stages[index]
+        for name, index in stage_index.items()
+        if (staging := scope.catalog.get(name).staging) is not None
+    }
+    return HistoryResult(
+        visits=tuple(all_visits),
+        established=frozenset(established),
+        onset_dates=onset_dates,
+        final_stages=final_stages,
+    )
 
 
 def _emit_conditions(
-    session, patient: Patient, visit: Visit, cprofile, cname: str, chronic_seen: dict
+    session, patient: Patient, visit: Visit, cprofile, chronic_seen: dict, history=None
 ) -> None:
     """Unified problem list: acute visits get resolved encounter conditions;
-    chronic conditions get ONE active row at first diagnosis."""
-    if cname in CHRONIC_NAMES:
-        if cname not in chronic_seen:
+    chronic conditions get ONE active row at first diagnosis. A rolled
+    onset (annual comorbidity web) supplies the CLINICAL onset date —
+    the disease began before the visit that records it."""
+    if cprofile.chronic:
+        if cprofile.name not in chronic_seen:
+            onset = (
+                history.onset_dates.get(cprofile.name) if history is not None else None
+            ) or visit.visit_date
             cond = Condition(
                 patient_id=patient.id,
                 visit_id=visit.id,
@@ -564,11 +651,11 @@ def _emit_conditions(
                 chronic=True,
                 status=ConditionStatus.ACTIVE,
                 controlled=random.random() > 0.25,
-                onset_date=visit.visit_date,
+                onset_date=onset,
             )
             session.add(cond)
             session.flush()
-            chronic_seen[cname] = cond
+            chronic_seen[cprofile.name] = cond
     else:
         duration = random.randint(7, 30)
         session.add(
@@ -741,8 +828,7 @@ def _generate_one(
     session,
     patient: Patient,
     fam_hx: dict,
-    providers,
-    years: int,
+    scope: RunScope,
     facts: NoteFacts | None = None,
 ) -> tuple[int, set]:
     """Visits, conditions, notes, and per-patient chart entities.
@@ -754,8 +840,10 @@ def _generate_one(
 
     facts = facts or NoteFacts()
 
+    providers = scope.providers
     primary = _primary_provider(providers, patient.age)
-    visit_tuples, final_chronic = generate_visit_history(patient, fam_hx, bool(patient.smoker), years)
+    history = generate_visit_history(patient, fam_hx, bool(patient.smoker), scope)
+    visit_tuples, final_chronic = history.visits, set(history.established)
 
     for visit, _cprofile, _cname in visit_tuples:
         visit.patient_id = patient.id
@@ -777,7 +865,7 @@ def _generate_one(
         vital = generate_vital(visit.id, patient.age, patient.sex, _bmi(patient), cprofile)
         vital_rows.append(_row(vital, Vital))
 
-        _emit_conditions(session, patient, visit, cprofile, cname, chronic_seen)
+        _emit_conditions(session, patient, visit, cprofile, chronic_seen, history)
 
         visit_rx: list[dict] = []
         if cprofile.rx_options:
@@ -844,16 +932,43 @@ def _generate_one(
         if rows:
             session.execute(sa_insert(model), rows)
 
+    # staged conditions: the problem-list row reflects the FINAL severity
+    # stage the trajectory reached (design clinical-breadth.md §5 amendment)
+    for name, stage in history.final_stages.items():
+        row = chronic_seen.get(name)
+        if row is not None and row.icd10_code != stage.icd10_code:
+            row.icd10_code = stage.icd10_code
+            row.description = stage.description
+
     generate_medication_statements(session, patient, chronic_seen, rx_stream)
     generate_immunizations(session, patient, set(chronic_seen))
     return len(visit_tuples), final_chronic
 
 
-def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, verbose: bool = True):
-    """
-    Generate n_patients patients (as households) with full charts and commit.
-    """
+def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE the public generation API
+    session,
+    n_patients: int = 10_000,
+    years_of_history: int = 4,
+    verbose: bool = True,
+    *,
+    catalog: ConditionCatalog | None = None,
+    seed: int | None = None,
+    progression_cadence: str = "yearly",
+):
+    """Generate n_patients patients (as households) with full charts and commit.
+
+    ``catalog`` injects the condition set (tests pass small ones); None
+    means the default assembly of core packs. ``seed`` makes the whole
+    run reproducible (same seed, same dataset). ``progression_cadence``
+    ('yearly' | 'quarterly') sets how often staged chronic conditions
+    re-evaluate severity (design clinical-breadth.md §5 amendment)."""
     from sqlalchemy import text as sa_text
+
+    if progression_cadence not in ("yearly", "quarterly"):
+        raise ValueError(f"progression_cadence must be 'yearly' or 'quarterly', not {progression_cadence!r}")
+    if seed is not None:
+        random.seed(seed)
+        Faker.seed(seed)
 
     CHUNK = 500
     total_visits = 0
@@ -868,10 +983,20 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
         session.execute(sa_text("PRAGMA synchronous=OFF"))
 
     # Generating into an existing database is legal (appending a panel) —
-    # seed the MRN uniqueness set with what's already there
+    # the MRN uniqueness set is RESET to exactly what the database holds,
+    # so a prior in-process run can't leak MRNs into this one (which
+    # would silently break same-seed reproducibility)
+    _issued_mrns.clear()
     _issued_mrns.update(mrn for (mrn,) in session.query(Patient.mrn))
 
     providers = seed_providers(session)
+    scope = RunScope(
+        catalog=catalog or default_catalog(),
+        providers=tuple(providers),
+        years=years_of_history,
+        rng=random.Random(seed),
+        periods_per_year={"yearly": 1, "quarterly": 4}[progression_cadence],
+    )
 
     for size in _household_sizes(n_patients):
         surname = fake.last_name()
@@ -894,8 +1019,7 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
                 session,
                 patient,
                 fam_hx,
-                providers,
-                years_of_history,
+                scope,
                 NoteFacts(tuple(allergy_names), tuple(fam_lines)),
             )
             parent_conditions[patient.id] = chronic
@@ -907,16 +1031,15 @@ def build_dataset(session, n_patients: int = 10_000, years_of_history: int = 4, 
             session.add(patient)
             session.flush()
             allergy_names = generate_allergies(session, patient)
-            fam_hx = hereditary_from_patients(members, parent_conditions)
+            fam_hx = hereditary_from_patients(members, parent_conditions, scope.catalog)
             fam_lines = record_parent_history(
-                session, patient, [m for m in members if m.age >= 18], parent_conditions
+                session, patient, [m for m in members if m.age >= 18], parent_conditions, scope.catalog
             )
             n_visits, _chronic = _generate_one(
                 session,
                 patient,
                 fam_hx,
-                providers,
-                years_of_history,
+                scope,
                 NoteFacts(tuple(allergy_names), tuple(fam_lines)),
             )
             total_visits += n_visits

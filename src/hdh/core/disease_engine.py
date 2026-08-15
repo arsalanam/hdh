@@ -1,70 +1,53 @@
-"""
-Disease Probability Engine for Family Medicine synthetic dataset.
+"""The family-medicine-core condition pack (design clinical-breadth.md §4).
 
-Encodes realistic age/sex/season-weighted disease distributions,
-comorbidity clustering, vitals ranges, lab panels, and prescriptions
-for each condition — as seen in a typical family physician's OPD.
+Authored clinical content for a typical family physician's OPD: 32
+conditions with age/sex/season-weighted occurrence, vitals deltas, lab
+panels, formularies, and chronic-onset rules. Contracts and sampling
+live in :mod:`hdh.core.conditions`; this module only DEFINES content and
+exposes it as :class:`FamilyMedicineCorePack` — adding a condition means
+adding one ``_Draft`` entry plus its band weights, nothing else.
 """
 
-import random
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
-# ─── Data Structures ──────────────────────────────────────────────────────────
+from hdh.core.conditions import (
+    AgeBand,
+    ConditionProfile,
+    LabSpec,
+    OnsetProfile,
+    RiskFactor,
+    RiskKind,
+    RxSpec,
+)
+from hdh.core.models import Sex, VisitType
+
+# ─── Authoring shim ──────────────────────────────────────────────────────────
 
 
 @dataclass
-class LabSpec:
-    """Contract for one lab test: LOINC code, reference range, and how the condition shifts its value."""
-
-    test_name: str
-    loinc_code: str
-    unit: str
-    ref_low: float
-    ref_high: float
-    normal_mean: float
-    normal_sd: float
-    # Condition-specific shift (positive = elevated, negative = low)
-    condition_shift: float = 0.0
-    condition_shift_sd: float = 0.0
-
-
-@dataclass
-class RxSpec:
-    drug_name: str
-    drug_class: str
-    dose: str
-    frequency: str
-    duration_days: int | None  # None = chronic / ongoing
-    refills: int = 0
-
-
-@dataclass
-class ConditionProfile:
-    """Contract for one condition: how a visit for it looks — ICD-10, vitals deltas, labs, formulary, follow-up, seasonality."""
+class _Draft:
+    """Ergonomic authoring shape for one condition (old-style kwargs,
+    mutable lists/dicts); the pack converts drafts to frozen
+    ConditionProfiles at assembly. Private — never leaves this module."""
 
     icd10_code: str
     description: str
     chief_complaint: str
-    visit_type: str  # acute / follow_up / preventive / urgent
-
-    # Vitals modifiers (deltas from patient's baseline)
-    bp_sys_delta: tuple = (0, 5)  # (mean delta, sd)
+    visit_type: str
+    bp_sys_delta: tuple = (0, 5)
     bp_dia_delta: tuple = (0, 3)
     hr_delta: tuple = (0, 5)
     rr_delta: tuple = (0, 2)
     temp_delta: tuple = (0.0, 0.2)
     spo2_delta: tuple = (0, 1)
-    pain: tuple = (0, 1)  # pain scale 0-10
-
-    # Labs ordered for this condition (list of LabSpec)
+    pain: tuple = (0, 1)
     labs: list = field(default_factory=list)
-    # Prescriptions for this condition (pick 1 randomly from list, or all)
     rx_options: list = field(default_factory=list)
     rx_pick_all: bool = False
-    # Typical follow-up in days (None = PRN)
     follow_up_days: int | None = None
-    # Seasonal multiplier by month index 1-12 (1.0 = no change)
-    seasonal_weights: dict = field(default_factory=lambda: {m: 1.0 for m in range(1, 13)})
+    seasonal_weights: dict = field(default_factory=dict)
 
 
 # ─── Lab Panel Definitions ────────────────────────────────────────────────────
@@ -251,9 +234,9 @@ SUMMER_PEAK = {m: (1.5 if m in (6, 7, 8) else 0.7) for m in range(1, 13)}
 
 # ─── Condition Library ────────────────────────────────────────────────────────
 
-CONDITIONS: dict[str, ConditionProfile] = {
+_DEFINITIONS: dict[str, _Draft] = {
     # ── Pediatric (0-12) ──────────────────────────────────────────────────────
-    "otitis_media": ConditionProfile(
+    "otitis_media": _Draft(
         icd10_code="H66.90",
         description="Otitis media, unspecified",
         chief_complaint="Ear pain / pulling at ear",
@@ -266,7 +249,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=14,
         seasonal_weights=FLU_SEASON,
     ),
-    "well_child": ConditionProfile(
+    "well_child": _Draft(
         icd10_code="Z00.129",
         description="Well-child visit, routine",
         chief_complaint="Well-child check / routine vaccines",
@@ -277,7 +260,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=365,
         seasonal_weights=FLAT,
     ),
-    "rsv": ConditionProfile(
+    "rsv": _Draft(
         icd10_code="J21.0",
         description="RSV bronchiolitis",
         chief_complaint="Wheezing, runny nose, cough",
@@ -292,7 +275,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=3,
         seasonal_weights=RSV_SEASON,
     ),
-    "febrile_illness": ConditionProfile(
+    "febrile_illness": _Draft(
         icd10_code="R50.9",
         description="Fever, unspecified",
         chief_complaint="Fever",
@@ -305,7 +288,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=3,
         seasonal_weights=FLU_SEASON,
     ),
-    "strep_throat_ped": ConditionProfile(
+    "strep_throat_ped": _Draft(
         icd10_code="J02.0",
         description="Streptococcal pharyngitis",
         chief_complaint="Sore throat, fever",
@@ -317,7 +300,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=None,
         seasonal_weights=FLU_SEASON,
     ),
-    "conjunctivitis": ConditionProfile(
+    "conjunctivitis": _Draft(
         icd10_code="H10.9",
         description="Conjunctivitis, unspecified",
         chief_complaint="Red/pink eye, discharge",
@@ -331,7 +314,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=None,
         seasonal_weights=FLAT,
     ),
-    "rash_eczema": ConditionProfile(
+    "rash_eczema": _Draft(
         icd10_code="L20.9",
         description="Atopic dermatitis / eczema",
         chief_complaint="Skin rash / itching",
@@ -346,7 +329,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         seasonal_weights=FLAT,
     ),
     # ── Adolescent (13-17) ────────────────────────────────────────────────────
-    "acne": ConditionProfile(
+    "acne": _Draft(
         icd10_code="L70.0",
         description="Acne vulgaris",
         chief_complaint="Facial acne breakout",
@@ -357,7 +340,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=90,
         seasonal_weights=FLAT,
     ),
-    "sports_physical": ConditionProfile(
+    "sports_physical": _Draft(
         icd10_code="Z02.5",
         description="Pre-participation sports physical exam",
         chief_complaint="Sports physical / clearance",
@@ -368,7 +351,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=365,
         seasonal_weights={m: (2.0 if m in (7, 8) else 0.8) for m in range(1, 13)},
     ),
-    "sports_injury": ConditionProfile(
+    "sports_injury": _Draft(
         icd10_code="S93.401A",
         description="Sprain of ankle, unspecified",
         chief_complaint="Ankle / knee pain after sports",
@@ -379,7 +362,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=7,
         seasonal_weights=SUMMER_PEAK,
     ),
-    "mononucleosis": ConditionProfile(
+    "mononucleosis": _Draft(
         icd10_code="B27.00",
         description="Infectious mononucleosis",
         chief_complaint="Severe sore throat, fatigue, lymph nodes",
@@ -392,7 +375,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=14,
         seasonal_weights=FLAT,
     ),
-    "anxiety_teen": ConditionProfile(
+    "anxiety_teen": _Draft(
         icd10_code="F41.1",
         description="Generalized anxiety disorder",
         chief_complaint="Anxiety, stress, difficulty sleeping",
@@ -405,7 +388,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         seasonal_weights=FLAT,
     ),
     # ── Young Adult (18-35) ───────────────────────────────────────────────────
-    "annual_physical_adult": ConditionProfile(
+    "annual_physical_adult": _Draft(
         icd10_code="Z00.00",
         description="Encounter for general adult medical examination",
         chief_complaint="Annual physical exam",
@@ -416,7 +399,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=365,
         seasonal_weights=FLAT,
     ),
-    "influenza": ConditionProfile(
+    "influenza": _Draft(
         icd10_code="J11.1",
         description="Influenza with other respiratory manifestations",
         chief_complaint="Flu symptoms — fever, body aches, cough",
@@ -429,7 +412,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=None,
         seasonal_weights=FLU_SEASON,
     ),
-    "uri_adult": ConditionProfile(
+    "uri_adult": _Draft(
         icd10_code="J06.9",
         description="Acute upper respiratory infection, unspecified",
         chief_complaint="Cold symptoms, nasal congestion, sore throat",
@@ -441,7 +424,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=None,
         seasonal_weights=FLU_SEASON,
     ),
-    "uti": ConditionProfile(
+    "uti": _Draft(
         icd10_code="N39.0",
         description="Urinary tract infection",
         chief_complaint="Dysuria, frequency, urinary urgency",
@@ -453,7 +436,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=7,
         seasonal_weights=SUMMER_PEAK,
     ),
-    "minor_laceration": ConditionProfile(
+    "minor_laceration": _Draft(
         icd10_code="S01.81XA",
         description="Open wound, unspecified head",
         chief_complaint="Cut / laceration requiring sutures",
@@ -464,7 +447,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=7,
         seasonal_weights=SUMMER_PEAK,
     ),
-    "low_back_pain": ConditionProfile(
+    "low_back_pain": _Draft(
         icd10_code="M54.5",
         description="Low back pain",
         chief_complaint="Lower back pain",
@@ -475,7 +458,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=14,
         seasonal_weights=FLAT,
     ),
-    "anxiety_adult": ConditionProfile(
+    "anxiety_adult": _Draft(
         icd10_code="F41.1",
         description="Generalized anxiety disorder",
         chief_complaint="Anxiety, nervousness, insomnia",
@@ -487,7 +470,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=30,
         seasonal_weights=FLAT,
     ),
-    "contraception_consult": ConditionProfile(
+    "contraception_consult": _Draft(
         icd10_code="Z30.09",
         description="Encounter for other general contraceptive management",
         chief_complaint="Contraception counseling / prescription",
@@ -499,7 +482,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         seasonal_weights=FLAT,
     ),
     # ── Middle Adult (36-65) ──────────────────────────────────────────────────
-    "hypertension": ConditionProfile(
+    "hypertension": _Draft(
         icd10_code="I10",
         description="Essential hypertension",
         chief_complaint="Hypertension follow-up / BP check",
@@ -513,7 +496,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=90,
         seasonal_weights=FLAT,
     ),
-    "type2_diabetes": ConditionProfile(
+    "type2_diabetes": _Draft(
         icd10_code="E11.9",
         description="Type 2 diabetes mellitus without complications",
         chief_complaint="Diabetes follow-up / glucose management",
@@ -526,7 +509,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=90,
         seasonal_weights=FLAT,
     ),
-    "hyperlipidemia": ConditionProfile(
+    "hyperlipidemia": _Draft(
         icd10_code="E78.5",
         description="Hyperlipidemia, unspecified",
         chief_complaint="High cholesterol / lipid management",
@@ -537,7 +520,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=180,
         seasonal_weights=FLAT,
     ),
-    "gerd": ConditionProfile(
+    "gerd": _Draft(
         icd10_code="K21.9",
         description="Gastro-esophageal reflux disease without esophagitis",
         chief_complaint="Heartburn, acid reflux",
@@ -548,7 +531,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=30,
         seasonal_weights=FLAT,
     ),
-    "osteoarthritis": ConditionProfile(
+    "osteoarthritis": _Draft(
         icd10_code="M19.90",
         description="Unspecified osteoarthritis, unspecified site",
         chief_complaint="Joint pain / stiffness",
@@ -559,7 +542,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=90,
         seasonal_weights=FLAT,
     ),
-    "obesity": ConditionProfile(
+    "obesity": _Draft(
         icd10_code="E66.9",
         description="Obesity, unspecified",
         chief_complaint="Weight management counseling",
@@ -571,7 +554,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         seasonal_weights=FLAT,
     ),
     # ── Senior (65+) ──────────────────────────────────────────────────────────
-    "copd": ConditionProfile(
+    "copd": _Draft(
         icd10_code="J44.1",
         description="COPD with acute exacerbation",
         chief_complaint="Shortness of breath, worsening COPD",
@@ -584,7 +567,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=30,
         seasonal_weights=FLU_SEASON,
     ),
-    "fall_injury": ConditionProfile(
+    "fall_injury": _Draft(
         icd10_code="W19.XXXA",
         description="Unspecified fall, initial encounter",
         chief_complaint="Fall / injury at home",
@@ -595,7 +578,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=7,
         seasonal_weights={m: (1.5 if m in (12, 1, 2) else 0.9) for m in range(1, 13)},
     ),
-    "polypharmacy_review": ConditionProfile(
+    "polypharmacy_review": _Draft(
         icd10_code="Z87.891",
         description="Medication reconciliation / polypharmacy review",
         chief_complaint="Medication management review",
@@ -606,7 +589,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=90,
         seasonal_weights=FLAT,
     ),
-    "annual_physical_senior": ConditionProfile(
+    "annual_physical_senior": _Draft(
         icd10_code="Z00.00",
         description="Annual wellness visit (Medicare)",
         chief_complaint="Annual wellness visit",
@@ -617,7 +600,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=365,
         seasonal_weights=FLAT,
     ),
-    "depression_senior": ConditionProfile(
+    "depression_senior": _Draft(
         icd10_code="F33.0",
         description="Major depressive disorder, recurrent, mild",
         chief_complaint="Low mood, lack of energy, poor sleep",
@@ -628,7 +611,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
         follow_up_days=30,
         seasonal_weights={m: (1.5 if m in (11, 12, 1, 2) else 0.8) for m in range(1, 13)},
     ),
-    "hypothyroidism": ConditionProfile(
+    "hypothyroidism": _Draft(
         icd10_code="E03.9",
         description="Hypothyroidism, unspecified",
         chief_complaint="Thyroid management / fatigue, weight gain",
@@ -646,7 +629,7 @@ CONDITIONS: dict[str, ConditionProfile] = {
 # ─── Age-Stratified Condition Weights ─────────────────────────────────────────
 # Format: { age_group_key: [(condition_name, base_weight), ...] }
 
-AGE_WEIGHTS: dict[str, list[tuple[str, float]]] = {
+_BAND_WEIGHTS: dict[str, list[tuple[str, float]]] = {
     "infant": [  # 0–2
         ("well_child", 3.5),
         ("otitis_media", 3.0),
@@ -734,66 +717,91 @@ AGE_WEIGHTS: dict[str, list[tuple[str, float]]] = {
 }
 
 
-def age_group(age: int) -> str:
-    """Map an age in years to the condition-catalog age band."""
-    if age <= 2:
-        return "infant"
-    if age <= 12:
-        return "child"
-    if age <= 17:
-        return "teen"
-    if age <= 35:
-        return "young_adult"
-    if age <= 50:
-        return "adult"
-    if age <= 65:
-        return "middle_aged"
-    return "senior"
+# ─── Pack metadata (one place per concern; the profile absorbs them) ─────────
+
+_CHRONIC = frozenset(
+    {
+        "hypertension",
+        "type2_diabetes",
+        "hyperlipidemia",
+        "copd",
+        "osteoarthritis",
+        "hypothyroidism",
+        "obesity",
+    }
+)
+
+_SEX_LIMIT = {"uti": Sex.FEMALE, "contraception_consult": Sex.FEMALE}
+
+# Opportunistic SNOMED codes for the well-known conditions (design §10 Q3)
+_SNOMED = {
+    "hypertension": "59621000",
+    "type2_diabetes": "44054006",
+    "hyperlipidemia": "55822004",
+    "copd": "13645005",
+    "osteoarthritis": "396275006",
+    "hypothyroidism": "40930008",
+    "obesity": "414916001",
+    "gerd": "235595009",
+    "influenza": "6142004",
+    "uti": "68566005",
+    "anxiety_adult": "21897009",
+    "anxiety_teen": "21897009",
+    "depression_senior": "35489007",
+    "low_back_pain": "279039007",
+}
+
+# Chart-start onset rules — the legacy comorbidity_seeds table, declarative
+_ONSETS = {
+    "hypertension": OnsetProfile(min_age=45, baseline_probability=0.30, hereditary_key="hypertension"),
+    "type2_diabetes": OnsetProfile(
+        min_age=45,
+        baseline_probability=0.20,
+        hereditary_key="diabetes",
+        force_factors=(RiskFactor(RiskKind.BMI_OVER, 27),),
+    ),
+    "hyperlipidemia": OnsetProfile(min_age=45, baseline_probability=0.35),
+    "copd": OnsetProfile(min_age=60, baseline_probability=0.15, force_factors=(RiskFactor(RiskKind.SMOKER),)),
+    "hypothyroidism": OnsetProfile(min_age=60, baseline_probability=0.25),
+    "osteoarthritis": OnsetProfile(min_age=60, baseline_probability=0.40),
+}
 
 
-def pick_condition(age: int, month: int, existing_conditions: set[str]) -> tuple[ConditionProfile, str]:
-    """
-    Sample a condition for this patient visit, weighted by:
-    - Age group base weights
-    - Seasonal multiplier for the visit month
-    - Comorbidity boost if condition is already established
-    """
-    group = age_group(age)
-    pool = AGE_WEIGHTS[group]
+class FamilyMedicineCorePack:
+    """The core OPD condition set as a pluggable ConditionSource (§4)."""
 
-    weights = []
-    names = []
-    for cname, base_w in pool:
-        cond = CONDITIONS[cname]
-        seasonal_mult = cond.seasonal_weights.get(month, 1.0)
-        # Boost follow-up visits for established chronic conditions
-        comorbidity_mult = 1.8 if cname in existing_conditions else 1.0
-        # Sex-specific: UTI and contraception more common in females (handled in generator)
-        weights.append(base_w * seasonal_mult * comorbidity_mult)
-        names.append(cname)
+    name = "family-medicine-core"
 
-    chosen = random.choices(names, weights=weights, k=1)[0]
-    return CONDITIONS[chosen], chosen
-
-
-def comorbidity_seeds(age: int, fam_hx: dict, smoker: bool, bmi: float) -> set[str]:
-    """
-    Determine which chronic conditions are seeded for this patient from day 1.
-    Returns a set of condition names already 'established'.
-    """
-    seeds = set()
-    if age >= 45:
-        if fam_hx.get("hypertension") or random.random() < 0.30:
-            seeds.add("hypertension")
-        if fam_hx.get("diabetes") or bmi > 27 or random.random() < 0.20:
-            seeds.add("type2_diabetes")
-        if random.random() < 0.35:
-            seeds.add("hyperlipidemia")
-    if age >= 60:
-        if smoker or random.random() < 0.15:
-            seeds.add("copd")
-        if random.random() < 0.25:
-            seeds.add("hypothyroidism")
-        if random.random() < 0.40:
-            seeds.add("osteoarthritis")
-    return seeds
+    def conditions(self) -> tuple[ConditionProfile, ...]:
+        """Assemble every draft + its metadata into a frozen profile."""
+        band_weights: dict[str, list[tuple[AgeBand, float]]] = {}
+        for band_name, pool in _BAND_WEIGHTS.items():
+            for cname, weight in pool:
+                band_weights.setdefault(cname, []).append((AgeBand(band_name), weight))
+        return tuple(
+            ConditionProfile(
+                name=cname,
+                icd10_code=draft.icd10_code,
+                description=draft.description,
+                chief_complaint=draft.chief_complaint,
+                visit_type=VisitType(draft.visit_type),
+                chronic=cname in _CHRONIC,
+                snomed_code=_SNOMED.get(cname),
+                sex_limit=_SEX_LIMIT.get(cname),
+                bp_sys_delta=tuple(draft.bp_sys_delta),
+                bp_dia_delta=tuple(draft.bp_dia_delta),
+                hr_delta=tuple(draft.hr_delta),
+                rr_delta=tuple(draft.rr_delta),
+                temp_delta=tuple(draft.temp_delta),
+                spo2_delta=tuple(draft.spo2_delta),
+                pain=tuple(draft.pain),
+                labs=tuple(draft.labs),
+                rx_options=tuple(draft.rx_options),
+                rx_pick_all=draft.rx_pick_all,
+                follow_up_days=draft.follow_up_days,
+                seasonal_weights=tuple((m, w) for m, w in sorted(draft.seasonal_weights.items()) if w != 1.0),
+                visit_weights=tuple(band_weights.get(cname, ())),
+                onset=_ONSETS.get(cname),
+            )
+            for cname, draft in _DEFINITIONS.items()
+        )
