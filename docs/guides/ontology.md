@@ -18,8 +18,9 @@ hdh schema           # what the registry loaded:
 #   Condition [extends base]: snomed_code (ontology_module), snomed_display (ontology_module), concept_id (icd10cm_module)
 #   OntologyConcept [NEW entity]: ... OntologyTerm ... OntologyClosure ...
 
-hdh ontology tag     # backfill conditions.snomed_code/_display from the demo map
-#   🏷  SNOMED-tagged 334 conditions (247 remain unmapped — extend ICD10_TO_SNOMED)
+hdh ontology tag     # backfill conditions.snomed_code/_display (three-source derivation)
+#   🏷  SNOMED-tagged 512 conditions (39 profile-authored, 152 curated, 321 derived
+#      from the loaded catalogs) · 47 maps_to edges recorded · 69 remain unmapped
 ```
 
 After tagging, FHIR `Condition` resources carry **both** codings (the
@@ -68,17 +69,27 @@ snomed_for_icd10("I10")     # ("59621000", "Essential hypertension")
 session.query(Condition).filter(Condition.snomed_code == "44054006")
 ```
 
-## Where this is heading
+## How tagging derives its mappings (issue #29 — built)
 
-- The hand-maintained `ICD10_TO_SNOMED` map is the known limitation:
-  with both full catalogs now loaded in the shared tables (icd10cm +
-  snomed modules), tagging should be **derived** — via the snomed
-  `normalize()` funnel or curated `maps_to` edges. Tracked as
-  [issue #29](https://github.com/arsalanam/hdh/issues/29) (relates to
-  cross-ontology [#18](https://github.com/arsalanam/hdh/issues/18)).
-- New generator conditions (the cardiometabolic pack) author their
-  SNOMED codes directly on the `ConditionProfile` — profile-authored
-  codes and this tagging path unify under #29.
+`hdh ontology tag` assembles its mapping table from three sources, in
+precedence order:
+
+1. **Profile-authored** (confidence 1.0) — the generator's own
+   `ConditionProfile`s carry SNOMED codes (including staged codes like
+   CKD 3a→5); for generated data the pack author's code is the answer.
+2. **Curated** (confidence 1.0) — the `ICD10_TO_SNOMED` demo map, kept
+   as explicit curation for codes profiles don't cover.
+3. **Derived** (confidence = funnel score ≥ 0.6) — the SNOMED module's
+   `normalize()` funnel over the loaded US Edition, constrained to
+   disorder/finding semantic tags. Needs the catalog loaded
+   ([snomed guide](snomed.md)); silently contributes nothing otherwise.
+
+Mappings also materialize as **`maps_to` edges** (authority
+`PACK_AUTHORED` / `CURATED_DEMO` / `DERIVED_NORMALIZE`, confidence
+carried) when both concepts exist in the shared tables — the first real
+rows of the cross-ontology plan
+([#18](https://github.com/arsalanam/hdh/issues/18)); official crosswalk
+edges under other authorities are never touched.
 - **Add your own schema module** — copy this module's shape (manifest +
   `schema/entities/*.json`), register it in `hdh.modules.SCHEMA_MODULES`,
   and your columns appear at next bootstrap. New entities, relationships,
