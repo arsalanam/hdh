@@ -1,0 +1,22 @@
+{
+  "entity": "NoteMention",
+  "tablename": "note_mentions",
+  "module": "comprehension_module",
+  "columns": [
+    { "name": "id", "type": "Integer", "primary_key": true, "autoincrement": true },
+    { "name": "record_id", "type": "Integer", "foreign_key": "note_records.id", "nullable": false },
+    { "name": "mention_type", "type": "Enum", "values": ["problem", "medication", "lab_vital", "procedure", "allergy"], "nullable": false },
+    { "name": "start", "type": "Integer", "nullable": false },
+    { "name": "end", "type": "Integer", "nullable": false },
+    { "name": "text", "type": "String", "length": 512, "nullable": false },
+    { "name": "section_kind", "type": "String", "length": 40 },
+    { "name": "assertion", "type": "String", "length": 20 },
+    { "name": "concept_id", "type": "String", "length": 64, "foreign_key": "ontology_concepts.id", "nullable": true },
+    { "name": "confidence", "type": "Float" },
+    { "name": "properties", "type": "JSON" }
+  ],
+  "indexes": [
+    { "name": "ix_note_mention_record", "columns": ["record_id"] },
+    { "name": "ix_note_mention_concept", "columns": ["concept_id"] }
+  ]
+}

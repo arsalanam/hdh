@@ -66,6 +66,12 @@ def test_agent_tools_build(db_session):
         "get_risk_scores",
         "query_database",
         "dataset_stats",
+        # comprehension tools appear because generated data has stored notes;
+        # icd/snomed tools stay gated off (no catalogs in this fixture)
+        "comprehend_note",
+        "get_note_record",
+        "search_note_mentions",
+        "apply_note",
     }
 
 

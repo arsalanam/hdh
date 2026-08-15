@@ -253,6 +253,7 @@ def _ontology_tools(session) -> list:
     for module_path, builder_name in (
         ("hdh.modules.icd10cm.agent_tools", "build_icd_tools"),
         ("hdh.modules.snomed.agent_tools", "build_snomed_tools"),
+        ("hdh.modules.comprehension.agent_tools", "build_comprehension_tools"),
     ):
         try:
             from importlib import import_module

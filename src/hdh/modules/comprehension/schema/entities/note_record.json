@@ -1,0 +1,17 @@
+{
+  "entity": "NoteRecord",
+  "tablename": "note_records",
+  "module": "comprehension_module",
+  "columns": [
+    { "name": "id", "type": "Integer", "primary_key": true, "autoincrement": true },
+    { "name": "visit_note_id", "type": "Integer", "foreign_key": "visit_notes.id", "nullable": false },
+    { "name": "pack", "type": "String", "length": 40, "nullable": false },
+    { "name": "pipeline_version", "type": "String", "length": 20, "nullable": false },
+    { "name": "status", "type": "Enum", "values": ["complete", "needs_review", "failed"], "nullable": false },
+    { "name": "created_at", "type": "DateTime" },
+    { "name": "properties", "type": "JSON" }
+  ],
+  "indexes": [
+    { "name": "ix_note_record_visit_note", "columns": ["visit_note_id"] }
+  ]
+}

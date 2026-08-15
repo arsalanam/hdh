@@ -283,10 +283,11 @@ closure; normalize() pairs a mention with its **value and unit** ("A1c
 
 ## 14. Open questions / drill-down queue
 
-1. **The extraction schema** (next drill-down): what exactly is a mention —
-   span granularity, composite mentions ("BP 142/88 on lisinopril" is a
+1. **The extraction schema**: what exactly is a mention — span
+   granularity, composite mentions ("BP 142/88 on lisinopril" is a
    vital + value + medication + implied indication), list handling,
-   section-scoped assertion defaults.
+   section-scoped assertion defaults. **Drill-down drafted — under
+   review:** [comprehension-extraction-schema.md](comprehension-extraction-schema.md).
 2. **Ground-truth bias**: synthetic notes as primary eval vs bootstrap-only
    — the generator's phrasing is kin to the templates being parsed.
 3. ~~**SNOMED attribute relationships**: load with the module or defer?~~

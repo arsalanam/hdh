@@ -115,7 +115,7 @@ class SnomedOntologyService:
             score = base - 0.01 * _TERM_TYPE_RANK.get(term_type, 2)  # type is a tiebreaker
             if score > best.get(concept_id, (-1.0, ""))[0]:
                 best[concept_id] = (score, term)
-        out = []
+        ranked: list[tuple[float, Candidate]] = []
         for concept_id, (score, term) in best.items():
             row = self.session.execute(select(concepts_t).where(concepts_t.c.id == concept_id)).first()
             if row is None:
@@ -139,9 +139,16 @@ class SnomedOntologyService:
                 if under is not None:
                     score += 0.2
                     reasons.append("in context subtree")
-            out.append(Candidate(concept=concept, score=round(score, 3), reason="; ".join(reasons)))
-        out.sort(key=lambda c: (-c.score, c.concept.code))
-        return tuple(out[:limit])
+            # rank on the RAW score (clamping would flatten exact matches
+            # into ties with boosted partials); report a clamped score
+            ranked.append(
+                (
+                    score,
+                    Candidate(concept=concept, score=round(min(score, 1.0), 3), reason="; ".join(reasons)),
+                )
+            )
+        ranked.sort(key=lambda pair: (-pair[0], pair[1].concept.code))
+        return tuple(candidate for _raw, candidate in ranked[:limit])
 
     def _search_terms(self, needle: str) -> list[tuple[str, str, str, float]]:
         """Stage 1 of the funnel: (concept_id, term, term_type, base score)
@@ -151,22 +158,41 @@ class SnomedOntologyService:
         if self.session.get_bind().dialect.name == "postgresql":
             from sqlalchemy import text as sql_text
 
+            # Exact term matches FIRST, as their own query: single-word
+            # mentions produce hundreds of FTS ties, and LIMIT could
+            # otherwise drop the exact term from the pool entirely.
+            exact = self.session.execute(
+                sql_text(
+                    "SELECT concept_id, term, term_type FROM ontology_terms "
+                    "WHERE active AND lower(term) = :q LIMIT 20"
+                ),
+                {"q": needle},
+            ).all()
+            out = [(row.concept_id, row.term, str(row.term_type), 1.0) for row in exact]
             fts = self.session.execute(
                 sql_text(
                     "SELECT concept_id, term, term_type, "
-                    "       ts_rank(to_tsvector('english', term), plainto_tsquery('english', :q)) AS r "
+                    "       ts_rank(to_tsvector('english', term), plainto_tsquery('english', :q), 1) AS r "
                     "FROM ontology_terms WHERE active "
                     "AND to_tsvector('english', term) @@ plainto_tsquery('english', :q) "
-                    "ORDER BY r DESC LIMIT 100"
+                    "ORDER BY r DESC, length(term) ASC LIMIT 100"
                 ),
                 {"q": needle},
             ).all()
             if fts:
                 top = float(fts[0].r) or 1.0
-                return [
-                    (row.concept_id, row.term, str(row.term_type), 0.5 + 0.5 * float(row.r) / top)
-                    for row in fts
-                ]
+                for row in fts:
+                    term = row.term.lower()
+                    if term == needle:
+                        continue  # already in via the exact query
+                    # non-exact matches cap BELOW the exact ceiling; shorter
+                    # terms (closer to the mention) rank higher via the sort
+                    base = min(0.5 + 0.4 * float(row.r) / top, 0.9)
+                    if term.startswith(needle):
+                        base = max(base, 0.85)
+                    out.append((row.concept_id, row.term, str(row.term_type), base))
+            if out:
+                return out
             fuzzy = self.session.execute(
                 sql_text(
                     "SELECT concept_id, term, term_type, similarity(term, :q) AS s "
