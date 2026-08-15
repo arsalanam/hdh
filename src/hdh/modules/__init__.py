@@ -32,6 +32,12 @@ ONTOLOGY_MODULES = {
     "snomed_ct": "hdh.modules.snomed.ontology",
 }
 
+# Modules contributing condition packs to the generator (each exposes
+# condition_packs() -> list[ConditionSource]; see hdh.core.conditions —
+# design docs/design/clinical-breadth.md §4). Empty until a specialty
+# module ships one; the hook exists so that lands with zero core edits.
+GENERATOR_MODULES: tuple[str, ...] = ()
+
 # Modules that extend the data model via the schema registry (each ships a
 # manifest.json + schema/ directory; see hdh.core.schema_registry).
 SCHEMA_MODULES = (

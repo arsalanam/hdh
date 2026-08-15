@@ -29,7 +29,9 @@ with reference ranges and status flags, and a follow-up interval.
 ```bash
 hdh stats                      # counts, top-10 diagnoses, age distribution
 hdh show --mrn MRN12345678     # one patient's complete chart as text
-hdh list-conditions            # all condition keys with ICD-10 codes
+hdh list-conditions            # all conditions, grouped by pack (chronic/staged flagged)
+hdh generate --patients 250 --seed 7 --progression-cadence quarterly
+                               # reproducible run; staged conditions re-evaluate quarterly
 ```
 
 Find MRNs to look at via `hdh care-gaps`, `hdh risk score`, or SQL:
@@ -86,3 +88,21 @@ Add a `ConditionProfile` to `CONDITIONS` in `src/hdh/core/disease_engine.py`
 (ICD-10, chief complaint, vitals deltas, `LabSpec` panels, `RxSpec` formulary,
 follow-up days, seasonal weights), then include it in the right age groups in
 `pick_condition`. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+
+## Condition packs and the catalog
+
+Conditions live in **packs** (`ConditionSource` implementations):
+`family-medicine-core` (the OPD set) and `cardiometabolic` (CKD with
+severity stages, CAD, heart failure, AFib, stroke history, asthma,
+anemia). The generator samples through an immutable `ConditionCatalog`
+(`hdh.core.conditions`) — frozen profiles, injected RNG, explicit
+`SamplingContext`. Chronic onset is two-phase: baseline seeding at chart
+start, then annual rolls where established conditions multiply the rates
+(`ComorbidityLink`), so CKD arrives after — and because of — the
+hypertension years, with onset dates in clinical order.
+
+Tests (or future modules, via `GENERATOR_MODULES`) can inject their own
+catalog: `build_dataset(session, ..., catalog=build_catalog([MyPack()]))`.
+Duplicate condition names across packs are a hard error — clinical
+content never silently overrides. Design: `docs/design/clinical-breadth.md`.

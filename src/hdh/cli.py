@@ -19,7 +19,7 @@ import random
 import sys
 from datetime import date, timedelta
 
-from hdh.core.disease_engine import CONDITIONS
+from hdh.core.conditions import default_catalog
 from hdh.core.exporters import export_fhir, export_json, export_text, patient_to_text
 from hdh.core.generators import build_dataset, generate_visit_history
 from hdh.core.models import Condition, Patient, Visit, get_engine, get_session
@@ -116,7 +116,15 @@ def cmd_advance(session, months: int):
             "diabetes": any("diabetes" in h.condition.lower() for h in p.family_history),
             "hypertension": any("hypertension" in h.condition.lower() for h in p.family_history),
         }
-        visit_tuples, _ = generate_visit_history(p, fam_hx, bool(p.smoker), years=1)
+        from hdh.core.generators import RunScope, seed_providers
+
+        scope = RunScope(
+            catalog=default_catalog(),
+            providers=tuple(seed_providers(session)),
+            years=1,
+            rng=random.Random(),
+        )
+        visit_tuples = generate_visit_history(p, fam_hx, bool(p.smoker), scope).visits
 
         # Keep only visits that fall in the new window
         cutoff = today - timedelta(days=months * 30)
@@ -175,11 +183,12 @@ def cmd_advance(session, months: int):
 
 def cmd_add_spike(session, condition_name: str, multiplier: float, month: int, n: int):
     """Inject a seasonal spike of a given condition for a given month."""
-    if condition_name not in CONDITIONS:
-        print(f"❌ Unknown condition '{condition_name}'. Available: {list(CONDITIONS.keys())}")
+    catalog = default_catalog()
+    if condition_name not in catalog.names():
+        print(f"❌ Unknown condition '{condition_name}'. Available: {list(catalog.names())}")
         return
 
-    cprofile = CONDITIONS[condition_name]
+    cprofile = catalog.get(condition_name)
     patients = session.query(Patient).order_by("id").all()
 
     if not patients:
@@ -314,6 +323,13 @@ def main():
     gen_p.add_argument("--patients", type=int, default=10_000)
     gen_p.add_argument("--years", type=int, default=4)
     gen_p.add_argument("--quiet", action="store_true")
+    gen_p.add_argument("--seed", type=int, default=None, help="Reproducible run: same seed, same dataset")
+    gen_p.add_argument(
+        "--progression-cadence",
+        choices=("yearly", "quarterly"),
+        default="yearly",
+        help="How often staged chronic conditions re-evaluate severity",
+    )
 
     # stats
     sub.add_parser("stats", help="Print dataset statistics")
@@ -377,7 +393,14 @@ def main():
 
     if args.command == "generate":
         print(f"\n🏥 Generating {args.patients:,} patients with {args.years} years of history...")
-        build_dataset(session, n_patients=args.patients, years_of_history=args.years, verbose=not args.quiet)
+        build_dataset(
+            session,
+            n_patients=args.patients,
+            years_of_history=args.years,
+            verbose=not args.quiet,
+            seed=args.seed,
+            progression_cadence=args.progression_cadence,
+        )
         cmd_stats(session)
 
     elif args.command == "stats":
@@ -403,9 +426,17 @@ def main():
         cmd_show(session, args.mrn)
 
     elif args.command == "list-conditions":
-        print("\nAvailable conditions:")
-        for k, v in CONDITIONS.items():
-            print(f"  {k:<30} [{v.icd10_code}] {v.description}")
+        catalog = default_catalog()
+        by_pack: dict[str, list[str]] = {}
+        for name in catalog.names():
+            by_pack.setdefault(catalog.pack_of(name), []).append(name)
+        for pack, names in sorted(by_pack.items()):
+            print(f"\n{pack} ({len(names)} conditions):")
+            for name in names:
+                profile = catalog.get(name)
+                chronic = " (chronic)" if profile.chronic else ""
+                staged = " (staged)" if profile.staging else ""
+                print(f"  {name:<30} [{profile.icd10_code}] {profile.description}{chronic}{staged}")
 
     elif args.command == "schema":
         print(schema_registry.describe())

@@ -164,16 +164,30 @@ src/hdh/
 the core (and optional extras), never on each other's internals. Each module
 exposes `register_cli(subparsers)` to add its subcommands.
 
-## Disease Coverage (30+ conditions)
+## Disease Coverage (39 conditions in two packs)
 
+**family-medicine-core** (32):
 - **Pediatric (0–12):** otitis media, RSV, febrile illness, strep, conjunctivitis, eczema, well-child visits
 - **Adolescent (13–17):** acne, sports physicals, sports injuries, mono, anxiety
 - **Young adult (18–35):** annual physicals, influenza, URI, UTI, anxiety, low back pain, lacerations, contraception
 - **Adult (36–65):** hypertension, type 2 diabetes, hyperlipidemia, GERD, osteoarthritis, obesity, hypothyroidism, COPD, depression
 - **Senior (65+):** annual wellness, polypharmacy review, falls, COPD exacerbation, depression, hypothyroidism
 
-Incidence is seasonally weighted (flu peaks in winter, UTIs and sports injuries in
-summer) and comorbidities are seeded from age, family history, smoking, and BMI.
+**cardiometabolic** (7): CKD (staged 3a→5), coronary artery disease, chronic
+heart failure, atrial fibrillation (anticoagulated), stroke/TIA history,
+asthma, iron-deficiency anemia — every profile authored with ICD-10 **and**
+SNOMED CT codes.
+
+Incidence is seasonally weighted (flu peaks in winter, UTIs and sports
+injuries in summer). Chronic disease arrives in two phases: baseline
+seeding from age, family history, smoking, and BMI — then **annual onset
+rolls through comorbidity webs** (hypertension ×3 and diabetes ×3 drive
+CKD; CAD ×4 drives heart failure; AFib ×4 drives stroke), so onset dates
+read in clinical order. Staged conditions re-evaluate severity on a
+configurable cadence (`--progression-cadence yearly|quarterly`), and
+`--seed` makes any run byte-for-byte reproducible. Condition packs are
+pluggable (`ConditionSource` protocol — see
+[docs/design/clinical-breadth.md](docs/design/clinical-breadth.md)).
 
 ## The Database
 

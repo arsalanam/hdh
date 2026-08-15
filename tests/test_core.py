@@ -1,6 +1,6 @@
-from hdh.core.disease_engine import CONDITIONS, pick_condition
+from hdh.core.conditions import SamplingContext, default_catalog
 from hdh.core.exporters import patient_to_fhir_bundle, patient_to_json, patient_to_text
-from hdh.core.models import Condition, Patient, Visit
+from hdh.core.models import Condition, Patient, Sex, Visit
 
 
 def test_dataset_generated(db_session):
@@ -17,9 +17,10 @@ def test_visits_have_clinical_detail(db_session):
 
 
 def test_disease_engine():
-    assert len(CONDITIONS) >= 30
-    profile, name = pick_condition(age=45, month=1, existing_conditions=set())
-    assert name in CONDITIONS
+    catalog = default_catalog()
+    assert len(catalog.names()) >= 30
+    profile = catalog.sample_visit_condition(SamplingContext(age=45, sex=Sex.FEMALE, month=1))
+    assert profile.name in catalog.names()
     assert profile.icd10_code
 
 
