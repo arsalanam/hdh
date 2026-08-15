@@ -72,3 +72,38 @@ def test_ensure_columns_steps_aside_under_alembic(alembic_cfg):
     engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
     assert registry.ensure_columns(engine) == []
     engine.dispose()
+
+
+def test_reconcile_migration_repairs_stamped_drift(alembic_cfg):
+    """Issue #30: a database stamped before the chart expansion is missing
+    columns and the auto-ADD path rightly refuses to touch it — migration
+    0003 adds them under Alembic's ownership, idempotently."""
+    from sqlalchemy import text
+
+    from hdh.core.schema_registry import bootstrap_schema, reconcile_missing_columns
+
+    cfg, tmp_path, _versions = alembic_cfg
+    bootstrap_schema()
+    from hdh.core.models import Base
+
+    url = cfg.get_main_option("sqlalchemy.url")
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:  # simulate the pre-expansion shape
+        conn.execute(text("ALTER TABLE patients DROP COLUMN marital_status"))
+        conn.execute(text("ALTER TABLE patients DROP COLUMN language"))
+        conn.execute(text("ALTER TABLE visits DROP COLUMN follow_up_days"))
+    command.stamp(cfg, "0002")  # stamped BEFORE the reconcile revision existed
+
+    registry = bootstrap_schema()
+    assert registry.ensure_columns(engine) == []  # the guard that caused #30
+
+    command.upgrade(cfg, "head")  # 0003 reconciles
+
+    inspector = inspect(engine)
+    assert "marital_status" in {c["name"] for c in inspector.get_columns("patients")}
+    assert "language" in {c["name"] for c in inspector.get_columns("patients")}
+    assert "follow_up_days" in {c["name"] for c in inspector.get_columns("visits")}
+    with engine.begin() as conn:  # idempotent: a second reconcile is a no-op
+        assert reconcile_missing_columns(conn) == []
+    engine.dispose()
