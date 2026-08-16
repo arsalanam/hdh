@@ -140,6 +140,8 @@ def test_review_queue_lists_and_resolves(world):
 
 
 def test_apply_note_tool_charts_free_text(world):
+    """Charts onto a patient of its OWN — "yesterday" is a moving target,
+    so it must never be able to collide with another test's visit date."""
     from hdh.core.models import Provider, Specialty, VisitNote
 
     if world.query(Provider).first() is None:
@@ -148,6 +150,16 @@ def test_apply_note_tool_charts_free_text(world):
         world.flush()
         world.add(Provider(identifier="NPI9990001", name="Dr. Priya Sharma, MD", specialty_id=spec.id))
         world.commit()
+    world.add(
+        Patient(
+            mrn="MRN00CHARTED",
+            first_name="Free",
+            last_name="Text",
+            date_of_birth=date(1971, 5, 4),
+            sex=Sex.FEMALE,
+        )
+    )
+    world.commit()
 
     note_text = "Acute blorbitis today. BP 141/90 mmHg. Start Apixaban 5mg BID."
     raw = {
@@ -171,13 +183,17 @@ def test_apply_note_tool_charts_free_text(world):
     payload = json.loads(
         _tool(tools, "apply_note").call(
             {
-                "mrn": "MRN00AGENTC",
+                "mrn": "MRN00CHARTED",
                 "note_text": note_text,
                 "visit_date": "yesterday",
                 "provider": "Priya Sharma",
             }
         )
     )
+    from datetime import timedelta
+
+    assert payload["visit_date"] == str(date.today() - timedelta(days=1))  # "yesterday" resolved
+    assert payload["created_visit"] is True
     assert payload["provider"] == "Dr. Priya Sharma, MD"
     assert payload["note_record_id"] > 0
     actions = {(v["action"], v["kind"]) for v in payload["verdicts"]}
@@ -219,3 +235,41 @@ def test_apply_note_addendum_reconciles_into_same_date_visit(world):
     # both notes hang off the one visit (provenance for the addendum too)
     notes = world.query(VisitNote).filter(VisitNote.visit_id == first["visit_id"]).count()
     assert notes == 2
+
+
+def test_apply_note_attributes_an_unattributed_existing_visit(world):
+    """Reconciling into a visit the chart never attributed records the
+    note's author; an attribution the chart already has is never
+    overwritten. (CI caught this: a note charted onto a pre-existing
+    provider-less visit silently lost its author.)"""
+    from hdh.core.models import Provider, Visit
+
+    raw = {"mentions": [{"type": "problem", "text": "Chronic blorbitis", "occurrence": 1, "attributes": []}]}
+    tools = build_comprehension_tools(world, extractor=stub_extractor(raw))
+    call = _tool(tools, "apply_note").call
+
+    bare = Visit(
+        patient_id=world.query(Patient).filter(Patient.mrn == "MRN00AGENTC").first().id,
+        visit_date=date(2026, 9, 9),
+        visit_type=VisitType.FOLLOW_UP,
+    )
+    world.add(bare)
+    world.commit()
+    payload = json.loads(
+        call(
+            {"mrn": "MRN00AGENTC", "note_text": NOTE, "visit_date": "2026-09-09", "provider": "Priya Sharma"}
+        )
+    )
+    assert payload["created_visit"] is False and payload["visit_id"] == bare.id
+    assert world.get(Visit, bare.id).provider.name == "Dr. Priya Sharma, MD"
+
+    # a second provider on the same visit does NOT overwrite the first
+    other = Provider(
+        identifier="NPI9990002",
+        name="Dr. Robert Chen, MD",
+        specialty_id=world.query(Provider).first().specialty_id,
+    )
+    world.add(other)
+    world.commit()
+    call({"mrn": "MRN00AGENTC", "note_text": NOTE, "visit_date": "2026-09-09", "provider": "Robert Chen"})
+    assert world.get(Visit, bare.id).provider.name == "Dr. Priya Sharma, MD"
