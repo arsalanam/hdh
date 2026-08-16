@@ -1,9 +1,23 @@
 # Doctor-Notes Comprehension Service — Master Design (Draft)
 
-**Module:** `hdh.modules.comprehension` · **Status:** open RFC — top-down
-design (decisions at this level; implementation deliberately deferred) ·
-**Date:** 2026-08-11
+**Module:** `hdh.modules.comprehension` · **Status:** **BUILT** —
+milestones A–D shipped (PR #38, 2026-08-15); RFC #21 stays open for
+feedback · **Date:** 2026-08-11 (status refreshed 2026-08-15)
 
+> **What is built:** the whole spine — segment → extract → validate →
+> normalize → contextualize → disambiguate → assemble/apply, with the
+> internal chart applier, the review queue, the FHIR document export, and
+> the agent toolset (including free-text charting via `apply_note`).
+> Contracts and validator rules are drilled down in
+> [comprehension-extraction-schema.md](comprehension-extraction-schema.md);
+> its §12 records the measured baseline and §14 the testing plan.
+>
+> **What is not** (see §13–§14 below for the full list with triggers):
+> RxNorm and LOINC modules — medication and lab coding run on documented
+> placeholders today (issue-free, unfiled); comprehensive testing and the
+> eval fixes (#39); symptom billing coverage (#41); chart amend/delete
+> plus an audit log (#40); orders/`ServiceRequest`; the neurology pack.
+>
 > **Requesting comments** — especially on §5 (keeping shared tables from
 > breaking encapsulation), §6 (SapBERT's constrained slot), and the §14
 > drill-down queue. Substantive feedback earns a contributors-table entry.
@@ -271,31 +285,52 @@ closure; normalize() pairs a mention with its **value and unit** ("A1c
 
 ## 13. Phasing
 
-| Phase | Delivers | Proves |
-|---|---|---|
-| 1 | `OntologyService` protocol + §5 items 1–4 retrofit on icd10cm (item 5 lands with each module's loader) — = snomed-module.md **milestone A** | encapsulation contract before a second ontology exists |
-| 2 | SNOMED module — **designed** ([snomed-module.md](snomed-module.md)); build per its milestones B–D | DAG strategy, synonym index, protocol #2 |
-| 3 | RxNorm + LOINC modules | protocol scales; med/lab normalize |
-| 4 | Comprehension pipeline on synthetic notes, lexical-only | the spine end-to-end, measured (§8) |
-| 5 | Hybrid + SapBERT, bench-gated | Q10 answered with numbers |
-| 6 | Subagent + `comprehend_note` tool + review loop | agent as prime consumer |
-| 7 | Neurology pack | modularity claim proven |
+| Phase | Delivers | Proves | Status |
+|---|---|---|---|
+| 1 | `OntologyService` protocol + §5 items 1–4 retrofit on icd10cm (item 5 lands with each module's loader) — = snomed-module.md **milestone A** | encapsulation contract before a second ontology exists | ✅ shipped (PR #27) |
+| 2 | SNOMED module — **designed** ([snomed-module.md](snomed-module.md)); build per its milestones B–D | DAG strategy, synonym index, protocol #2 | ✅ shipped (PR #27) |
+| 3 | RxNorm + LOINC modules | protocol scales; med/lab normalize | ⬜ **not started** — the largest remaining gap: `normalize()` codes medications from the generator's drug catalog and labs from a `LabSpec`-derived LOINC map (documented placeholders, §11–§12) |
+| 4 | Comprehension pipeline on synthetic notes, lexical-only | the spine end-to-end, measured (§8) | ✅ shipped (PR #38); baseline in extraction-schema §12, honesty fixes in #39 |
+| 5 | Hybrid + SapBERT, bench-gated | Q10 answered with numbers | ⬜ deferred — trigger is #39's recall numbers; CPU cost recorded in snomed-module.md §12 |
+| 6 | Subagent + `comprehend_note` tool + review loop | agent as prime consumer | ✅ shipped (PR #38) — plus `apply_note`, free-text charting from chat |
+| 7 | Neurology pack | modularity claim proven | ⬜ not started |
+
+Adjacent work discovered by building phases 4 and 6: chart amend/delete
+with an append-only audit log (#40 — today there is **no sanctioned path**
+to resolve a review item into the chart), curated symptom `maps_to`
+coverage (#41 — symptoms always queue for review), and orders as first
+class records (`ServiceRequest` has nowhere to land; belongs with the
+care-plan module, #9).
 
 ## 14. Open questions / drill-down queue
 
-1. **The extraction schema**: what exactly is a mention — span
-   granularity, composite mentions ("BP 142/88 on lisinopril" is a
-   vital + value + medication + implied indication), list handling,
-   section-scoped assertion defaults. **Drill-down drafted — under
-   review:** [comprehension-extraction-schema.md](comprehension-extraction-schema.md).
+1. ~~**The extraction schema**: what exactly is a mention?~~ **Resolved
+   and built:** [comprehension-extraction-schema.md](comprehension-extraction-schema.md)
+   — minimal head phrase plus typed attribute sub-spans, five mention
+   types, closed attribute table, verbatim span invariant. Live testing
+   added one rule the design lacked: same-type *contained* spans collapse
+   into the larger mention rather than failing validation.
 2. **Ground-truth bias**: synthetic notes as primary eval vs bootstrap-only
    — the generator's phrasing is kin to the templates being parsed.
+   **STILL OPEN, and now sharper**: there are numbers to be biased
+   (extraction-schema §12). An out-of-distribution note set is needed
+   before the baseline means anything externally.
 3. ~~**SNOMED attribute relationships**: load with the module or defer?~~
    **Resolved** by the SNOMED design (§1/§6 there): loaded in v1 as a
    generic `attribute` edge type — intervention semantics (method,
    procedure-site) demand them, per the thrombectomy analysis.
 4. **Problem-list reconciliation**: when a note's comprehension disagrees
    with the chart's existing diagnoses, who wins and where is that
-   recorded?
+   recorded? **STILL OPEN.** The applier reconciles *agreement* cleanly
+   (`confirmed` — referenced, never duplicated) and refuses what it
+   cannot ground (`review`), but genuine disagreement — the note says
+   well controlled, the chart says active — has no defined winner and no
+   recorded provenance for the decision. Related: #40's audit log is
+   where such a decision would be recorded.
 5. **Review-loop UX**: what does the checkpointed human review actually
-   look like in a CLI-first tool?
+   look like in a CLI-first tool? **Partially answered:** `hdh comprehend
+   --review` lists flagged records and `--resolve ID --decision
+   accept|reject` closes them, and the agent surfaces review items
+   conversationally. What is missing is the *resolution* path — accepting
+   a review item cannot yet write the corrected entry to the chart
+   (#40).
