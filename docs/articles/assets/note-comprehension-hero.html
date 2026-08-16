@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>note-comprehension hero 1200x627</title>
+<style>
+  html,body{margin:0;padding:0;width:1200px;height:627px;overflow:hidden;}
+</style>
+</head>
+<body>
+<svg width="1200" height="627" viewBox="0 0 1200 627" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfcfe"/>
+      <stop offset="1" stop-color="#e9eef6"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5b6b80"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#c98a12"/>
+    </marker>
+    <filter id="card" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#1a2332" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="627" fill="url(#bg)"/>
+
+  <!-- header strip -->
+  <text x="44" y="46" font-size="15" letter-spacing="3" fill="#7d8a9c" font-weight="600">HDH · NOTE COMPREHENSION</text>
+  <text x="1156" y="46" font-size="15" fill="#7d8a9c" text-anchor="end">synthetic data · no PHI</text>
+
+  <!-- ============ PANEL 1: the free-text note ============ -->
+  <text x="197" y="103" font-size="14" letter-spacing="2" fill="#5b6b80" font-weight="700" text-anchor="middle">WHAT THE PROVIDER WRITES</text>
+  <rect x="42" y="120" width="310" height="330" rx="12" fill="#ffffff" stroke="#d7dee8" filter="url(#card)"/>
+  <rect x="42" y="120" width="310" height="40" rx="12" fill="#f2f5f9"/>
+  <rect x="42" y="146" width="310" height="14" fill="#f2f5f9"/>
+  <text x="62" y="146" font-size="14" font-weight="700" fill="#44536a">PROGRESS NOTE — free text</text>
+  <g font-family="Georgia, serif" font-style="italic" font-size="16" fill="#4a5568">
+    <text x="64" y="196">Patient seen for elevated home</text>
+    <text x="64" y="223">blood pressure readings.</text>
+    <text x="64" y="250"><tspan fill="#1d63c4" font-weight="bold">BP 152/94 mmHg</tspan>, HR 88.</text>
+    <text x="64" y="277">Meets criteria for <tspan fill="#1d63c4" font-weight="bold">essential</tspan></text>
+    <text x="64" y="304"><tspan fill="#1d63c4" font-weight="bold">hypertension</tspan>. Start <tspan fill="#1d63c4" font-weight="bold">Lisinopril</tspan></text>
+    <text x="64" y="331"><tspan fill="#1d63c4" font-weight="bold">10mg once daily</tspan>. Occasional</text>
+    <text x="64" y="358">morning <tspan fill="#c98a12" font-weight="bold">headaches</tspan>; denies</text>
+    <text x="64" y="385">chest pain. Return in 30 days.</text>
+    <text x="64" y="424" font-size="14" fill="#8895a7">— Dr. Priya Sharma, yesterday</text>
+  </g>
+
+  <!-- arrow note -> pipeline -->
+  <line x1="360" y1="285" x2="440" y2="285" stroke="#5b6b80" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- ============ PANEL 2: chat + pipeline ============ -->
+  <!-- chat bubble -->
+  <rect x="455" y="96" width="290" height="66" rx="16" fill="#e3eefc" stroke="#c3d8f2"/>
+  <path d="M488 162 l-10 16 l24 -16 z" fill="#e3eefc" stroke="#c3d8f2"/>
+  <text x="475" y="122" font-size="13.5" fill="#2b3a4e"><tspan font-weight="700" fill="#1d63c4">you&gt;</tspan>  add this note to the chart for</text>
+  <text x="475" y="143" font-size="13.5" fill="#2b3a4e">MRN 67606524, provided yesterday</text>
+
+  <!-- pipeline stack -->
+  <g font-size="14.5">
+    <line x1="600" y1="178" x2="600" y2="196" stroke="#5b6b80" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+    <rect x="470" y="200" width="260" height="38" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="486" y="224" fill="#2b3a4e" font-weight="600">segment</text>
+    <rect x="628" y="207" width="88" height="24" rx="12" fill="#eef2f7"/>
+    <text x="672" y="224" font-size="11.5" fill="#5b6b80" text-anchor="middle" font-weight="700">DETERMINISTIC</text>
+
+    <rect x="470" y="248" width="260" height="38" rx="8" fill="#f4edfd" stroke="#d4bdf4"/>
+    <text x="486" y="272" fill="#2b3a4e" font-weight="600">extract — find &amp; type</text>
+    <rect x="662" y="255" width="54" height="24" rx="12" fill="#7a3ff2"/>
+    <text x="689" y="272" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="700">LLM</text>
+
+    <rect x="470" y="296" width="260" height="38" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="486" y="320" fill="#2b3a4e" font-weight="600">validate spans</text>
+    <rect x="628" y="303" width="88" height="24" rx="12" fill="#eef2f7"/>
+    <text x="672" y="320" font-size="11.5" fill="#5b6b80" text-anchor="middle" font-weight="700">DETERMINISTIC</text>
+
+    <rect x="470" y="344" width="260" height="38" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="486" y="368" fill="#2b3a4e" font-weight="600">code — ontologies</text>
+    <rect x="628" y="351" width="88" height="24" rx="12" fill="#eef2f7"/>
+    <text x="672" y="368" font-size="11.5" fill="#5b6b80" text-anchor="middle" font-weight="700">DETERMINISTIC</text>
+
+    <rect x="470" y="392" width="260" height="38" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="486" y="416" fill="#2b3a4e" font-weight="600">reconcile</text>
+    <rect x="628" y="399" width="88" height="24" rx="12" fill="#eef2f7"/>
+    <text x="672" y="416" font-size="11.5" fill="#5b6b80" text-anchor="middle" font-weight="700">DETERMINISTIC</text>
+  </g>
+  <text x="600" y="472" font-size="17" font-weight="700" fill="#1a2332" text-anchor="middle">The LLM classifies.</text>
+  <text x="600" y="496" font-size="17" font-weight="700" fill="#1a2332" text-anchor="middle">Deterministic code decides.</text>
+
+  <!-- arrow pipeline -> chart -->
+  <line x1="742" y1="285" x2="820" y2="285" stroke="#5b6b80" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- ============ PANEL 3: the reconciled chart ============ -->
+  <text x="995" y="103" font-size="14" letter-spacing="2" fill="#5b6b80" font-weight="700" text-anchor="middle">WHAT THE CHART RECEIVES</text>
+  <rect x="830" y="120" width="330" height="330" rx="12" fill="#ffffff" stroke="#d7dee8" filter="url(#card)"/>
+  <rect x="830" y="120" width="330" height="40" rx="12" fill="#f2f5f9"/>
+  <rect x="830" y="146" width="330" height="14" fill="#f2f5f9"/>
+  <text x="850" y="146" font-size="14" font-weight="700" fill="#44536a">PATIENT CHART — coded, reconciled</text>
+
+  <!-- row 1 -->
+  <circle cx="866" cy="192" r="11" fill="#1f9d55"/>
+  <path d="M860.5 192 l4 4.5 l7 -8" stroke="#ffffff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="888" y="189" font-size="14.5" font-weight="600" fill="#1a2332">Essential hypertension · I10</text>
+  <text x="888" y="207" font-size="12.5" fill="#6b7a8f">confirmed — already on chart, not duplicated</text>
+
+  <!-- row 2 -->
+  <circle cx="866" cy="248" r="11" fill="#1f9d55"/>
+  <path d="M860.5 248 l4 4.5 l7 -8" stroke="#ffffff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="888" y="245" font-size="14.5" font-weight="600" fill="#1a2332">Lisinopril 10mg once daily</text>
+  <text x="888" y="263" font-size="12.5" fill="#6b7a8f">new medication added</text>
+
+  <!-- row 3 -->
+  <circle cx="866" cy="304" r="11" fill="#1f9d55"/>
+  <path d="M860.5 304 l4 4.5 l7 -8" stroke="#ffffff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="888" y="301" font-size="14.5" font-weight="600" fill="#1a2332">BP 152/94 · HR 88 · 82.5 kg</text>
+  <text x="888" y="319" font-size="12.5" fill="#6b7a8f">vitals recorded on the visit</text>
+
+  <!-- row 4: review -->
+  <rect x="844" y="338" width="302" height="52" rx="8" fill="#fdf6e6" stroke="#f0d9a6"/>
+  <path d="M866 348 l10 18 h-20 z" fill="#e8a413"/>
+  <text x="866" y="364.5" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">!</text>
+  <text x="888" y="360" font-size="14.5" font-weight="600" fill="#8a6206">headaches · SNOMED 25064002</text>
+  <text x="888" y="378" font-size="12.5" fill="#a07d24">NOT written — no billing mapping</text>
+
+  <!-- provenance footnote inside card -->
+  <text x="850" y="424" font-size="12.5" fill="#8895a7">every entry traces to its exact span in the note</text>
+
+  <!-- branch to human review -->
+  <path d="M995 392 C 995 440, 995 452, 995 470" stroke="#c98a12" stroke-width="2.5" stroke-dasharray="6 5" fill="none" marker-end="url(#arrowAmber)"/>
+  <circle cx="995" cy="497" r="11" fill="none" stroke="#c98a12" stroke-width="2.5"/>
+  <path d="M977 532 a18 18 0 0 1 36 0" fill="none" stroke="#c98a12" stroke-width="2.5"/>
+  <text x="1022" y="518" font-size="14.5" font-weight="700" fill="#8a6206">human review queue</text>
+  <text x="1022" y="536" font-size="12.5" fill="#a07d24">refuse, don't guess</text>
+
+  <!-- tagline -->
+  <text x="600" y="583" font-size="26" font-weight="800" fill="#1a2332" text-anchor="middle">The note is the interface.</text>
+  <text x="44" y="612" font-size="12.5" fill="#8895a7">hdh — open-source synthetic EHR + agentic tooling · github.com/arsalanam/hdh</text>
+</svg>
+</body>
+</html>

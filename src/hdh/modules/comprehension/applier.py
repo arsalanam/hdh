@@ -113,6 +113,11 @@ def apply_to_chart(
         session.add(visit)
         session.flush()
         created = True
+    elif provider_id is not None and visit.provider_id is None:
+        # reconciling into an existing unattributed visit: the note names
+        # its author, so record it — but never overwrite an attribution
+        # the chart already has
+        visit.provider_id = provider_id
     result = ApplyResult(visit_id=visit.id, created_visit=created)
 
     _apply_conditions(session, patient, visit, note, result)

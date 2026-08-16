@@ -74,6 +74,8 @@ hdh snomed load --download                # SNOMED CT US Edition (needs a free
                                           # licensed and never ships with hdh)
 hdh snomed search "heart attack"          # synonym-aware concept search
 hdh snomed subsumes 64572001 73211009     # is diabetes a kind of disease? True
+hdh comprehend --file note.txt            # doctor-note comprehension: free text →
+                                          # coded, span-grounded structured record
 ```
 
 ### Ask the agent ontology-grounded questions
@@ -102,6 +104,52 @@ hdh agent "What are the defining attributes of a mechanical thrombectomy?"
 The toolsets are discovered through each module's published API and are
 offered only when the catalog is actually loaded — the agent runs fine
 without them.
+
+### Chart free-text notes through the agent
+
+With the comprehension module active (SNOMED loaded + `[agent]` extra), a
+provider can maintain the chart **by talking to the agent** — paste a
+note, get a reconciled chart update back:
+
+```
+you> Can you add the following note to the patient chart for patient
+     MRN67606524, provided yesterday by Dr. Priya Sharma:
+     Patient seen in clinic for evaluation of elevated blood pressure...
+     Start Lisinopril 10mg once daily for hypertension. ...
+
+agent> ✅ Essential hypertension (I10) — already on the problem list,
+          referenced, not duplicated
+       ✅ Lisinopril 10mg once daily — new medication added
+       ✅ Vitals BP 152/94, HR 88, Weight 82.5kg — recorded
+       ⚠️ "headaches" (SNOMED 25064002) — no billing mapping;
+          NOT written, queued for human review
+```
+
+Under the hood that is one `apply_note` tool call running the full
+pipeline: deterministic segmentation → LLM extraction (finds and types,
+**never** codes or asserts) → validation against a closed schema with
+verbatim-span grounding → SNOMED/LOINC/drug-catalog normalization →
+rules-first assertion (negations like "denies chest pain" are skipped) →
+a reconciled chart write with a verdict per entity: `new`, `confirmed`,
+`review`, or `skipped`. Review items are **never written silently** — the
+agent reports them for human resolution (`hdh comprehend --review`).
+Addenda for the same date reconcile into the existing visit instead of
+duplicating it, and the pasted text is stored as the visit's note for
+full provenance. The same pipeline is scriptable without the agent:
+
+```bash
+hdh comprehend --file note.txt                          # print the coded record
+hdh comprehend --mrn MRN... --visit-date 2026-08-14 --store   # persist it
+hdh comprehend --mrn MRN... --visit-date 2026-08-14 --apply --dry-run
+hdh comprehend --review                                 # the human review queue
+hdh comprehend --file note.txt --fhir bundle.json       # FHIR document export
+```
+
+Design docs: [notes-comprehension-service.md](docs/design/notes-comprehension-service.md)
+(the service) and [comprehension-extraction-schema.md](docs/design/comprehension-extraction-schema.md)
+(the extraction contract, milestones, eval baseline, and testing plan).
+For the bigger picture — why the agent tier is the new EHR UI — read the
+[note-comprehension introduction](docs/articles/note-comprehension-agent-ui.md).
 
 ### The agent pipeline
 
@@ -158,6 +206,7 @@ src/hdh/
 │   ├── icd10cm/            # ICD-10-CM knowledge graph: loader, retrieval funnel, agent tools
 │   ├── snomed/             # SNOMED CT US Edition: RF2 loader, closure DAG, normalize() funnel, agent tools
 │   ├── ontology/           # SNOMED tagging demo (schema-registry extension)
+│   ├── comprehension/      # Doctor-note comprehension: free text → coded chart update
 │   └── billing/            # CPT / RVU / claims simulation (scaffold)
 └── cli.py           # `hdh` CLI — core commands + auto-discovered module subcommands
 ```
@@ -215,6 +264,16 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
   [snomed](docs/guides/snomed.md) ·
   [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md)
+- Design docs — [notes-comprehension-service.md](docs/design/notes-comprehension-service.md) ·
+  [comprehension-extraction-schema.md](docs/design/comprehension-extraction-schema.md) ·
+  [snomed-module.md](docs/design/snomed-module.md) ·
+  [icd10cm-ontology-module.md](docs/design/icd10cm-ontology-module.md) ·
+  [clinical-breadth.md](docs/design/clinical-breadth.md) ·
+  [fhir-emitters.md](docs/design/fhir-emitters.md) ·
+  [care-plan-module.md](docs/design/care-plan-module.md)
+- [Note comprehension introduction](docs/articles/note-comprehension-agent-ui.md) —
+  what it is, using it via the agent, and the roadmap toward an
+  agent-driven EHR
 
 ## Build pipeline
 
