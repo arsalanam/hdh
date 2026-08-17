@@ -1,0 +1,20 @@
+{
+  "description": "The model extracts from the note header. Rejected: the header is provenance, not clinical content.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "SOAP NOTE",
+        "occurrence": 1,
+        "attributes": []
+      }
+    ]
+  },
+  "expect": {
+    "status": "rejected",
+    "reasons": [
+      "not extracted from the note header"
+    ]
+  }
+}

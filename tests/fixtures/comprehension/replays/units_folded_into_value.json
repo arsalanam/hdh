@@ -1,0 +1,28 @@
+{
+  "description": "The model folds the unit into the value ('98.5F'). Legal per the schema \u2014 the prompt asks for separation, and the applier must still parse the number rather than choke.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "lab_vital",
+        "text": "Temperature",
+        "occurrence": 1,
+        "attributes": [
+          {
+            "kind": "value",
+            "text": "98.5F",
+            "occurrence": 1
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 1,
+    "relations": 0,
+    "texts": [
+      "Temperature"
+    ]
+  }
+}

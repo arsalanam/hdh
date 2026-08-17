@@ -1,0 +1,50 @@
+{
+  "description": "The model re-emits a diagnosis as its own indication. Live failure 2026-08-16: burned all 3 retries before the containment-collapse rule existed.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "essential hypertension",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "problem",
+        "text": "hypertension",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "medication",
+        "text": "Lisinopril",
+        "occurrence": 1,
+        "attributes": [
+          {
+            "kind": "dose",
+            "text": "10mg",
+            "occurrence": 1
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "kind": "treats",
+        "source": 2,
+        "target": 1,
+        "inferred": true
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 2,
+    "relations": 1,
+    "texts": [
+      "essential hypertension",
+      "Lisinopril"
+    ],
+    "relation_target": "essential hypertension"
+  }
+}

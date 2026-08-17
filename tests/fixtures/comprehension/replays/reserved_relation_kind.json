@@ -1,0 +1,34 @@
+{
+  "description": "MEASURES/REVEALS are schema-known but extractor-silent until their consumers land \u2014 the feedback must say so.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "lab_vital",
+        "text": "BP",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "problem",
+        "text": "essential hypertension",
+        "occurrence": 1,
+        "attributes": []
+      }
+    ],
+    "relations": [
+      {
+        "kind": "measures",
+        "source": 0,
+        "target": 1,
+        "inferred": true
+      }
+    ]
+  },
+  "expect": {
+    "status": "rejected",
+    "reasons": [
+      "reserved until its consumer lands"
+    ]
+  }
+}

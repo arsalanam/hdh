@@ -1,0 +1,35 @@
+{
+  "description": "The eval's 5/25 hard failure. The model means the vitals-panel pain SCORE ('pain 2/10' in O:), but 'pain' first occurs as a subjective complaint in S:. The locator took occurrence 1, so the mention sat in SUBJECTIVE while its own value sat in OBJECTIVE \u2014 'attribute span crosses its mention's section boundary', unrecoverable by retry because the note's layout causes it. The attributes now disambiguate which occurrence was meant.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: 71-year-old female presents with: Joint pain / stiffness. History of: Osteoarthritis.\n\nO: BP 138/82, HR 72, RR 14, T 98.4F, SpO2 96%, BMI 32.0, pain 2/10.\n\nA: Unspecified osteoarthritis.\n\nP: Continue current management.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "Joint pain",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "lab_vital",
+        "text": "pain",
+        "occurrence": 1,
+        "attributes": [
+          {
+            "kind": "value",
+            "text": "2/10",
+            "occurrence": 1
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 2,
+    "relations": 0,
+    "texts": [
+      "Joint pain",
+      "pain"
+    ]
+  }
+}

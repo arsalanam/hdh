@@ -445,21 +445,92 @@ ground truth localizes the defect to a pipeline stage.
 | **B** | normalize (SNOMED funnel for PROBLEM/PROCEDURE/ALLERGY; LabSpec-derived LOINC map for LAB_VITAL and catalog drug names for MEDICATION as documented placeholders until the phase-3 modules land), contextualize (section defaults + NegEx-lite rules, LLM adjudicates disagreements), disambiguate (ancestor-set context), stored records with codes/assertions/confidence | stages 3–5; mention F1 + linking accuracy measured against generator ground truth (master §8) |
 | **C** | assemble + validate (stages 6–7): typed FHIR Composition/Bundle export reusing the R4B emitters, the internal chart applier with reconciliation verdicts and the review queue, SOAP round-trip via `visit_to_soap` | the closed loop: note → structure → chart update → note |
 | **D** | `comprehend_note` agent tool (published API, catalog-gated) + review-loop CLI basics; `apply_note` (free-text charting from chat: provider attribution, same-date visit reconciliation) | the agent as prime consumer (master §13 phase 6) — and the provider chart-maintenance flow live |
-| **E** | the comprehensive testing plan (§14): replay corpus, property-based span tests, applier verdict matrix, scripted agent E2E scenarios, scorer fixes, eval rerun against the §12 baseline | comprehension trusted enough to regression-proof — every future prompt/funnel/model change measured, every live failure pinned |
+| **E** ✅ | the comprehensive testing plan (§14): replay corpus, property-based span tests, applier verdict matrix, scripted agent E2E scenarios, scorer fixes, eval rerun against the §12 baseline | comprehension trusted enough to regression-proof — every future prompt/funnel/model change measured, every live failure pinned. *Delivered 2026-08-17: 3 measurement defects and 1 validator bug found; §12 rewritten* |
 
-## 12. Baseline (milestone B, 2026-08-15)
+## 12. Baseline<a name="12-baseline-milestone-b-2026-08-15"></a>
 
-First measured numbers — 10 stored notes, LLM extraction, full SNOMED
-catalog: **mention recall 61.0% · precision 39.8% · F1 48.2% · linking
-59.4% · assertion 72.7%.** Read with three caveats that ARE the next
-tuning targets: (1) precision is structurally understated — the
-ground-truth builder omits vitals, so ~7 correct extractions per note
-count as unmatched (scorer fix queued); (2) recall misses cluster on
-"History of:" chronic problems — extractor variance on list-dense
-history lines, a prompt target; (3) linking measures funnel-top-choice
-against `hdh ontology tag`'s mapping — consistency between the two
-coding paths matters as much as raw accuracy. Every future change —
-prompt, funnel, SapBERT — is measured against this table.
+### Current — milestone E, 2026-08-17 (N=25, `claude-sonnet-4-6`)
+
+| Metric | Value | |
+|---|---|---|
+| mention recall | **95.8%** | 341/356 |
+| mention precision | **86.3%** | 341/395 extracted |
+| mention F1 | **90.8%** | |
+| linking accuracy | **74.4%** | 206/277 checked |
+| assertion accuracy | **76.2%** | 93/122 checked |
+
+Per-slice recall — the breakdown is what makes a weakness actionable:
+
+| slice | recall | | slice | recall |
+|---|---|---|---|---|
+| history-line | 100.0% (65/65) | | vitals | 100.0% (175/175) |
+| lab | 100.0% (21/21) | | allergy | 100.0% (2/2) |
+| medication | 88.5% (23/26) | | assessment | 84.2% (16/19) |
+| family-history | 81.2% (39/48) | | | |
+
+All 25 notes completed. Reproduce with `just eval` (≈$0.27; never part of
+`just qa` — see §14.3).
+
+### What changed from the milestone-B numbers, and what did not
+
+The first baseline read **recall 61.0% · precision 39.8% · F1 48.2% ·
+linking 59.4% · assertion 72.7%** over 10 notes. Milestone E's testing
+work showed that **most of that gap was measurement, not pipeline** —
+all three of its caveats turned out to be defects in the scorer or the
+validator, not in extraction:
+
+1. **Vitals were missing from ground truth.** Every correctly-extracted
+   vital counted as an unmatched extraction, which is most of why
+   precision read 39.8%. Vitals now score 100% (175/175) — they were
+   always being extracted.
+2. **History-line recall was a dating bug, not a prompt weakness.**
+   Ground truth was built from the patient's problem list *as it stands
+   today*, so a 2024 note was penalised for not mentioning a 2026
+   diagnosis. Probing the live extractor on the worst history line in
+   the corpus returned all five items, internal commas and all. With the
+   date filter, that slice is 100% (65/65). **No prompt change was made
+   or needed.**
+3. **A validator rule was failing 5 of 25 notes outright** with
+   "attribute span crosses its mention's section boundary" — 20% of the
+   corpus scoring nothing, invisible in the aggregate. Cause: a mention
+   like `pain` occurs both as a subjective complaint and as a vitals
+   score, and the locator took occurrence 1 while the attribute (`2/10`)
+   sat in the objective panel. Attributes now disambiguate which
+   occurrence was meant (§2 rule 5's sibling). All 25 notes now complete.
+
+The honest reading: the pipeline was performing at roughly this level all
+along and was being mis-measured. Recall and F1 are therefore **not**
+comparable across the two tables; treat milestone E as the baseline of
+record and milestone B as a footnote.
+
+### Outstanding work — the two real targets
+
+With measurement fixed, exactly two numbers are genuinely below where
+they should be, and both are *quality* rather than plumbing:
+
+- **Linking accuracy 74.4%** (71 wrong of 277) — the largest remaining
+  gap. This compares the SNOMED funnel's top choice against the code
+  `hdh ontology tag` assigned, so a miss is either a funnel ranking
+  problem or a disagreement between two coding paths that should agree.
+  Worth separating those two causes before tuning. This is also the
+  natural place to test whether a stronger model helps, since concept
+  selection is exactly the kind of judgment that differs by model — and
+  the harness now measures it cleanly enough to answer that with numbers
+  instead of intuition.
+- **Assertion accuracy 76.2%** (29 wrong of 122) — NegEx-lite rules plus
+  section defaults. Second priority, and likely a rules-coverage
+  question (which triggers, which windows) rather than a model question.
+
+Recall misses are concentrated and mostly arguable: `breast cancer` in
+family history, and administrative "problems" such as `Medication
+reconciliation / polypharmacy review` and `Annual wellness visit
+(Medicare)` — which are visit reasons rather than clinical problems, so
+declining to extract them may be correct behaviour and a further
+ground-truth question.
+
+**Comparability rule:** these numbers hold only for this model. Changing
+`HDH_AGENT_MODEL` establishes a new baseline rather than measuring an
+improvement — record the model with every table.
 
 ## 13. Open questions<a name="11-open-questions"></a>
 
@@ -528,6 +599,33 @@ The §12 caveats are work items, not footnotes:
 3. rerun `hdh comprehend --eval` at N=25 and record the new table beside
    the §12 baseline — every future prompt/funnel/SapBERT change reruns
    the same N and may not regress any column without a written reason.
+
+**What a rerun costs** (measured 2026-08-17 against the real tokenizer,
+not estimated): one extraction call is ~1,223 input tokens (prompt +
+legality table + note + JSON schema) and ~319 output. With retries
+averaging ~1.3 calls per note, a full rerun is:
+
+| N notes | Opus 5 | Sonnet 5 | Haiku 4.5 |
+|---|---|---|---|
+| 10 | $0.18 | $0.11 | $0.04 |
+| 25 | $0.46 | $0.27 | $0.09 |
+| 50 | $0.92 | $0.55 | $0.18 |
+| 100 | $1.83 | $1.10 | $0.37 |
+
+So the eval is **cents, not dollars** — the reason it stays on-demand is
+determinism and CI hygiene, not cost. That separation is **enforced, not
+assumed**: `tests/conftest.py` fails any test that constructs a live
+Anthropic client, so `just qa` can never make a billable call, and CI
+never needs a key. A test that genuinely needs the network marks itself
+`@pytest.mark.llm` and is deselected by default. Run the eval with
+`just eval` (defaults to N=25) or `just eval 50`. Every other layer of this plan
+(§14.1, §14.2, §14.4, §14.5) makes **zero API calls**: the stub extractor
+and replay corpus keep them free and repeatable.
+
+Record the model with every baseline. Numbers are only comparable within
+one model — the §12 baseline was measured on the model then configured in
+`HDH_AGENT_MODEL`, and a rerun on a different model is a new baseline,
+not a regression.
 
 ### 14.4 Postgres parity
 

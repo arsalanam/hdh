@@ -11,6 +11,8 @@ retry.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from hdh.modules.comprehension.contracts import (
     ATTRIBUTE_LEGALITY,
     EMITTABLE_RELATIONS,
@@ -94,50 +96,17 @@ def _enum(value, enum_cls, label: str, reasons: list[str]):
 def build_extraction(note: str, raw: dict, sections: tuple[Section, ...]) -> Extraction:
     """Validate raw extractor output against §7's rules; raise
     :class:`ExtractionError` with every collected reason on failure."""
-    from hdh.modules.comprehension.segment import section_for
 
     reasons: list[str] = []
     mentions: list[Mention] = []
 
     raw_to_built: dict[int, int] = {}
     for index, item in enumerate(raw.get("mentions", ())):
-        label = f"mention[{index}]"
-        mention_type = _enum(item.get("type"), MentionType, label, reasons)
-        span = _locate(note, item, label, reasons)
-        if mention_type is None or span is None:
+        built = _build_mention(note, sections, item, f"mention[{index}]", reasons)
+        if built is None:
             continue
-        section = section_for(sections, span)
-        if section is None:
-            reasons.append(f"{label}: span {span} lies outside every section")
-            continue
-        if section.kind is SectionKind.HEADER:
-            reasons.append(f"{label}: mentions are not extracted from the note header")
-            continue
-        attributes: list[MentionAttribute] = []
-        for a_index, attr in enumerate(item.get("attributes", ())):
-            a_label = f"{label}.attribute[{a_index}]"
-            kind = _enum(attr.get("kind"), AttributeKind, a_label, reasons)
-            a_span = _locate(note, attr, a_label, reasons)
-            if kind is None or a_span is None:
-                continue
-            if mention_type not in ATTRIBUTE_LEGALITY[kind]:
-                reasons.append(f"{a_label}: kind '{kind.value}' is illegal on a {mention_type.value} mention")
-                continue
-            if not (section.span.start <= a_span.start and a_span.end <= section.span.end):
-                reasons.append(f"{a_label}: attribute span crosses its mention's section boundary")
-                continue
-            attributes.append(MentionAttribute(kind=kind, span=a_span, text=attr["text"]))
         raw_to_built[index] = len(mentions)
-        mentions.append(
-            Mention(
-                id=len(mentions),
-                mention_type=mention_type,
-                span=span,
-                text=item["text"],
-                section_id=section.id,
-                attributes=tuple(attributes),
-            )
-        )
+        mentions.append(replace(built, id=len(mentions)))
 
     mentions, raw_to_built = _collapse_contained(mentions, raw_to_built)
     _check_overlaps(mentions, reasons)
@@ -163,7 +132,6 @@ def _collapse_contained(
     indication ('hypertension' inside 'essential hypertension'); that is
     noise, not an error worth a retry. Attributes the survivor lacks are
     carried over; relations re-point via the returned raw map."""
-    from dataclasses import replace
 
     def container_of(index: int) -> int:
         mention = mentions[index]
@@ -201,6 +169,102 @@ def _collapse_contained(
     renumbered = [replace(mention, id=position) for position, mention in enumerate(kept)]
     remapped = {raw: new_index[survivor[built]] for raw, built in raw_to_built.items()}
     return renumbered, remapped
+
+
+def _attribute_spans(note: str, item: dict) -> list[Span]:
+    """Where this mention's attributes actually sit — located without
+    recording reasons, because this pass only informs occurrence choice."""
+    spans = []
+    for attr in item.get("attributes", ()):
+        throwaway: list[str] = []
+        span = _locate(note, attr, "probe", throwaway)
+        if span is not None:
+            spans.append(span)
+    return spans
+
+
+def _realign_to_attributes(note: str, sections, item: dict, span: Span) -> Span:
+    """Pick the occurrence of the mention text that its own attributes
+    point at.
+
+    A word like "pain" appears both as a subjective complaint and as a
+    vitals score; "BP" can appear in the plan and the objective panel.
+    The extractor names the entity and its value correctly, but the
+    occurrence index is the one thing models are unreliable about — so
+    when the attributes land in a different section than the mention,
+    prefer an occurrence whose section holds them. Every candidate is a
+    verbatim occurrence, so the span invariant never bends."""
+    from hdh.modules.comprehension.segment import section_for
+
+    attribute_spans = _attribute_spans(note, item)
+    if not attribute_spans:
+        return span
+    section = section_for(sections, span)
+    if section is not None and all(
+        section.span.start <= a.start and a.end <= section.span.end for a in attribute_spans
+    ):
+        return span  # already coherent
+
+    text = item.get("text", "")
+    anchor = min(a.start for a in attribute_spans)
+    best: Span | None = None
+    occurrence = 1
+    while (start := _nth_occurrence(note, text, occurrence)) != -1 and occurrence <= 20:
+        candidate = Span(start, start + len(text))
+        candidate_section = section_for(sections, candidate)
+        if candidate_section is not None and all(
+            candidate_section.span.start <= a.start and a.end <= candidate_section.span.end
+            for a in attribute_spans
+        ):
+            if best is None or abs(candidate.start - anchor) < abs(best.start - anchor):
+                best = candidate
+        occurrence += 1
+    return best or span
+
+
+def _build_mention(note: str, sections, item: dict, label: str, reasons: list[str]) -> Mention | None:
+    """One validated mention, or None with the reasons recorded."""
+    from hdh.modules.comprehension.segment import section_for
+
+    mention_type = _enum(item.get("type"), MentionType, label, reasons)
+    span = _locate(note, item, label, reasons)
+    if mention_type is None or span is None:
+        return None
+    span = _realign_to_attributes(note, sections, item, span)
+    section = section_for(sections, span)
+    if section is None:
+        reasons.append(f"{label}: span {span} lies outside every section")
+        return None
+    if section.kind is SectionKind.HEADER:
+        reasons.append(f"{label}: mentions are not extracted from the note header")
+        return None
+
+    attributes: list[MentionAttribute] = []
+    for a_index, attr in enumerate(item.get("attributes", ())):
+        a_label = f"{label}.attribute[{a_index}]"
+        kind = _enum(attr.get("kind"), AttributeKind, a_label, reasons)
+        a_span = _locate(note, attr, a_label, reasons)
+        if kind is None or a_span is None:
+            continue
+        if mention_type not in ATTRIBUTE_LEGALITY[kind]:
+            reasons.append(f"{a_label}: kind '{kind.value}' is illegal on a {mention_type.value} mention")
+            continue
+        if not (section.span.start <= a_span.start and a_span.end <= section.span.end):
+            reasons.append(
+                f"{a_label}: attribute {attr['text']!r} sits in a different section than the mention "
+                f"{item['text']!r} — point them at the same occurrence"
+            )
+            continue
+        attributes.append(MentionAttribute(kind=kind, span=a_span, text=attr["text"]))
+
+    return Mention(
+        id=0,  # renumbered by the caller
+        mention_type=mention_type,
+        span=span,
+        text=item["text"],
+        section_id=section.id,
+        attributes=tuple(attributes),
+    )
 
 
 def _check_overlaps(mentions: list[Mention], reasons: list[str]) -> None:
