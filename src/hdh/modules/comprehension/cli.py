@@ -9,6 +9,8 @@ extractor needs the ``[agent]`` extra and an API key.
 
 from __future__ import annotations
 
+REVIEW_CONFIDENCE = 0.6  # mentions below this are what the queue flags
+
 
 def register_cli(subparsers) -> None:
     """Register the `hdh comprehend` subcommand."""
@@ -51,6 +53,17 @@ def register_cli(subparsers) -> None:
         choices=("accept", "reject"),
         default="accept",
         help="With --resolve: accept (complete) or reject (failed)",
+    )
+    p.add_argument(
+        "--icd10",
+        default=None,
+        metavar="CODE",
+        help="With --resolve --decision accept: chart the flagged problem with this billing code",
+    )
+    p.add_argument(
+        "--mention",
+        default=None,
+        help="With --icd10: which flagged mention to chart, when a record has several",
     )
     p.add_argument("--model", default=None, help="Model override (default: HDH_AGENT_MODEL)")
     p.set_defaults(func=run)
@@ -197,6 +210,11 @@ def run_review(session, args) -> None:
 
     if args.resolve is not None:
         decision = "complete" if args.decision == "accept" else "failed"
+        charted = ""
+        if getattr(args, "icd10", None):
+            if args.decision != "accept":
+                raise SystemExit("--icd10 only applies to --decision accept")
+            charted = _chart_review_item(session, args)
         updated = session.execute(
             update(records_t)
             .where(records_t.c.id == args.resolve, records_t.c.status == "needs_review")
@@ -205,7 +223,7 @@ def run_review(session, args) -> None:
         session.commit()
         if updated.rowcount == 0:
             raise SystemExit(f"no needs_review record #{args.resolve}")
-        print(f"record #{args.resolve} → {decision}")
+        print(f"record #{args.resolve} → {decision}{charted}")
         return
 
     rows = session.execute(
@@ -218,10 +236,89 @@ def run_review(session, args) -> None:
         print(f"record #{record.id} (visit_note {record.visit_note_id}, v{record.pipeline_version}):")
         flagged = session.execute(
             select(mentions_t)
-            .where(mentions_t.c.record_id == record.id, mentions_t.c.confidence < 0.6)
+            .where(mentions_t.c.record_id == record.id, mentions_t.c.confidence < REVIEW_CONFIDENCE)
             .order_by(mentions_t.c.start)
         ).all()
         for mention in flagged:
             code = mention.concept_id or (mention.properties or {}).get("code") or "unlinked"
             print(f"  {str(mention.mention_type):<12} {mention.text!r} → {code} (conf {mention.confidence})")
     print("\nresolve with: hdh comprehend --review --resolve <id> --decision accept|reject")
+
+
+def _flagged_mentions(session, record_id: int, wanted: str | None) -> list:
+    """The record's low-confidence problem mentions, narrowed by --mention."""
+    from sqlalchemy import select
+
+    from hdh.core.models import Base
+
+    mentions_t = Base.metadata.tables["note_mentions"]
+    rows = session.execute(
+        select(mentions_t)
+        .where(mentions_t.c.record_id == record_id, mentions_t.c.confidence < REVIEW_CONFIDENCE)
+        .order_by(mentions_t.c.start)
+    ).all()
+    problems = [row for row in rows if str(row.mention_type).endswith("problem")]
+    if wanted:
+        problems = [row for row in problems if wanted.lower() in row.text.lower()]
+    return problems
+
+
+def _chart_review_item(session, args) -> str:
+    """Accepting a review item WRITES it (design chart-maintenance.md §4).
+
+    This is the transition the review queue always implied and never had:
+    the item a human just approved becomes a real Condition, created
+    through the same audited path as every other chart change — so the
+    trail records that a person, not the pipeline, made the call."""
+    from sqlalchemy import select
+
+    from hdh.core.chartedit import Actor, record_creation
+    from hdh.core.chartedit.cli import _actor
+    from hdh.core.models import Base, Condition, ConditionStatus, EditSource, Visit, VisitNote
+
+    records_t = Base.metadata.tables["note_records"]
+    record = session.execute(select(records_t).where(records_t.c.id == args.resolve)).first()
+    if record is None:
+        raise SystemExit(f"no record #{args.resolve}")
+    note = session.get(VisitNote, record.visit_note_id)
+    visit = session.get(Visit, note.visit_id) if note else None
+    if visit is None:
+        raise SystemExit(f"record #{args.resolve} has no visit to chart against")
+
+    flagged = _flagged_mentions(session, args.resolve, args.mention)
+    if not flagged:
+        raise SystemExit(
+            f"record #{args.resolve} has no flagged problem mention"
+            + (f" matching {args.mention!r}" if args.mention else " to chart")
+        )
+    if len(flagged) > 1:
+        names = ", ".join(repr(row.text) for row in flagged)
+        raise SystemExit(
+            f"record #{args.resolve} has several flagged mentions ({names}) — pick one with --mention"
+        )
+
+    mention = flagged[0]
+    snomed = (mention.concept_id or "").split(":", 1)[-1] if mention.concept_id else None
+    row = Condition(
+        patient_id=visit.patient_id,
+        visit_id=visit.id,
+        icd10_code=args.icd10,
+        description=mention.text,
+        chronic=False,
+        status=ConditionStatus.ACTIVE,
+        onset_date=visit.visit_date,
+    )
+    if snomed and hasattr(row, "snomed_code") and hasattr(row, "snomed_display"):
+        row.snomed_code = snomed
+        row.snomed_display = (mention.properties or {}).get("display") or mention.text
+    session.add(row)
+    session.flush()
+    actor = _actor()
+    record_creation(
+        session,
+        Actor(name=actor.name, source=EditSource.CLI, provider_id=None),
+        "Condition",
+        row,
+        reason=f"review resolution: record #{args.resolve} accepted with {args.icd10}",
+    )
+    return f" · charted {mention.text!r} as {args.icd10} (Condition #{row.id})"

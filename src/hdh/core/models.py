@@ -13,11 +13,13 @@ import enum
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -80,6 +82,24 @@ class AllergySeverity(str, enum.Enum):
 class NoteType(str, enum.Enum):
     SOAP = "soap"
     ADDENDUM = "addendum"
+
+
+class EditSource(str, enum.Enum):
+    """Which surface made a chart change (design chart-maintenance.md §3.2)."""
+
+    CLI = "cli"
+    AGENT = "agent"
+    PIPELINE = "pipeline"  # the comprehension applier
+
+
+class AuditAction(str, enum.Enum):
+    """What happened to the row. Wider than EditAction: creation is
+    audited (comprehension's own writes) but is not something the edit
+    API performs."""
+
+    CREATE = "create"
+    AMEND = "amend"
+    VOID = "void"
 
 
 # ─── Reference entities (thin: identity only — modules add richness) ─────────
@@ -243,6 +263,7 @@ class Condition(Base):
     is_primary: Mapped[bool | None] = mapped_column(Boolean, default=True)
     onset_date: Mapped[date | None] = mapped_column(Date)
     resolved_date: Mapped[date | None] = mapped_column(Date)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     patient: Mapped["Patient"] = relationship(back_populates="conditions")
     visit: Mapped["Visit | None"] = relationship(back_populates="conditions")
@@ -278,6 +299,7 @@ class Visit(Base):
     )
     procedures: Mapped[list["Procedure"]] = relationship(back_populates="visit")
     notes: Mapped[list["VisitNote"]] = relationship(back_populates="visit", cascade="all, delete-orphan")
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
 
 class Vital(Base):
@@ -298,6 +320,7 @@ class Vital(Base):
     height_cm: Mapped[float | None] = mapped_column(Float)
     bmi: Mapped[float | None] = mapped_column(Float)
     pain_scale: Mapped[int | None] = mapped_column(Integer)  # 0-10
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     visit: Mapped["Visit"] = relationship(back_populates="vitals")
 
@@ -317,6 +340,7 @@ class Prescription(Base):
     duration_days: Mapped[int | None] = mapped_column(Integer)
     refills: Mapped[int | None] = mapped_column(Integer, default=0)
     is_new: Mapped[bool | None] = mapped_column(Boolean, default=True)  # False = continuation
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     visit: Mapped["Visit"] = relationship(back_populates="prescriptions")
 
@@ -335,6 +359,7 @@ class LabResult(Base):
     reference_high: Mapped[float | None] = mapped_column(Float)
     status: Mapped[LabStatus] = mapped_column(SAEnum(LabStatus))
     loinc_code: Mapped[str | None] = mapped_column(String(10))
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     visit: Mapped["Visit"] = relationship(back_populates="lab_results")
 
@@ -353,6 +378,7 @@ class Allergy(Base):
     reaction: Mapped[str | None] = mapped_column(String(100))
     severity: Mapped[AllergySeverity | None] = mapped_column(SAEnum(AllergySeverity))
     noted_date: Mapped[date | None] = mapped_column(Date)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     patient: Mapped["Patient"] = relationship(back_populates="allergies")
 
@@ -429,6 +455,36 @@ class VisitNote(Base):
     author: Mapped["Provider | None"] = relationship()
 
 
+class ChartAuditEvent(Base):
+    """One recorded change to one chart row — who, what, when, why.
+
+    Append-only by construction: nothing in the codebase updates or
+    deletes these rows, which is what makes an agent-maintained chart
+    auditable (design chart-maintenance.md §3.3). ``before``/``after``
+    hold only the touched fields, so the trail stays readable.
+    """
+
+    __tablename__ = "chart_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    actor_name: Mapped[str] = mapped_column(String(120))
+    actor_source: Mapped[EditSource] = mapped_column(SAEnum(EditSource))
+    provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    entity: Mapped[str] = mapped_column(String(40))
+    row_id: Mapped[int] = mapped_column(Integer)
+    action: Mapped[AuditAction] = mapped_column(SAEnum(AuditAction))
+    reason: Mapped[str] = mapped_column(String(400), default="")
+    before: Mapped[dict | None] = mapped_column(JSON)
+    after: Mapped[dict | None] = mapped_column(JSON)
+
+    patient: Mapped["Patient"] = relationship()
+    provider: Mapped["Provider | None"] = relationship()
+
+    __table_args__ = (Index("ix_chart_audit_patient", "patient_id", "occurred_at"),)
+
+
 # ─── Database setup helper ─────────────────────────────────────────────────────
 
 
@@ -485,3 +541,12 @@ def tool_guard(session):
         return wrapped
 
     return decorator
+
+
+# Voided rows stop being visible to ORM reads the moment this module is
+# imported — voiding is meaningless if every reader still returns the row
+# (design chart-maintenance.md §3.3). Opt back in per query with
+# ``execution_options(include_voided=True)``.
+from hdh.core.chartedit.visibility import install as _install_void_filter  # noqa: E402
+
+_install_void_filter()

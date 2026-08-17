@@ -142,6 +142,8 @@ hdh comprehend --file note.txt                          # print the coded record
 hdh comprehend --mrn MRN... --visit-date 2026-08-14 --store   # persist it
 hdh comprehend --mrn MRN... --visit-date 2026-08-14 --apply --dry-run
 hdh comprehend --review                                 # the human review queue
+hdh comprehend --review --resolve 12 --decision accept --icd10 R51.9
+                                                        # approve → charts it, audited
 hdh comprehend --file note.txt --fhir bundle.json       # FHIR document export
 ```
 
@@ -150,6 +152,35 @@ Design docs: [notes-comprehension-service.md](docs/design/notes-comprehension-se
 (the extraction contract, milestones, eval baseline, and testing plan).
 For the bigger picture — why the agent tier is the new EHR UI — read the
 [note-comprehension introduction](docs/articles/note-comprehension-agent-ui.md).
+
+### Correct the chart — with an audit trail
+
+Charts get things wrong: a mis-transcribed vital, a duplicate encounter,
+a diagnosis that turned out to be something else. `hdh.core.chartedit` is
+the **one sanctioned way** to change a chart row, and it records who
+changed what, when, and why:
+
+```bash
+hdh chart history --mrn MRN12345678              # who changed what, and why
+hdh chart amend --entity Condition --id 42 --set status=resolved \
+                --reason "resolved at follow-up" --dry-run
+hdh chart void --visit 2064 --reason "duplicate encounter"
+hdh chart purge-visit --id 2064 --yes            # ADMIN: really delete (not clinical)
+```
+
+The agent holds the same capability through `amend_chart_entry`,
+`void_chart_entry` and `chart_history` — one row per call, a reason
+required, `dry_run` for previews, and **no delete tool at all**. Both
+surfaces are thin clients of one core, so a correction made by talking to
+the agent and one made at the terminal land in the same trail with the
+same shape.
+
+Clinical rows are **voided, never deleted**: the row stops appearing in
+the chart (exports, cohort queries and comprehension's reconciliation all
+respect it) while the audit event keeps its referent. Comprehension's own
+writes are recorded too, so history answers "where did this diagnosis
+come from?" with "the note, via the pipeline". Design:
+[chart-maintenance.md](docs/design/chart-maintenance.md).
 
 ### The agent pipeline
 
@@ -195,6 +226,7 @@ src/hdh/
 │   ├── conditions.py       # Condition contracts + catalog: frozen profiles, packs, comorbidity webs
 │   ├── disease_engine.py   # family-medicine-core pack (32 conditions)
 │   ├── cardiometabolic.py  # cardiometabolic pack (7): CKD staged, CAD, HF, AFib, stroke hx
+│   ├── chartedit/          # The one sanctioned chart-mutation path + audit trail
 │   ├── generators.py       # Patient & visit-history generators (Faker-based)
 │   └── exporters.py        # JSON, FHIR R4 Bundle, plain-text chart exporters
 ├── modules/         # Optional feature modules (each depends only on core)
@@ -264,6 +296,8 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
   [snomed](docs/guides/snomed.md) ·
   [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md)
+- Chart maintenance — [chart-maintenance.md](docs/design/chart-maintenance.md)
+  (symptom billing coverage + amend/void with an audit trail)
 - Design docs — [notes-comprehension-service.md](docs/design/notes-comprehension-service.md) ·
   [comprehension-extraction-schema.md](docs/design/comprehension-extraction-schema.md) ·
   [snomed-module.md](docs/design/snomed-module.md) ·

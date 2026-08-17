@@ -241,9 +241,18 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         dataset_stats,
     ]
     all_tools.extend(_ontology_tools(session))
+    all_tools.extend(_chart_tools(session))
     if include is None:
         return all_tools
     return [tool for tool in all_tools if tool.name in include]
+
+
+def _chart_tools(session) -> list:
+    """Chart maintenance (amend / void / audit trail) — core, so these are
+    always available; the agent proposes and hdh.core.chartedit decides."""
+    from hdh.modules.agent.chart_tools import build_chart_tools
+
+    return build_chart_tools(session)
 
 
 def _ontology_tools(session) -> list:
