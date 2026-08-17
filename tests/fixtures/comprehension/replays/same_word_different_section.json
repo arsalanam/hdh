@@ -1,0 +1,29 @@
+{
+  "description": "The same word in a different section is a DIFFERENT mention (design \u00a71: one entity, one mention \u2014 the assessment's diagnosis and the plan's indication are separate spans). Collapse must not over-reach and merge them.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "essential hypertension",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "problem",
+        "text": "hypertension",
+        "occurrence": 2,
+        "attributes": []
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 2,
+    "relations": 0,
+    "texts": [
+      "essential hypertension",
+      "hypertension"
+    ]
+  }
+}

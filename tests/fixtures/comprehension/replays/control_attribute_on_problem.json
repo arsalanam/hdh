@@ -1,0 +1,28 @@
+{
+  "description": "The model needs disease-control status on problems. Live failure: 3 retries failed until CONTROL was admitted to the attribute table (legal on PROBLEM only).",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Doing well.\n\nO: TSH 2.1.\n\nA: Hypothyroidism, well controlled on current dose.\n\nP: Continue Levothyroxine 50mcg.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "Hypothyroidism",
+        "occurrence": 1,
+        "attributes": [
+          {
+            "kind": "control",
+            "text": "well controlled",
+            "occurrence": 1
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 1,
+    "relations": 0,
+    "texts": [
+      "Hypothyroidism"
+    ]
+  }
+}

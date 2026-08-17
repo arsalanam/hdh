@@ -23,3 +23,35 @@ def db_session():
     build_dataset(session, n_patients=8, years_of_history=2, verbose=False)
     yield session
     session.close()
+
+
+@pytest.fixture(autouse=True)
+def no_live_llm_calls(request, monkeypatch):
+    """`just qa` must never spend money or need an API key.
+
+    Same spirit as popping HDH_DB_URL above: a test must not reach a real
+    service by accident. Every comprehension test injects `stub_extractor`,
+    and the eval harness is driven from the CLI on demand — but nothing
+    *enforced* that until now, so one careless test could silently start
+    billing on every qa run (and fail in CI, which has no key).
+
+    Constructing a real Anthropic client during a test now fails loudly
+    with instructions. Tests that genuinely need the network opt in with
+    `@pytest.mark.llm`, which is deselected by default (see pyproject).
+    """
+    if request.node.get_closest_marker("llm"):
+        return
+    try:
+        import anthropic
+    except ImportError:  # the [agent] extra isn't installed — nothing to block
+        return
+
+    def _blocked(*_args, **_kwargs):
+        raise AssertionError(
+            "This test constructed a live Anthropic client, so `just qa` would "
+            "make a billable API call. Inject a stub instead — "
+            "`stub_extractor(raw)` for comprehension, or the client= parameter — "
+            "or mark the test @pytest.mark.llm to run it on demand."
+        )
+
+    monkeypatch.setattr(anthropic.Anthropic, "__init__", _blocked)

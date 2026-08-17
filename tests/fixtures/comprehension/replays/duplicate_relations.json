@@ -1,0 +1,39 @@
+{
+  "description": "The model emits the same TREATS relation twice. Noise, not an error \u2014 collapse silently rather than burning a retry.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "essential hypertension",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "medication",
+        "text": "Lisinopril",
+        "occurrence": 1,
+        "attributes": []
+      }
+    ],
+    "relations": [
+      {
+        "kind": "treats",
+        "source": 1,
+        "target": 0,
+        "inferred": true
+      },
+      {
+        "kind": "treats",
+        "source": 1,
+        "target": 0,
+        "inferred": true
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 2,
+    "relations": 1
+  }
+}

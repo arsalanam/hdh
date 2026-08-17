@@ -1,0 +1,35 @@
+{
+  "description": "A relation points at a mention that failed validation. The feedback must name that cause, not a shifted index.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "glaucoma that is not in the note",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "medication",
+        "text": "Lisinopril",
+        "occurrence": 1,
+        "attributes": []
+      }
+    ],
+    "relations": [
+      {
+        "kind": "treats",
+        "source": 1,
+        "target": 0,
+        "inferred": true
+      }
+    ]
+  },
+  "expect": {
+    "status": "rejected",
+    "reasons": [
+      "not found in the note",
+      "failed validation"
+    ]
+  }
+}

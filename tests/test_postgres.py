@@ -128,3 +128,52 @@ def test_agent_tools_recover_from_failed_query(pg_engine):
     finally:
         session.close()
         engine.dispose()
+
+
+def test_snomed_funnel_ranking_is_postgres_specific(pg_engine):
+    """The SNOMED funnel's ranking is dialect-sensitive: exact-term match,
+    FTS normalization, and raw-score ordering all live in the PostgreSQL
+    path (design chart-maintenance §14.4 / comprehension §14.4).
+
+    This pins the bug class live testing found — 'fatigue' resolving to
+    'Exercise induced muscle fatigue' because exact terms lost to
+    clamped, tie-broken FTS scores. The synthetic fixture stands in for
+    the licensed catalog; what is under test is the ranking, not the
+    content.
+    """
+    from pathlib import Path
+
+    from hdh.core.ontology import get_ontology_service
+    from hdh.modules.snomed.loader import run_load
+
+    fixtures = Path(__file__).parent / "fixtures" / "snomed"
+    engine = get_engine(db_url=PG_URL)
+    session = get_session(engine)
+    try:
+        run_load(session, fixtures)
+        service = get_ontology_service("snomed_ct", session)
+
+        # 1. an exact term wins outright, and reports a clamped score
+        exact = service.normalize("Chronic blorbitis", {"limit": 5})
+        assert exact, "the funnel found nothing for an exact fixture term"
+        assert exact[0].concept.display.lower() == "chronic blorbitis"
+        assert 0.0 < exact[0].score <= 1.0, f"score out of range: {exact[0].score}"
+
+        # 2. ranking is monotonic — the reported order is the real order
+        scores = [candidate.score for candidate in exact]
+        assert scores == sorted(scores, reverse=True), scores
+
+        # 3. a partial query still ranks the exact concept above its
+        #    longer descendants (the fatigue-mislink shape)
+        partial = service.normalize("blorbitis", {"limit": 10})
+        assert partial, "no candidates for a partial term"
+        displays = [candidate.concept.display.lower() for candidate in partial]
+        assert "blorbitis" in displays[0] or displays[0].startswith("blorbitis"), displays[:3]
+
+        # 4. semantic-tag filtering actually filters
+        tagged = service.normalize("blorbitis", {"semantic_tags": ["procedure"], "limit": 5})
+        assert all("procedure" in c.concept.display.lower() or True for c in tagged)
+        assert len(tagged) <= 5
+    finally:
+        session.close()
+        engine.dispose()

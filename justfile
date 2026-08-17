@@ -52,6 +52,12 @@ deps-nuke:
 test-pg:
     {{run}} python scripts/test_pg.py
 
+# Comprehension eval against generator ground truth — BILLABLE, on demand.
+# Never part of `just qa`: the suite blocks live API calls (tests/conftest.py).
+# ~$0.01 per note; N=25 is the baseline size recorded in the design doc §12.
+eval n="25":
+    {{run}} hdh comprehend --eval {{n}}
+
 # ── Schema migrations (Alembic over registry-merged metadata) ────────────────
 
 # Autogenerate a migration after editing model code or module schema JSON

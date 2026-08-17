@@ -1,0 +1,26 @@
+{
+  "description": "The other half of the CONTROL admission: it is legal on PROBLEM only. A medication carrying it must still be rejected with a usable reason.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Doing well.\n\nO: TSH 2.1.\n\nA: Hypothyroidism, well controlled on current dose.\n\nP: Continue Levothyroxine 50mcg.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "medication",
+        "text": "Levothyroxine",
+        "occurrence": 1,
+        "attributes": [
+          {
+            "kind": "control",
+            "text": "well controlled",
+            "occurrence": 1
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "status": "rejected",
+    "reasons": [
+      "illegal on a medication mention"
+    ]
+  }
+}

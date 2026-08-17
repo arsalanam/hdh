@@ -65,8 +65,9 @@ where = ["src"]
 testpaths = ["tests"]
 markers = [
     "fullload: needs a real, licensee-loaded SNOMED CT edition (HDH_SNOMED_DB_URL); CI never runs these",
+    "llm: makes billable Anthropic API calls; never runs in `just qa` or CI — run on demand",
 ]
-addopts = "-m 'not fullload'"
+addopts = "-m 'not fullload and not llm'"
 
 [tool.coverage.run]
 source = ["hdh"]
