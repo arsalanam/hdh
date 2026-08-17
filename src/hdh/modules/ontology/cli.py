@@ -27,9 +27,12 @@ def run(session, args):
             "was not bootstrapped (this should not happen via the hdh CLI)."
         )
 
+    from .symptoms import record_symptom_edges
+
     mappings = derive_mappings(session)
     counts = tag_conditions(session, mappings)
     edges = record_maps_to_edges(session, mappings)
+    symptom_edges = record_symptom_edges(session)
     tagged = sum(counts.values())
     untagged = session.query(Condition).filter(Condition.snomed_code.is_(None)).count()
     print(
@@ -37,4 +40,8 @@ def run(session, args):
         f"({counts['profile']:,} profile-authored, {counts['curated']:,} curated, "
         f"{counts['derived']:,} derived from the loaded catalogs) · "
         f"{edges:,} maps_to edges recorded · {untagged:,} remain unmapped"
+    )
+    print(
+        f"🩺 {symptom_edges:,} curated symptom maps_to edges — free-text complaints "
+        "(headache, fatigue, dizziness…) now carry a billing view"
     )

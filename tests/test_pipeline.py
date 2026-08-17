@@ -189,7 +189,9 @@ def test_selective_tool_exposure_by_intent():
     scoped = build_tools(None, include={"get_risk_scores", "query_database", "search_patients"})
     assert {t.name for t in scoped} == {"get_risk_scores", "query_database", "search_patients"}
     everything = build_tools(None)
-    assert len(everything) == 6
+    # 6 core + 3 chart-maintenance (core, always available); the ontology
+    # and comprehension toolsets need their catalogs and stay absent here
+    assert len(everything) == 9
 
 
 def test_selective_schema_revealing():

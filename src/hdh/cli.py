@@ -19,12 +19,13 @@ import random
 import sys
 from datetime import date, timedelta
 
+# ─── Stats ────────────────────────────────────────────────────────────────────
+from hdh.core.chartedit.cli import register as register_chart
+from hdh.core.chartedit.cli import run as run_chart
 from hdh.core.conditions import default_catalog
 from hdh.core.exporters import export_fhir, export_json, export_text, patient_to_text
 from hdh.core.generators import build_dataset, generate_visit_history
 from hdh.core.models import Condition, Patient, Visit, get_engine, get_session
-
-# ─── Stats ────────────────────────────────────────────────────────────────────
 
 
 def cmd_stats(session):
@@ -368,6 +369,8 @@ def main():
     mig_p.add_argument("--batch", type=int, default=5000)
     mig_p.add_argument("--force", action="store_true", help="Clear existing rows in the target first")
 
+    register_chart(sub)  # chart maintenance: amend / void / audit trail
+
     # Feature-module subcommands (each module defers heavy imports to run time)
     from hdh.modules import CLI_MODULES
 
@@ -402,6 +405,9 @@ def main():
             progression_cadence=args.progression_cadence,
         )
         cmd_stats(session)
+
+    elif args.command == "chart":
+        run_chart(session, args)
 
     elif args.command == "stats":
         cmd_stats(session)

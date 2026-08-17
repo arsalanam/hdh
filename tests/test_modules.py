@@ -72,6 +72,9 @@ def test_agent_tools_build(db_session):
         "get_note_record",
         "search_note_mentions",
         "apply_note",
+        "amend_chart_entry",
+        "void_chart_entry",
+        "chart_history",
     }
 
 

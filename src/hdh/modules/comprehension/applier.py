@@ -52,6 +52,7 @@ class ApplyResult:
     visit_id: int
     created_visit: bool
     verdicts: list[Verdict] = field(default_factory=list)
+    created: list[tuple[str, Any]] = field(default_factory=list)  # (entity, row) for the audit pass
 
     @property
     def needs_review(self) -> bool:
@@ -127,8 +128,30 @@ def apply_to_chart(
     if dry_run:
         session.rollback()
     else:
+        _audit_creations(session, result, provider_id)
         session.commit()
     return result
+
+
+def _audit_creations(session, result: ApplyResult, provider_id: int | None) -> None:
+    """Record how these entries arrived (design §7 Q2): comprehension's
+    own writes belong in the chart's history, so `hdh chart history` can
+    answer "who put this here?" with "the note, via the pipeline"."""
+    from hdh.core.chartedit import record_creation
+    from hdh.core.chartedit.contracts import Actor
+    from hdh.core.models import EditSource, Provider
+
+    if not result.created:
+        return
+    session.flush()
+    name = "comprehension"
+    if provider_id is not None:
+        provider = session.get(Provider, provider_id)
+        if provider is not None:
+            name = provider.name
+    actor = Actor(name=name, source=EditSource.PIPELINE, provider_id=provider_id)
+    for entity, row in result.created:
+        record_creation(session, actor, entity, row, reason=f"charted from note (visit #{result.visit_id})")
 
 
 def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: ApplyResult) -> None:
@@ -194,6 +217,7 @@ def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: A
             row.snomed_code = item.code.code
             row.snomed_display = item.code.display
         session.add(row)
+        result.created.append(("Condition", row))
         added_this_run.add(item.code.code)
         result.verdicts.append(
             Verdict("new", "condition", f"{item.mention.text!r} → {icd10} / snomed {item.code.code}")
@@ -218,16 +242,16 @@ def _apply_medications(session, visit, note: ComprehendedNote, result: ApplyResu
             result.verdicts.append(Verdict("confirmed", "medication", f"{drug}: already on this visit"))
             continue
         status_word = (_attr(item, AttributeKind.STATUS_WORD) or "").lower()
-        session.add(
-            Prescription(
-                visit_id=visit.id,
-                drug_name=drug,
-                drug_class="",
-                dose=_attr(item, AttributeKind.DOSE) or "",
-                frequency=_attr(item, AttributeKind.FREQUENCY) or "",
-                is_new="start" in status_word,
-            )
+        prescription = Prescription(
+            visit_id=visit.id,
+            drug_name=drug,
+            drug_class="",
+            dose=_attr(item, AttributeKind.DOSE) or "",
+            frequency=_attr(item, AttributeKind.FREQUENCY) or "",
+            is_new="start" in status_word,
         )
+        session.add(prescription)
+        result.created.append(("Prescription", prescription))
         added_this_run.add(drug.lower())
         result.verdicts.append(
             Verdict("new", "medication", f"{drug} {_attr(item, AttributeKind.DOSE) or ''}".strip())
@@ -275,7 +299,9 @@ def _apply_vitals(session, visit, note: ComprehendedNote, result: ApplyResult) -
     if visit.vitals is not None:
         result.verdicts.append(Verdict("confirmed", "vitals", "visit already has a vitals row"))
         return
-    session.add(Vital(visit_id=visit.id, **values))
+    vital = Vital(visit_id=visit.id, **values)
+    session.add(vital)
+    result.created.append(("Vital", vital))
     result.verdicts.append(Verdict("new", "vitals", ", ".join(sorted(values))))
 
 
@@ -297,15 +323,15 @@ def _apply_allergies(session, patient, note: ComprehendedNote, result: ApplyResu
             continue
         severity_text = (_attr(item, AttributeKind.SEVERITY) or "").lower()
         severity = next((s for s in AllergySeverity if s.value in severity_text), None)
-        session.add(
-            Allergy(
-                patient_id=patient.id,
-                substance=substance,
-                reaction=_attr(item, AttributeKind.REACTION),
-                severity=severity,
-                noted_date=note_date(note) or date_type.today(),
-            )
+        allergy = Allergy(
+            patient_id=patient.id,
+            substance=substance,
+            reaction=_attr(item, AttributeKind.REACTION),
+            severity=severity,
+            noted_date=note_date(note) or date_type.today(),
         )
+        session.add(allergy)
+        result.created.append(("Allergy", allergy))
         added_this_run.add(substance.lower())
         result.verdicts.append(Verdict("new", "allergy", substance))
 
