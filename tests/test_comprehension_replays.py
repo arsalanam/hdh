@@ -92,3 +92,60 @@ def test_realignment_verifies_rather_than_guesses():
     reasons: list[str] = []
     span = _locate(note, plain, "m", reasons)
     assert _realign_to_attributes(note, sections, plain, span) == span
+
+
+def test_a_negation_word_inside_a_diagnosis_name_is_not_a_negation():
+    """ "Type 2 diabetes mellitus WITHOUT complications" sits in the history
+    list, and a backwards NegEx scan found that "without" and negated
+    every condition listed after it. On the real corpus this single false
+    positive accounted for ALL 20 assertion mismatches — hypertension and
+    COPD were being recorded as things the patient does not have."""
+    from hdh.modules.comprehension.contextualize import finalize_assertion
+    from hdh.modules.comprehension.contracts import Assertion
+
+    note = (
+        "SOAP NOTE\nProvider: Dr. Test\n\n"
+        "S: Reports fatigue. History of: Type 2 diabetes mellitus without complications, "
+        "Essential hypertension, COPD with acute exacerbation.\n\n"
+        "O: BP 138/82 mmHg.\n\nA: Fatigue.\n\nP: Continue.\n"
+    )
+    raw = {
+        "mentions": [
+            {
+                "type": "problem",
+                "text": "Type 2 diabetes mellitus without complications",
+                "occurrence": 1,
+                "attributes": [],
+            },
+            {"type": "problem", "text": "Essential hypertension", "occurrence": 1, "attributes": []},
+            {"type": "problem", "text": "COPD with acute exacerbation", "occurrence": 1, "attributes": []},
+        ]
+    }
+    extraction = build_extraction(note, raw, segment(note))
+    by_text = {m.text: m for m in extraction.mentions}
+
+    for name in ("Essential hypertension", "COPD with acute exacerbation"):
+        result = finalize_assertion(extraction, by_text[name])
+        assert result.assertion is Assertion.HISTORICAL, f"{name}: {result.assertion} ({result.evidence})"
+
+    # the diabetes mention itself is history too — its own name must not
+    # negate it either
+    diabetes = finalize_assertion(extraction, by_text["Type 2 diabetes mellitus without complications"])
+    assert diabetes.assertion is Assertion.HISTORICAL, diabetes.evidence
+
+
+def test_a_real_negation_still_negates():
+    """The fix must not blunt NegEx: a cue OUTSIDE every mention span
+    still fires."""
+    from hdh.modules.comprehension.contextualize import finalize_assertion
+    from hdh.modules.comprehension.contracts import Assertion
+
+    note = (
+        "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient denies chest pain.\n\n"
+        "O: BP 138/82 mmHg.\n\nA: Fatigue.\n\nP: Continue.\n"
+    )
+    raw = {"mentions": [{"type": "problem", "text": "chest pain", "occurrence": 1, "attributes": []}]}
+    extraction = build_extraction(note, raw, segment(note))
+    result = finalize_assertion(extraction, extraction.mentions[0])
+    assert result.assertion is Assertion.NEGATED, result.evidence
+    assert "denies" in result.evidence

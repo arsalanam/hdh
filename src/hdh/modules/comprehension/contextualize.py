@@ -63,6 +63,26 @@ def _same_sentence(note: str, start: int, end: int) -> bool:
     return "." not in note[start:end]
 
 
+def _inside_another_mention(extraction: Extraction, mention: Mention, cue_start: int) -> bool:
+    """Is this cue part of some OTHER mention's own text?
+
+    Diagnosis names contain negation words: "Type 2 diabetes mellitus
+    **without** complications" sits in the history list, and a backwards
+    scan finds that "without" and negates every condition listed after
+    it. Measured on the corpus, this single false positive accounted for
+    all 20 assertion mismatches — "Essential hypertension" and "COPD with
+    acute exacerbation" were being recorded as things the patient does
+    NOT have.
+
+    A cue inside another mention's span is part of a name, not a
+    negation of the text that follows it."""
+    return any(
+        other.span.start <= cue_start < other.span.end
+        for other in extraction.mentions
+        if other.id != mention.id
+    )
+
+
 def finalize_assertion(extraction: Extraction, mention: Mention) -> AssertionResult:
     """Section default + local/shared trigger overrides, by precedence."""
     note = extraction.note_text
@@ -74,14 +94,20 @@ def finalize_assertion(extraction: Extraction, mention: Mention) -> AssertionRes
     before = note[window_start : mention.span.start].lower()
     for trigger, assertion in _PRE_TRIGGERS:
         position = before.rfind(trigger)
-        if position != -1 and _same_sentence(before, position + len(trigger), len(before)):
-            fired.append((assertion, f"trigger: {trigger.strip()!r}"))
+        if position == -1 or not _same_sentence(before, position + len(trigger), len(before)):
+            continue
+        if _inside_another_mention(extraction, mention, window_start + position):
+            continue  # part of a diagnosis name, not a cue
+        fired.append((assertion, f"trigger: {trigger.strip()!r}"))
     window_end = min(section.span.end, mention.span.end + _WINDOW)
     after = note[mention.span.end : window_end].lower()
     for trigger, assertion in _POST_TRIGGERS:
         position = after.find(trigger)
-        if position != -1 and _same_sentence(after, 0, position):
-            fired.append((assertion, f"trigger: {trigger!r}"))
+        if position == -1 or not _same_sentence(after, 0, position):
+            continue
+        if _inside_another_mention(extraction, mention, mention.span.end + position):
+            continue  # part of a diagnosis name, not a cue
+        fired.append((assertion, f"trigger: {trigger!r}"))
 
     for shared in extraction.shared_triggers:
         if (
