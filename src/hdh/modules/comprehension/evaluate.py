@@ -37,6 +37,7 @@ class Scorecard:
     asserted_checked: int = 0
     asserted_right: int = 0
     misses: list[str] = field(default_factory=list)
+    assertion_misses: list[str] = field(default_factory=list)
     by_slice: dict[str, list[int]] = field(default_factory=dict)  # name -> [found, truth]
 
     def add(self, other: Scorecard) -> None:
@@ -49,6 +50,7 @@ class Scorecard:
         self.asserted_checked += other.asserted_checked
         self.asserted_right += other.asserted_right
         self.misses.extend(other.misses)
+        self.assertion_misses.extend(other.assertion_misses)
         for name, (found, truth) in other.by_slice.items():
             totals = self.by_slice.setdefault(name, [0, 0])
             totals[0] += found
@@ -72,6 +74,10 @@ class Scorecard:
             found, truth = self.by_slice[name]
             share = found / truth if truth else 0.0
             lines.append(f"  recall · {name:<16}{share:6.1%}   ({found}/{truth})")
+        if self.assertion_misses:
+            lines.append("")
+            lines.append("assertion mismatches (expected -> got, with the rule that fired):")
+            lines.extend(f"  {miss}" for miss in self.assertion_misses[:15])
         if self.misses:
             lines.append("missed: " + "; ".join(self.misses[:8]))
         return "\n".join(lines)
@@ -202,6 +208,15 @@ def score_note(truth: tuple[TruthItem, ...], note: ComprehendedNote) -> Scorecar
             card.asserted_checked += 1
             if match.assertion.assertion is item.expected_assertion:
                 card.asserted_right += 1
+            else:
+                # The evidence string says WHY the contextualizer chose
+                # what it chose, so a mismatch list is a diagnosis rather
+                # than a tally (design §14.3 / issue #46).
+                card.assertion_misses.append(
+                    f"{item.surface!r} [{item.slice_name}] expected "
+                    f"{item.expected_assertion.value}, got "
+                    f"{match.assertion.assertion.value} — {match.assertion.evidence}"
+                )
     return card
 
 

@@ -454,10 +454,10 @@ ground truth localizes the defect to a pipeline stage.
 | Metric | Value | |
 |---|---|---|
 | mention recall | **98.2%** | 336/342 |
-| mention precision | **87.0%** | 336/386 extracted |
-| mention F1 | **92.3%** | |
+| mention precision | **87.7%** | 336/383 extracted |
+| mention F1 | **92.7%** | |
 | linking accuracy | **96.6%** | 256/265 checked |
-| assertion accuracy | **84.0%** | 105/125 checked |
+| assertion accuracy | **100.0%** | 125/125 checked |
 
 Per-slice recall — the breakdown is what makes a weakness actionable:
 
@@ -481,6 +481,7 @@ three more measurement defects and one genuine prompt gap:
 | **Matcher: exact match for short surfaces** | `"T"` (temperature) is a substring of *Weight*, *Temp* and *O2 sat*, so the scorer paired it with whichever truth item came first and scored its LOINC wrong — ~2 phantom linking misses per note. **Linking 74.4% → 96.6%.** |
 | **`VITAL_TRUTH` mirrors the rendered line** | It claimed *Weight* (never printed — phantom truth) and omitted *pain* and *SpO2* (printed but unclaimed, so ~50 unmatched extractions). Now token-for-token what `render_soap` emits. |
 | **Matcher: section-aware** | A chronic problem appears in the history line (`historical`) *and* the assessment (`present`) with the same surface; text-only matching pointed both truth items at one mention, so one was wrong whatever the pipeline did — 9 guaranteed misses per 25 notes. **Assertion 73.9% → 81.4%.** |
+| **NegEx: a cue inside another mention's span is not a cue** | The most consequential bug in the arc. `without` is part of the ICD name *Type 2 diabetes mellitus **without** complications*; the backwards scan found it and negated every condition listed after it, so the chart recorded that the patient did **not** have hypertension or COPD — an inverted clinical fact, not a missed one. It hid well: the applier skips negated conditions with a `skipped` verdict, which reads like the system correctly refusing something the note denied. **Assertion 84.0% → 100.0%** (all 20 mismatches were this one cue). |
 | **Prompt: name the family-history clause** | The only genuine prompt gap found. Section defaults knew how to *assert* `family_history`, but nothing told the extractor it was in scope — so after a long "History of:" list the model reached the end of the `S:` line and stopped. Measured 6/8 notes before, 8/8 after. **Family-history recall 72.9% → 100%**, and precision rose. |
 
 Non-metric fix in the same batch: an unresolvable vital surface (`B/P`
@@ -533,11 +534,13 @@ record and milestone B as a footnote.
 With measurement fixed, one metric is genuinely below where it should be,
 plus two smaller items:
 
-- **Assertion accuracy 84.0%** (20 wrong of 125) — NegEx-lite rule
-  coverage. Now the largest real gap, and cheap to iterate on offline:
-  the contextualizer records an evidence string explaining every
-  decision, so dumping the mismatches should make the failure modes
-  legible. Issue #46.
+- **Assertion rule coverage beyond this corpus.** 100% here means the
+  rules handle *our generator's phrasing*. The `_PRE_TRIGGERS` table has
+  `mother` and `father` but not `sister`, `brother`, `daughter`, `son`,
+  `aunt` or `grandmother` — a real hole that our data masks, because the
+  `subjective_family` section default carries those cases. A sibling
+  named outside that sub-section would be asserted `present`. Invisible
+  to this eval by construction (master §14 Q2).
 - **One note still fails validation** — a relation referencing a mention
   that itself failed, i.e. the retry-feedback loop not converging.
 - **Arguable ground truth**: the remaining recall misses are
