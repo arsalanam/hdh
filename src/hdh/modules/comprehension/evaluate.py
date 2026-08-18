@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hdh.modules.comprehension.contracts import Assertion, MentionType
+from hdh.modules.comprehension.contracts import Assertion, MentionType, SectionKind
 from hdh.modules.comprehension.pipeline import ComprehendedNote
 
 
@@ -136,14 +136,20 @@ def truth_for_visit(session, visit) -> tuple[TruthItem, ...]:
 #: the normalizer should reach for it. Ground truth omitted these until
 #: §14.3 — every correctly-extracted vital counted as a false positive,
 #: which is exactly why the §12 precision figure reads low.
+#: The surfaces here MUST be the tokens `render_soap` actually prints:
+#:     "Vitals: BP 138/82 mmHg, HR 72, RR 14, T 98.4F, SpO2 96%, BMI 32.0, pain 2/10."
+#: A surface the note never renders is phantom truth (an unavoidable recall
+#: miss); a rendered vital missing from this table is an unmatched
+#: extraction that costs precision. Weight and height are deliberately
+#: absent — the note does not print them.
 VITAL_TRUTH: tuple[tuple[str, str, str], ...] = (
     ("bp_systolic", "BP", "55284-4"),
     ("heart_rate", "HR", "8867-4"),
     ("respiratory_rate", "RR", "9279-1"),
-    ("temperature_f", "Temp", "8310-5"),
-    ("oxygen_sat", "O2 sat", "59408-5"),
-    ("weight_kg", "Weight", "29463-7"),
+    ("temperature_f", "T", "8310-5"),
+    ("oxygen_sat", "SpO2", "59408-5"),
     ("bmi", "BMI", "39156-5"),
+    ("pain_scale", "pain", "72514-3"),
 )
 
 
@@ -182,15 +188,7 @@ def score_note(truth: tuple[TruthItem, ...], note: ComprehendedNote) -> Scorecar
     card = Scorecard(truth=len(truth), extracted=len(note.mentions))
     for item in truth:
         card.by_slice.setdefault(item.slice_name, [0, 0])[1] += 1
-        surface = item.surface.lower()
-        match = None
-        for comprehended in note.mentions:
-            if comprehended.mention.mention_type is not item.mention_type:
-                continue
-            text = comprehended.mention.text.lower()
-            if surface in text or text in surface:
-                match = comprehended
-                break
+        match = _best_match(item, note.mentions, note)
         if match is None:
             card.misses.append(f"{item.mention_type.value}:{item.surface}")
             continue
@@ -205,6 +203,73 @@ def score_note(truth: tuple[TruthItem, ...], note: ComprehendedNote) -> Scorecar
             if match.assertion.assertion is item.expected_assertion:
                 card.asserted_right += 1
     return card
+
+
+#: Below this length, substring containment is noise rather than
+#: evidence: the mention "T" (temperature) is a substring of "Weight",
+#: "O2 sat" and "Temp" alike, so a loose rule paired it with whichever
+#: truth item came first and then scored its LOINC code as wrong. Short
+#: surfaces must match exactly.
+MIN_CONTAINMENT = 4
+
+
+#: Which section each truth slice was rendered into. The same condition
+#: legitimately appears in the history line AND the assessment with
+#: DIFFERENT expected assertions (historical vs present), so matching on
+#: text alone pairs both truth items with whichever mention came first
+#: and scores one of them wrong no matter what the pipeline did.
+SLICE_SECTIONS: dict[str, SectionKind] = {
+    "history-line": SectionKind.SUBJECTIVE_HISTORY,
+    "family-history": SectionKind.SUBJECTIVE_FAMILY,
+    "allergy": SectionKind.SUBJECTIVE_ALLERGY,
+    "assessment": SectionKind.ASSESSMENT,
+}
+
+
+def _in_expected_section(item: TruthItem, mentions, note) -> list:
+    """Narrow candidates to the section this truth item came from — but
+    only when that actually finds something, so an extractor that placed
+    the mention elsewhere still gets matched (and scored) rather than
+    silently counting as a miss."""
+    kind = SLICE_SECTIONS.get(item.slice_name)
+    extraction = getattr(note, "extraction", None)
+    if kind is None or extraction is None:
+        return mentions
+    scoped = []
+    for comprehended in mentions:
+        try:
+            section = extraction.section_of(comprehended.mention)
+        except (StopIteration, AttributeError):
+            continue
+        if section.kind is kind:
+            scoped.append(comprehended)
+    return scoped or mentions
+
+
+def _best_match(item: TruthItem, mentions, note=None):
+    """The comprehended mention this truth item refers to, or None.
+
+    Section first (a truth item from the history line means the history
+    line's mention), then exact text, then containment — accepted only
+    when the shorter side is substantial, since a one-character mention
+    matches half the table — with the longest candidate winning rather
+    than the first one encountered."""
+    surface = item.surface.lower().strip()
+    candidates = [m for m in mentions if m.mention.mention_type is item.mention_type]
+    if note is not None:
+        candidates = _in_expected_section(item, candidates, note)
+    for comprehended in candidates:
+        if comprehended.mention.text.lower().strip() == surface:
+            return comprehended
+    best = None
+    for comprehended in candidates:
+        text = comprehended.mention.text.lower().strip()
+        if min(len(text), len(surface)) < MIN_CONTAINMENT:
+            continue
+        if surface in text or text in surface:
+            if best is None or len(comprehended.mention.text) > len(best.mention.text):
+                best = comprehended
+    return best
 
 
 def evaluate_corpus(session, extractor, limit: int = 10) -> Scorecard:

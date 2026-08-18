@@ -294,3 +294,35 @@ def test_review_is_terminal_until_a_human_resolves_it(world):
         result = _apply(session, patient, note, raw)
         assert result.needs_review
         assert session.query(Condition).count() == 0
+
+
+def test_an_unrecognised_vital_surface_reaches_a_human(world):
+    """`B/P 152/94` instead of `BP 152/94`: the alias table misses, so the
+    reading has no LOINC code. It must surface as review rather than
+    vanish — silent loss is the failure mode a chart can least afford."""
+    session, patient = world
+    note = "Patient seen today. B/P 152/94 mmHg."
+    raw = {"mentions": [_mention("lab_vital", "B/P", value="152/94")]}
+    result = _apply(session, patient, note, raw)
+
+    assert ("review", "vitals") in _verdicts(result)
+    assert any("no LOINC code for this surface" in v.detail for v in result.verdicts)
+    assert result.needs_review
+    assert session.query(Vital).count() == 0  # refused, not guessed
+
+
+def test_a_recognised_variant_still_charts(world):
+    """The fix must not turn known aliases into review noise — `Temp` and
+    `T` are both in the table and must still chart."""
+    session, patient = world
+    note = "Patient seen today. Temp 99.1 F. HR 88."
+    raw = {
+        "mentions": [
+            _mention("lab_vital", "Temp", value="99.1"),
+            _mention("lab_vital", "HR", value="88"),
+        ]
+    }
+    result = _apply(session, patient, note, raw)
+    assert ("new", "vitals") in _verdicts(result)
+    row = session.query(Vital).one()
+    assert row.temperature_f == 99.1 and row.heart_rate == 88

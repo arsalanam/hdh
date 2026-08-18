@@ -449,27 +449,52 @@ ground truth localizes the defect to a pipeline stage.
 
 ## 12. Baseline<a name="12-baseline-milestone-b-2026-08-15"></a>
 
-### Current — milestone E, 2026-08-17 (N=25, `claude-sonnet-4-6`)
+### Current — 2026-08-17 (N=25, `claude-sonnet-4-6`)
 
 | Metric | Value | |
 |---|---|---|
-| mention recall | **95.8%** | 341/356 |
-| mention precision | **86.3%** | 341/395 extracted |
-| mention F1 | **90.8%** | |
-| linking accuracy | **74.4%** | 206/277 checked |
-| assertion accuracy | **76.2%** | 93/122 checked |
+| mention recall | **98.2%** | 336/342 |
+| mention precision | **87.0%** | 336/386 extracted |
+| mention F1 | **92.3%** | |
+| linking accuracy | **96.6%** | 256/265 checked |
+| assertion accuracy | **84.0%** | 105/125 checked |
 
 Per-slice recall — the breakdown is what makes a weakness actionable:
 
 | slice | recall | | slice | recall |
 |---|---|---|---|---|
-| history-line | 100.0% (65/65) | | vitals | 100.0% (175/175) |
-| lab | 100.0% (21/21) | | allergy | 100.0% (2/2) |
-| medication | 88.5% (23/26) | | assessment | 84.2% (16/19) |
-| family-history | 81.2% (39/48) | | | |
+| family-history | 100.0% (47/47) | | history-line | 100.0% (60/60) |
+| vitals | 100.0% (168/168) | | lab | 100.0% (21/21) |
+| allergy | 100.0% (2/2) | | medication | 88.0% (22/25) |
+| assessment | 84.2% (16/19) | | | |
 
-All 25 notes completed. Reproduce with `just eval` (≈$0.27; never part of
-`just qa` — see §14.3).
+Reproduce with `just eval` (≈$0.27; never part of `just qa` — see §14.3).
+
+#### How it got here from the first milestone-E table
+
+The first run of the harness read recall 95.8% · precision 86.3% ·
+**linking 74.4%** · assertion 76.2%. Chasing those two low numbers found
+three more measurement defects and one genuine prompt gap:
+
+| Fix | What it corrected |
+|---|---|
+| **Matcher: exact match for short surfaces** | `"T"` (temperature) is a substring of *Weight*, *Temp* and *O2 sat*, so the scorer paired it with whichever truth item came first and scored its LOINC wrong — ~2 phantom linking misses per note. **Linking 74.4% → 96.6%.** |
+| **`VITAL_TRUTH` mirrors the rendered line** | It claimed *Weight* (never printed — phantom truth) and omitted *pain* and *SpO2* (printed but unclaimed, so ~50 unmatched extractions). Now token-for-token what `render_soap` emits. |
+| **Matcher: section-aware** | A chronic problem appears in the history line (`historical`) *and* the assessment (`present`) with the same surface; text-only matching pointed both truth items at one mention, so one was wrong whatever the pipeline did — 9 guaranteed misses per 25 notes. **Assertion 73.9% → 81.4%.** |
+| **Prompt: name the family-history clause** | The only genuine prompt gap found. Section defaults knew how to *assert* `family_history`, but nothing told the extractor it was in scope — so after a long "History of:" list the model reached the end of the `S:` line and stopped. Measured 6/8 notes before, 8/8 after. **Family-history recall 72.9% → 100%**, and precision rose. |
+
+Non-metric fix in the same batch: an unresolvable vital surface (`B/P`
+rather than `BP`) used to be **silently dropped** by the applier — no
+verdict, no review item, the reading simply never reached the chart. It
+now produces a `review` verdict like any other unresolvable entity, and a
+coded lab that is not a vitals-panel column produces a visible `skipped`
+verdict instead of vanishing.
+
+**Overfitting caution:** these numbers come from six runs over the *same*
+25 notes, four of which steered a change. They are honest for this corpus
+and this model, not a general capability claim. Re-baseline on fresh
+notes (`hdh generate --seed`) before treating them as such — this is the
+ground-truth-bias caveat (master §14 Q2) in practice.
 
 ### What changed from the milestone-B numbers, and what did not
 
@@ -503,10 +528,26 @@ along and was being mis-measured. Recall and F1 are therefore **not**
 comparable across the two tables; treat milestone E as the baseline of
 record and milestone B as a footnote.
 
-### Outstanding work — the two real targets
+### Outstanding work
 
-With measurement fixed, exactly two numbers are genuinely below where
-they should be, and both are *quality* rather than plumbing:
+With measurement fixed, one metric is genuinely below where it should be,
+plus two smaller items:
+
+- **Assertion accuracy 84.0%** (20 wrong of 125) — NegEx-lite rule
+  coverage. Now the largest real gap, and cheap to iterate on offline:
+  the contextualizer records an evidence string explaining every
+  decision, so dumping the mismatches should make the failure modes
+  legible. Issue #46.
+- **One note still fails validation** — a relation referencing a mention
+  that itself failed, i.e. the retry-feedback loop not converging.
+- **Arguable ground truth**: the remaining recall misses are
+  `Medication reconciliation / polypharmacy review`, `Annual wellness
+  visit (Medicare)`, `Lifestyle counseling referral`, `Rest & fluids` —
+  visit reasons and advice rather than clinical problems or prescribable
+  drugs. Declining them is defensible extractor behaviour; the honest fix
+  is probably to stop counting them as truth.
+
+Superseded by the fixes above (was: linking accuracy at 74.4%):
 
 - **Linking accuracy 74.4%** (71 wrong of 277) — the largest remaining
   gap. This compares the SNOMED funnel's top choice against the code

@@ -279,7 +279,23 @@ def _apply_vitals(session, visit, note: ComprehendedNote, result: ApplyResult) -
 
     values: dict[str, object] = {}
     for item in note.mentions:
-        if item.mention.mention_type is not MentionType.LAB_VITAL or item.code is None:
+        if item.mention.mention_type is not MentionType.LAB_VITAL:
+            continue
+        if item.code is None:
+            # The surface did not resolve to a LOINC code. Losing it
+            # silently would break the refuse-don't-guess contract — a
+            # provider writing "B/P 152/94" would see the reading simply
+            # vanish — so it goes to a human like any other unresolvable
+            # entity. (The alias table is a documented placeholder until
+            # the LOINC module lands; master design §12.)
+            result.verdicts.append(
+                Verdict(
+                    "review",
+                    "vitals",
+                    f"{item.mention.text!r}: no LOINC code for this surface — "
+                    "add an alias or map it manually",
+                )
+            )
             continue
         raw = _attr(item, AttributeKind.VALUE) or ""
         if item.code.code == "55284-4":
@@ -289,7 +305,15 @@ def _apply_vitals(session, visit, note: ComprehendedNote, result: ApplyResult) -
             continue
         target = _VITAL_COLUMNS.get(item.code.code)
         if target is None:
-            continue  # a lab, not a vital — labs reconcile against LabResult rows in a later pass
+            # A coded lab rather than a vitals-panel measurement. There is
+            # no LabResult reconciliation pass yet, so say so instead of
+            # dropping it without trace.
+            result.verdicts.append(
+                Verdict(
+                    "skipped", "lab", f"{item.mention.text!r} ({item.code.code}): labs are not charted yet"
+                )
+            )
+            continue
         column, cast = target
         number = _NUM_RE.search(raw)
         if number:
