@@ -453,11 +453,30 @@ ground truth localizes the defect to a pipeline stage.
 
 | Metric | Value | |
 |---|---|---|
-| mention recall | **98.2%** | 336/342 |
-| mention precision | **87.7%** | 336/383 extracted |
-| mention F1 | **92.7%** | |
-| linking accuracy | **96.6%** | 256/265 checked |
-| assertion accuracy | **100.0%** | 125/125 checked |
+| mention recall | **100.0%** | 350/350 |
+| mention precision | **86.8%** | 350/403 extracted |
+| mention F1 | **93.0%** | |
+| linking accuracy | **96.8%** | 268/277 checked |
+| assertion accuracy | **100.0%** | 131/131 checked |
+
+All seven slices at 100% recall; 25/25 notes complete; the miss list is
+empty.
+
+> **Read 100% recall carefully.** It means the extractor finds everything
+> *this generator writes, in the phrasings it writes them*. It is not a
+> capability claim. Ten eval runs over the same 25 notes steered these
+> changes, so the honest description is "no known misses on the
+> development corpus" — the next real test is fresh notes and
+> out-of-distribution phrasing (master §14 Q2).
+
+**Precision 86.8% is very likely the same truth-gap class, not
+over-extraction.** The subjective line renders the chief complaint as
+symptoms — `presents with: Low mood, lack of energy, poor sleep` — and
+`truth_for_visit` has no slice for them, so each is counted as an
+unmatched extraction (~2 per note, which is most of the 53). Extracting
+them is correct behaviour. Fixing this means adding a `complaint` slice
+built from the visit's chief complaint, and it should be recorded as a
+truth correction, exactly as the vitals and dating fixes were.
 
 Per-slice recall — the breakdown is what makes a weakness actionable:
 
@@ -481,6 +500,9 @@ three more measurement defects and one genuine prompt gap:
 | **Matcher: exact match for short surfaces** | `"T"` (temperature) is a substring of *Weight*, *Temp* and *O2 sat*, so the scorer paired it with whichever truth item came first and scored its LOINC wrong — ~2 phantom linking misses per note. **Linking 74.4% → 96.6%.** |
 | **`VITAL_TRUTH` mirrors the rendered line** | It claimed *Weight* (never printed — phantom truth) and omitted *pain* and *SpO2* (printed but unclaimed, so ~50 unmatched extractions). Now token-for-token what `render_soap` emits. |
 | **Matcher: section-aware** | A chronic problem appears in the history line (`historical`) *and* the assessment (`present`) with the same surface; text-only matching pointed both truth items at one mention, so one was wrong whatever the pipeline did — 9 guaranteed misses per 25 notes. **Assertion 73.9% → 81.4%.** |
+| **Cues match whole words; every relative triggers family history** | `_PRE_TRIGGERS` had only `mother`/`father`, so a sibling named outside the family sub-section was asserted `present` — our corpus masked it via the section default. Adding relatives safely required word-boundary matching first, which also fixed a latent bug: `"not "` fired inside `"cannot tolerate"`. |
+| **Visit reasons and advice are neutral truth** | ICD-10 **Z-codes** (`Annual wellness visit (Medicare)`) are encounter reasons, not diseases; `drug_class` `Supportive`/`Referral` (`Rest & fluids`) are advice, not prescriptions. Declining them is correct, so they are excluded from truth **and** their extractions excluded from the denominator — don't-care must mean both sides, or a recall penalty simply becomes a precision one. Assessment and medication recall → 100%. (#49) |
+| **A dangling relation no longer costs the note** | Relations are hints (§4). One out-of-range index was failing an entire note — every mention, vital and medication discarded — because the feedback said "fix that mention first", unactionable when the mention was never emitted. Dropped silently like a duplicate; type and kind violations stay errors. The eval's last failing note now completes. |
 | **NegEx: a cue inside another mention's span is not a cue** | The most consequential bug in the arc. `without` is part of the ICD name *Type 2 diabetes mellitus **without** complications*; the backwards scan found it and negated every condition listed after it, so the chart recorded that the patient did **not** have hypertension or COPD — an inverted clinical fact, not a missed one. It hid well: the applier skips negated conditions with a `skipped` verdict, which reads like the system correctly refusing something the note denied. **Assertion 84.0% → 100.0%** (all 20 mismatches were this one cue). |
 | **Prompt: name the family-history clause** | The only genuine prompt gap found. Section defaults knew how to *assert* `family_history`, but nothing told the extractor it was in scope — so after a long "History of:" list the model reached the end of the `S:` line and stopped. Measured 6/8 notes before, 8/8 after. **Family-history recall 72.9% → 100%**, and precision rose. |
 

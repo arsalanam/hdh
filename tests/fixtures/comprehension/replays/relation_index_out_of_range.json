@@ -1,0 +1,43 @@
+{
+  "description": "A relation with an OUT-OF-RANGE index and otherwise perfect mentions. This is the eval's last failing note: every mention validated, the only error was the relation, and the feedback said 'fix that mention first' \u2014 unactionable, so all 3 retries burned and 20 good mentions were discarded. The note must now succeed with the hint simply dropped.",
+  "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Reports fatigue.\n\nO: BP 138/82 mmHg.\n\nA: Chronic blorbitis.\n\nP: Start Apixaban 5mg BID.\n",
+  "raw": {
+    "mentions": [
+      {
+        "type": "problem",
+        "text": "Chronic blorbitis",
+        "occurrence": 1,
+        "attributes": []
+      },
+      {
+        "type": "medication",
+        "text": "Apixaban",
+        "occurrence": 1,
+        "attributes": [
+          {
+            "kind": "dose",
+            "text": "5mg",
+            "occurrence": 1
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "kind": "treats",
+        "source": 7,
+        "target": 0,
+        "inferred": true
+      }
+    ]
+  },
+  "expect": {
+    "status": "accepted",
+    "mentions": 2,
+    "relations": 0,
+    "texts": [
+      "Chronic blorbitis",
+      "Apixaban"
+    ]
+  }
+}

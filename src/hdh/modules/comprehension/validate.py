@@ -287,8 +287,12 @@ def _build_relations(
     raw: dict, mentions: list[Mention], raw_to_built: dict[int, int], reasons: list[str]
 ) -> list[MentionRelation]:
     """Relation indexes refer to the extractor's RAW mentions array — map
-    them onto the surviving built mentions; a relation touching a mention
-    that failed validation carries that failure, never a shifted index."""
+    them onto the surviving built mentions, never a shifted index.
+
+    A relation whose endpoint is missing is dropped silently: relations
+    are optional hints, so a bad index must not cost the whole note. Type
+    and kind violations stay errors — both endpoints exist, so the model
+    made a real semantic mistake it can correct."""
     relations: list[MentionRelation] = []
     for index, item in enumerate(raw.get("relations", ())):
         label = f"relation[{index}]"
@@ -303,10 +307,14 @@ def _build_relations(
             reasons.append(f"{label}: source/target must be integer mention indexes")
             continue
         if raw_source not in raw_to_built or raw_target not in raw_to_built:
-            reasons.append(
-                f"{label}: source/target reference a mention that does not exist "
-                "or failed validation — fix that mention first"
-            )
+            # Dangling endpoint: either an out-of-range index, or a mention
+            # that failed its own validation (and is already reported).
+            # A relation is a HINT (§4: inferred relations "are hints for
+            # downstream stages, never facts"), so losing one must not
+            # discard the note's every mention, vital and medication. Live
+            # eval: a note failed all 3 retries on this alone, because the
+            # feedback said "fix that mention first" — unactionable when
+            # the mention was never emitted. Dropped like a duplicate.
             continue
         source_id, target_id = raw_to_built[raw_source], raw_to_built[raw_target]
         source_types, target_types = RELATION_RULES[kind]

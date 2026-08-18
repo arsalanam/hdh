@@ -343,3 +343,84 @@ def test_section_narrowing_never_hides_a_mention():
     truth = TruthItem("Hypothyroidism", MentionType.PROBLEM, slice_name="history-line")
     note = _FakeNote([_FakeComprehended("Hypothyroidism", MentionType.PROBLEM)])
     assert _best_match(truth, note.mentions, note) is not None
+
+
+def test_visit_reasons_and_advice_are_neutral_not_truth(tmp_path):
+    """Charting "Annual wellness visit (Medicare)" as a Condition would put
+    an administrative row on the problem list, and "Rest & fluids" is not
+    a prescription. Declining them is correct, so they must not cost
+    recall — and extracting them must not cost precision either (#49)."""
+    from hdh.core.models import Condition, ConditionStatus, Prescription
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path / "neutral.db"))
+    session = get_session(engine)
+    patient = Patient(
+        mrn="MRN00NEUTRL",
+        first_name="Neu",
+        last_name="Tral",
+        date_of_birth=date(1955, 5, 5),
+        sex=Sex.MALE,
+    )
+    session.add(patient)
+    session.flush()
+    visit = Visit(patient_id=patient.id, visit_date=date(2026, 7, 1), visit_type=VisitType.PREVENTIVE)
+    session.add(visit)
+    session.flush()
+    session.add_all(
+        [
+            Condition(
+                patient_id=patient.id,
+                visit_id=visit.id,
+                icd10_code="Z00.00",
+                description="Annual wellness visit (Medicare)",
+                chronic=False,
+                status=ConditionStatus.ACTIVE,
+            ),
+            Condition(
+                patient_id=patient.id,
+                visit_id=visit.id,
+                icd10_code="E03.9",
+                description="Hypothyroidism, unspecified",
+                chronic=False,
+                status=ConditionStatus.ACTIVE,
+            ),
+            Prescription(visit_id=visit.id, drug_name="Rest & fluids", drug_class="Supportive", dose="—"),
+            Prescription(visit_id=visit.id, drug_name="Levothyroxine", drug_class="Hormone", dose="50mcg"),
+        ]
+    )
+    session.commit()
+
+    truth = truth_for_visit(session, visit)
+    by_surface = {item.surface: item for item in truth}
+    assert by_surface["Annual wellness visit (Medicare)"].neutral is True
+    assert by_surface["Rest & fluids"].neutral is True
+    assert by_surface["Hypothyroidism, unspecified"].neutral is False
+    assert by_surface["Levothyroxine"].neutral is False
+
+    # declining them costs nothing
+    clean = _FakeNote(
+        [
+            _FakeComprehended("Hypothyroidism, unspecified", MentionType.PROBLEM),
+            _FakeComprehended("Levothyroxine", MentionType.MEDICATION),
+        ]
+    )
+    card = score_note(truth, clean)
+    assert card.truth == 2 and card.found == 2 and card.extracted == 2
+    assert "100.0%" in card.report()
+
+    # and extracting them costs nothing either — don't-care means both sides
+    eager = _FakeNote(
+        [
+            _FakeComprehended("Hypothyroidism, unspecified", MentionType.PROBLEM),
+            _FakeComprehended("Levothyroxine", MentionType.MEDICATION),
+            _FakeComprehended("Annual wellness visit (Medicare)", MentionType.PROBLEM),
+            _FakeComprehended("Rest & fluids", MentionType.MEDICATION),
+        ]
+    )
+    card = score_note(truth, eager)
+    assert card.truth == 2 and card.found == 2
+    assert card.extracted == 2, "neutral extractions must not dilute precision"
+
+    session.close()
+    engine.dispose()
