@@ -4,7 +4,7 @@
 `hdh.modules.interchange` (mock external labs and pharmacies) ·
 **Follows:** [notes-comprehension-service.md](notes-comprehension-service.md) §13 phase 3,
 [comprehension-extraction-schema.md](comprehension-extraction-schema.md) §10.3 ·
-**Status:** DRAFT — review wanted · **Date:** 2026-08-17
+**Status:** DRAFT — open RFC ([#52](https://github.com/arsalanam/hdh/issues/52)) · **Date:** 2026-08-17
 
 ### Contributors
 
