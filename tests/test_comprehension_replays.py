@@ -149,3 +149,82 @@ def test_a_real_negation_still_negates():
     result = finalize_assertion(extraction, extraction.mentions[0])
     assert result.assertion is Assertion.NEGATED, result.evidence
     assert "denies" in result.evidence
+
+
+def _assert_for(note: str, text: str):
+    from hdh.modules.comprehension.contextualize import finalize_assertion
+
+    raw = {"mentions": [{"type": "problem", "text": text, "occurrence": 1, "attributes": []}]}
+    extraction = build_extraction(note, raw, segment(note))
+    return finalize_assertion(extraction, extraction.mentions[0])
+
+
+def test_every_relative_triggers_family_history_not_just_parents():
+    """The table had `mother` and `father` only. Our own corpus writes
+    "sister: breast cancer" and scored correctly solely because the
+    subjective_family section default carried it — a sibling named
+    anywhere else was asserted `present`."""
+    from hdh.modules.comprehension.contracts import Assertion
+
+    for relative in ("sister", "brother", "daughter", "son", "aunt", "grandmother", "cousin"):
+        note = (
+            "SOAP NOTE\nProvider: Dr. Test\n\n"
+            f"S: Reports fatigue. Patient's {relative} had melanoma.\n\n"
+            "O: BP 128/78 mmHg.\n\nA: Fatigue.\n\nP: Continue.\n"
+        )
+        result = _assert_for(note, "melanoma")
+        assert result.assertion is Assertion.FAMILY_HISTORY, f"{relative}: {result.evidence}"
+
+
+def test_cues_match_whole_words_only():
+    """Bare-substring matching fired cues inside ordinary words. "not "
+    matched inside "cannot", and adding relatives would have made "son"
+    fire on "reason for visit" or a surname."""
+    from hdh.modules.comprehension.contracts import Assertion
+
+    cannot = (
+        "SOAP NOTE\nProvider: Dr. Test\n\n"
+        "S: Patient cannot tolerate metformin; reports fatigue.\n\n"
+        "O: BP 128/78 mmHg.\n\nA: Fatigue.\n\nP: Continue.\n"
+    )
+    result = _assert_for(cannot, "fatigue")
+    assert result.assertion is not Assertion.NEGATED, f"'cannot' must not negate: {result.evidence}"
+
+    reason = (
+        "SOAP NOTE\nProvider: Dr. Test\n\n"
+        "S: The reason for visit is ongoing melanoma surveillance.\n\n"
+        "O: BP 128/78 mmHg.\n\nA: Fatigue.\n\nP: Continue.\n"
+    )
+    result = _assert_for(reason, "melanoma")
+    assert result.assertion is not Assertion.FAMILY_HISTORY, (
+        f"'reason' must not fire 'son': {result.evidence}"
+    )
+
+
+def test_a_valid_relation_still_survives_and_bad_types_still_fail():
+    """Dropping dangling relations must not blunt the rules: a well-formed
+    TREATS still lands, and a type violation between two REAL mentions is
+    still an error the model can act on."""
+    note = (
+        "SOAP NOTE\nProvider: Dr. Test\n\nS: Reports fatigue.\n\n"
+        "O: BP 138/82 mmHg.\n\nA: Chronic blorbitis.\n\nP: Start Apixaban 5mg BID.\n"
+    )
+    mentions = [
+        {"type": "problem", "text": "Chronic blorbitis", "occurrence": 1, "attributes": []},
+        {"type": "medication", "text": "Apixaban", "occurrence": 1, "attributes": []},
+    ]
+    good = build_extraction(
+        note,
+        {"mentions": mentions, "relations": [{"kind": "treats", "source": 1, "target": 0}]},
+        segment(note),
+    )
+    assert len(good.relations) == 1
+    assert good.mentions[good.relations[0].source_id].text == "Apixaban"
+
+    with pytest.raises(ExtractionError) as err:
+        build_extraction(
+            note,
+            {"mentions": mentions, "relations": [{"kind": "treats", "source": 0, "target": 1}]},
+            segment(note),
+        )
+    assert any("requires source in" in reason for reason in err.value.reasons)

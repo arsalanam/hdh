@@ -23,6 +23,7 @@ class TruthItem:
     expected_code: str | None = None  # snomed for problems, loinc for labs
     expected_assertion: Assertion | None = None
     slice_name: str = "other"  # which part of the note it came from (§14.3)
+    neutral: bool = False  # rendered, but neither required nor penalised (#49)
 
 
 @dataclass
@@ -83,6 +84,32 @@ class Scorecard:
         return "\n".join(lines)
 
 
+#: ICD-10 chapter Z is "factors influencing health status and contact
+#: with health services" — encounter reasons, not diseases. "Annual
+#: wellness visit (Medicare)" (Z00.00) is why the patient came, not
+#: something they have; charting it as a Condition would put an
+#: administrative row on the problem list. The generator writes these as
+#: Conditions only because it has nowhere else to put them yet (#49).
+def _is_administrative(condition) -> bool:
+    """A visit reason rather than a clinical problem."""
+    return bool(condition.icd10_code) and condition.icd10_code.upper().startswith("Z")
+
+
+#: Formulary entries that are not prescribable drugs — advice and
+#: referrals, carried in rx_options because the catalog has no other slot.
+_NON_DRUG_CLASSES = frozenset({"supportive", "referral", "counseling"})
+_PLACEHOLDER_DOSES = frozenset({"", "-", "—", "n/a", "none"})
+
+
+def _is_non_drug(prescription) -> bool:
+    """ "Rest & fluids" and "Lifestyle counseling referral" are advice, not
+    medications: charting them as prescriptions would be wrong, so
+    declining to extract them is correct behaviour."""
+    drug_class = (prescription.drug_class or "").strip().lower()
+    dose = (prescription.dose or "").strip().lower()
+    return drug_class in _NON_DRUG_CLASSES or dose in _PLACEHOLDER_DOSES
+
+
 def truth_for_visit(session, visit) -> tuple[TruthItem, ...]:
     """Ground truth the rendered note is KNOWN to contain (mirrors
     render_soap's inputs)."""
@@ -123,10 +150,18 @@ def truth_for_visit(session, visit) -> tuple[TruthItem, ...]:
                 expected_code=condition.snomed_code,
                 expected_assertion=Assertion.PRESENT,
                 slice_name="assessment",
+                neutral=_is_administrative(condition),
             )
         )
     for rx in visit.prescriptions:
-        items.append(TruthItem(rx.drug_name.split(" (")[0], MentionType.MEDICATION, slice_name="medication"))
+        items.append(
+            TruthItem(
+                rx.drug_name.split(" (")[0],
+                MentionType.MEDICATION,
+                slice_name="medication",
+                neutral=_is_non_drug(rx),
+            )
+        )
     for lab in visit.lab_results:
         if not str(lab.status).endswith("NORMAL"):  # only abnormal labs render
             items.append(
@@ -191,8 +226,24 @@ def _recorded_by(condition, visit) -> bool:
 
 def score_note(truth: tuple[TruthItem, ...], note: ComprehendedNote) -> Scorecard:
     """Pure scorer: match ground truth against comprehended mentions."""
-    card = Scorecard(truth=len(truth), extracted=len(note.mentions))
+    scored = [item for item in truth if not item.neutral]
+    card = Scorecard(truth=len(scored), extracted=len(note.mentions))
+
+    # Neutral items are rendered in the note but are neither required nor
+    # penalised: an administrative "problem" or a non-drug "prescription"
+    # is correct to decline, so it must not cost recall — and if the model
+    # does extract it, it must not cost precision either. Excluding it
+    # from both sides is what "don't care" actually means (#49).
+    neutralised: set[int] = set()
     for item in truth:
+        if not item.neutral:
+            continue
+        match = _best_match(item, note.mentions, note)
+        if match is not None:
+            neutralised.add(id(match))
+    card.extracted -= len(neutralised)
+
+    for item in scored:
         card.by_slice.setdefault(item.slice_name, [0, 0])[1] += 1
         match = _best_match(item, note.mentions, note)
         if match is None:

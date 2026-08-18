@@ -1,5 +1,5 @@
 {
-  "description": "A relation points at a mention that failed validation. The feedback must name that cause, not a shifted index.",
+  "description": "A relation points at a mention that failed validation. The MENTION's error is reported (it is real and fixable); the relation is dropped silently rather than adding a second, derivative error. Live eval: a note burned all 3 retries on a dangling relation alone, because 'fix that mention first' is unactionable when the mention was never emitted \u2014 relations are hints (\u00a74), so one must never cost the whole note.",
   "note": "SOAP NOTE\nProvider: Dr. Test\n\nS: Patient reports elevated readings.\n\nO: BP 152/94 mmHg. Temperature 98.5F.\n\nA: Meets criteria for essential hypertension.\n\nP: Start Lisinopril 10mg once daily for hypertension.\n",
   "raw": {
     "mentions": [
@@ -28,8 +28,7 @@
   "expect": {
     "status": "rejected",
     "reasons": [
-      "not found in the note",
-      "failed validation"
+      "not found in the note"
     ]
   }
 }
