@@ -21,6 +21,7 @@ from hdh.modules.comprehension.evaluate import (
     VITAL_TRUTH,
     Scorecard,
     TruthItem,
+    _best_match,
     score_note,
     truth_for_visit,
 )
@@ -56,12 +57,17 @@ def test_ground_truth_now_includes_the_vitals_the_note_renders(visit_with_vitals
     session, visit = visit_with_vitals
     truth = truth_for_visit(session, visit)
     vitals = [item for item in truth if item.slice_name == "vitals"]
-    assert {item.surface for item in vitals} >= {"BP", "HR", "Weight"}
+    surfaces = {item.surface for item in vitals}
+    assert surfaces >= {"BP", "HR"}
     assert all(item.mention_type is MentionType.LAB_VITAL for item in vitals)
     assert all(item.expected_code for item in vitals), "a vital without a LOINC code can't score linking"
 
     # only the columns actually recorded — a null column renders nothing
     assert not any(item.surface == "BMI" for item in vitals)
+
+    # and NOTHING the note never prints: render_soap emits no weight or
+    # height, so claiming them would be an unavoidable recall miss
+    assert "Weight" not in surfaces and "Height" not in surfaces
 
 
 def test_vital_truth_table_is_wellformed():
@@ -195,3 +201,145 @@ def test_history_truth_excludes_conditions_diagnosed_after_the_note(tmp_path):
 
     session.close()
     engine.dispose()
+
+
+def test_vital_truth_mirrors_what_the_note_actually_renders():
+    """Every surface must be a token `render_soap` prints, and every
+    printed vital must be claimed — the two-sided property that the first
+    version of this table got wrong in both directions."""
+    from hdh.core.notes import render_soap
+
+    class _V:
+        bp_systolic, bp_diastolic, heart_rate = 138, 82, 72
+        respiratory_rate, temperature_f, oxygen_sat = 14, 98.4, 96
+        weight_kg, height_cm, bmi, pain_scale = 82.0, 170.0, 32.0, 2
+
+    note = render_soap(
+        provider_name="Dr. Test",
+        visit_date="2026-06-06",
+        chief_complaint="Follow-up",
+        follow_up_days=90,
+        age=64,
+        sex="female",
+        allergies=[],
+        chronic_history=[],
+        family_history=[],
+        vital=_V(),
+        conditions=[],
+        prescriptions=[],
+        labs=[],
+        procedures=[],
+    )
+    vitals_line = next(line for line in note.splitlines() if "Vitals:" in line)
+    for _column, surface, _loinc in VITAL_TRUTH:
+        assert surface in vitals_line, f"{surface!r} is claimed as truth but never rendered"
+    # and the reverse: every token before a value in the line is claimed
+    for token in ("BP", "HR", "RR", "T", "SpO2", "BMI", "pain"):
+        assert any(surface == token for _c, surface, _l in VITAL_TRUTH), (
+            f"{token!r} is rendered but unclaimed"
+        )
+
+
+def test_short_mentions_must_match_exactly():
+    """The bug that cost ~50 phantom linking misses: "T" is a substring of
+    "Weight", "Temp" and "O2 sat", so a loose containment rule paired it
+    with whichever truth item came first and then scored its LOINC wrong."""
+    truth_weight = TruthItem("Weight", MentionType.LAB_VITAL, expected_code="29463-7", slice_name="vitals")
+    truth_temp = TruthItem("T", MentionType.LAB_VITAL, expected_code="8310-5", slice_name="vitals")
+    note = _FakeNote([_FakeComprehended("T", MentionType.LAB_VITAL)])
+
+    assert _best_match(truth_weight, note.mentions) is None, "'T' must not satisfy 'Weight'"
+    assert _best_match(truth_temp, note.mentions) is not None, "'T' must still match 'T' exactly"
+
+
+def test_containment_still_matches_real_variants():
+    """The fix must not over-correct: genuine partial matches still count."""
+    truth = TruthItem("Hypothyroidism, unspecified", MentionType.PROBLEM, slice_name="history-line")
+    note = _FakeNote(
+        [
+            _FakeComprehended("Hyperlipidemia", MentionType.PROBLEM),
+            _FakeComprehended("Hypothyroidism", MentionType.PROBLEM),
+        ]
+    )
+    match = _best_match(truth, note.mentions)
+    assert match is not None and match.mention.text == "Hypothyroidism"
+
+
+def test_the_longest_candidate_wins_not_the_first():
+    truth = TruthItem("Chronic kidney disease, stage 3a", MentionType.PROBLEM, slice_name="assessment")
+    note = _FakeNote(
+        [
+            _FakeComprehended("disease", MentionType.PROBLEM),
+            _FakeComprehended("Chronic kidney disease", MentionType.PROBLEM),
+        ]
+    )
+    assert _best_match(truth, note.mentions).mention.text == "Chronic kidney disease"
+
+
+def test_the_same_condition_in_two_sections_scores_each_separately():
+    """A chronic problem appears in the history line AND the assessment
+    with different expected assertions (historical vs present). Matching
+    on text alone paired both truth items with the same mention, so one
+    was scored wrong no matter what the pipeline did — 9 guaranteed
+    misses across 25 notes."""
+    from hdh.modules.comprehension.comprehend import comprehend_text
+    from hdh.modules.comprehension.extract import stub_extractor
+
+    note = (
+        "SOAP NOTE\nProvider: Dr. Test\n\n"
+        "S: Reports fatigue. History of: Hypothyroidism.\n\n"
+        "O: BP 128/78 mmHg.\n\n"
+        "A: Hypothyroidism.\n\n"
+        "P: Continue Levothyroxine 50mcg.\n"
+    )
+    raw = {
+        "mentions": [
+            {"type": "problem", "text": "Hypothyroidism", "occurrence": 1, "attributes": []},
+            {"type": "problem", "text": "Hypothyroidism", "occurrence": 2, "attributes": []},
+        ]
+    }
+    extraction = comprehend_text(note, stub_extractor(raw))
+    assert len(extraction.mentions) == 2, "the two occurrences must survive as separate mentions"
+
+    class _Item:
+        def __init__(self, comprehended):
+            self.mention = comprehended
+
+    kinds = {extraction.section_of(m).kind.value for m in extraction.mentions}
+    assert kinds == {"subjective_history", "assessment"}
+
+    history_truth = TruthItem(
+        "Hypothyroidism",
+        MentionType.PROBLEM,
+        expected_assertion=Assertion.HISTORICAL,
+        slice_name="history-line",
+    )
+    assessment_truth = TruthItem(
+        "Hypothyroidism",
+        MentionType.PROBLEM,
+        expected_assertion=Assertion.PRESENT,
+        slice_name="assessment",
+    )
+
+    class _Note:
+        def __init__(self, extraction):
+            self.extraction = extraction
+            self.mentions = [_Item(m) for m in extraction.mentions]
+
+    note_obj = _Note(extraction)
+    from_history = _best_match(history_truth, note_obj.mentions, note_obj)
+    from_assessment = _best_match(assessment_truth, note_obj.mentions, note_obj)
+    assert from_history is not None and from_assessment is not None
+    assert from_history is not from_assessment, "each truth item must find ITS OWN mention"
+    assert extraction.section_of(from_history.mention).kind.value == "subjective_history"
+    assert extraction.section_of(from_assessment.mention).kind.value == "assessment"
+
+
+def test_section_narrowing_never_hides_a_mention():
+    """If the extractor put the mention in a different section than
+    expected, it must still be matched and scored — narrowing is a
+    preference, not a filter, or a placement error would masquerade as a
+    recall miss."""
+    truth = TruthItem("Hypothyroidism", MentionType.PROBLEM, slice_name="history-line")
+    note = _FakeNote([_FakeComprehended("Hypothyroidism", MentionType.PROBLEM)])
+    assert _best_match(truth, note.mentions, note) is not None

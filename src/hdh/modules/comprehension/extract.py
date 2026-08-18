@@ -131,7 +131,10 @@ Rules:
    ("No fever, chills, or sweats" -> record "No" once); do not mark the
    mentions themselves.
 7. Mention every entity everywhere it appears — the same disease in the
-   history and the assessment is TWO mentions.
+   history and the assessment is TWO mentions. This includes the family
+   history clause, which is easy to skip after a long "History of:" list:
+   in "Family history: sister: breast cancer" extract "breast cancer"
+   (the condition, never the relative).
 {feedback}"""
 
 
