@@ -15,7 +15,8 @@ is ever needed — instead of intuition.
 
 Measured 2026-08-19 on the US Edition: 4/4 verbatim, 3/3 misspelling,
 3/6 abbreviation, 0/5 lay phrasing. The failures split in two, and only
-one kind is dangerous — see `test_a_wrong_answer_must_not_be_confident`.
+one kind is dangerous — see `test_a_wrong_answer_must_not_be_confident`
+and issue #54, which tracks closing the dangerous half.
 """
 
 import os
@@ -70,7 +71,7 @@ FRONTIER: tuple[tuple[str, str, str], ...] = (
 #: A ratchet, not a target. These surfaces currently return a WRONG
 #: concept at chartable confidence. The count may fall but must never
 #: rise: a new entry is a regression that would put a wrong code on a
-#: chart. Lower it as synonym coverage improves.
+#: chart. Lower it as synonym coverage improves — see issue #54.
 MAX_CONFIDENT_WRONG = 6
 
 #: Below this, the pipeline routes a mention to human review rather than
