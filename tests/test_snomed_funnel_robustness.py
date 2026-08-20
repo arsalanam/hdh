@@ -13,10 +13,11 @@ is ever needed — instead of intuition.
 
     HDH_SNOMED_DB_URL=postgresql+psycopg://... uv run pytest -m fullload
 
-Measured 2026-08-19 on the US Edition: 4/4 verbatim, 3/3 misspelling,
-3/6 abbreviation, 0/5 lay phrasing. The failures split in two, and only
-one kind is dangerous — see `test_a_wrong_answer_must_not_be_confident`
-and issue #54, which tracks closing the dangerous half.
+Measured 2026-08-20 on the US Edition, after the ABBR-alias rung and the
+per-word coverage rule: 5/5 verbatim, 3/3 misspelling, 4/6 abbreviation,
+0/5 lay phrasing. Confident-wrong answers **6 -> 3**, with no regression
+anywhere else. The failures split in two, and only one kind is dangerous
+— see `test_a_wrong_answer_must_not_be_confident` and issue #54.
 
 A caution this suite exists to enforce: "is the term in the term set?" is
 NOT the question. `SOB` fails while SNOMED carries `SOB - Shortness of
@@ -46,6 +47,10 @@ MUST_RESOLVE: tuple[tuple[str, str], ...] = (
     ("MI", "22298006"),
     ("COPD", "13645005"),
     ("shortness of breath", "267036007"),
+    # Promoted from FRONTIER once the ABBR-alias rung landed. SNOMED carried
+    # 'SOB - Shortness of breath' all along; it was ranked second behind a
+    # stemming artifact ('Sobbing' -> 'sob'). Issue #54.
+    ("SOB", "267036007"),
 )
 
 #: Trigram's job: a clinician's typo must still land.
@@ -71,30 +76,46 @@ MISSPELLINGS: tuple[tuple[str, str], ...] = (
 #: They are xfail rather than deleted because they document exactly where
 #: the funnel stops — when a fix lands, these start passing and say so.
 FRONTIER: tuple[tuple[str, str, str], ...] = (
-    # RANKING: Dyspnea carries 'SOB - Shortness of breath' and is returned
-    # at rank 2 (0.98). It loses to a STEMMING artifact — 'Sobbing' -> 'sob'
-    # — partly because ts_rank normalization 1 penalises the longer term for
-    # spelling the abbreviation out. Fix the ranking, not the vocabulary.
-    ("SOB", "267036007", "RANKING: retrieved at rank 2/3 (0.98), loses to 'Sobbing respiration' 1.00"),
     # THRESHOLD: FTS finds nothing ('diabetis' stems to 'diabeti', 'diabetes'
     # to 'diabet'), so trigram runs — then pg_trgm's 0.3 cutoff drops
     # 'Diabetes mellitus' at 0.286 while 'Diabetic jam' clears it at 0.467.
     ("diabetis", "73211009", "THRESHOLD: truth at similarity 0.286, below the 0.3 trigram cutoff"),
     # VOCABULARY: the concept's term set has no lay phrasing at all. COPD,
     # for one, carries fifteen terms and every one of them is clinical.
+    # Three of these are now SAFE — the per-word coverage rule caps a fuzzy
+    # match that explains only half the mention, so they reach a human
+    # instead of a chart. Still wrong, but no longer dangerous.
     (
         "afib",
         "49436004",
-        "VOCABULARY: not retrieved; 'Afipia' (a bacterium) at 0.28 — but SAFE, under review",
+        "VOCABULARY: not retrieved; 'Afipia' (a bacterium) at 0.28 — SAFE, under review",
     ),
-    ("sugar diabetes", "44054006", "VOCABULARY: not retrieved in 41 candidates; 'Bronze diabetes' at 0.61"),
+    (
+        "sugar diabetes",
+        "44054006",
+        "VOCABULARY: not retrieved; 'Brittle diabetes mellitus' 0.55 — SAFE since the "
+        "coverage rule ('sugar' matches no word of the term)",
+    ),
+    (
+        "smoker's lung",
+        "13645005",
+        "VOCABULARY: not retrieved; 'Ex-pipe smoker' 0.55 — SAFE since the coverage rule",
+    ),
+    # Still dangerous: the term genuinely accounts for every word, so no
+    # lexical rule separates it. 'underactive' scores 0.84 against
+    # 'Inactive' and 'thyroid' matches outright — a near-synonym of the
+    # right answer that is nonetheless the wrong concept.
     (
         "underactive thyroid",
         "40930008",
-        "VOCABULARY: not retrieved in 24 candidates; 'Underactive infant' 0.63",
+        "VOCABULARY: not retrieved; 'Inactive thyroid disease' at 0.61 — fully word-covered",
     ),
-    ("can't catch my breath", "267036007", "VOCABULARY: not retrieved; 'Catching breath' at 1.00"),
-    ("smoker's lung", "13645005", "VOCABULARY: not retrieved in 29 candidates; 'Smoker' at 0.67"),
+    (
+        "can't catch my breath",
+        "267036007",
+        "VOCABULARY: not retrieved; 'Catching breath' at 1.00 — an FTS hit on every "
+        "surviving lexeme (catch, breath), so only semantics could tell them apart",
+    ),
 )
 
 #: A ratchet, not a target. These surfaces currently return a WRONG
@@ -102,7 +123,12 @@ FRONTIER: tuple[tuple[str, str, str], ...] = (
 #: rise: a new entry is a regression that would put a wrong code on a
 #: chart. Lower it as the causes above are fixed — ranking first (it needs
 #: no new data at all), then vocabulary. See issue #54.
-MAX_CONFIDENT_WRONG = 6
+#:
+#: 6 -> 3 when the ABBR-alias rung and the per-word coverage rule landed:
+#: "SOB" resolves outright, and "sugar diabetes" / "smoker's lung" dropped
+#: below the review line. The three that remain need vocabulary or
+#: semantics, not ranking.
+MAX_CONFIDENT_WRONG = 3
 
 #: Below this, the pipeline routes a mention to human review rather than
 #: charting it (pipeline.REVIEW_THRESHOLD).
