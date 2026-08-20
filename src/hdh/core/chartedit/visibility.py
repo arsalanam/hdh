@@ -41,6 +41,7 @@ def voidable_models() -> tuple[type, ...]:
         models.Prescription,
         models.LabResult,
         models.Allergy,
+        models.ServiceRequest,
     )
 
 

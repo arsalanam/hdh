@@ -102,6 +102,41 @@ class AuditAction(str, enum.Enum):
     VOID = "void"
 
 
+class ServiceKind(str, enum.Enum):
+    """What was asked for (design service-requests §2). One table with a
+    discriminator, not four: the kinds share a lifecycle, an authoring
+    visit, a requester, a code and a fulfilment link."""
+
+    MEDICATION = "medication"  # → FHIR MedicationRequest
+    LAB = "lab"  # → FHIR ServiceRequest
+    REFERRAL = "referral"  # → FHIR ServiceRequest
+    PROCEDURE = "procedure"  # → FHIR ServiceRequest
+    FOLLOW_UP = "follow_up"  # source of truth; Visit.follow_up_days derives
+
+
+class RequestStatus(str, enum.Enum):
+    """FHIR's request lifecycle, trimmed to states we can actually reach."""
+
+    DRAFT = "draft"  # comprehended or generated, not yet released
+    ACTIVE = "active"  # released — sent, awaiting fulfilment
+    COMPLETED = "completed"  # result or dispense received
+    REVOKED = "revoked"  # cancelled by a human
+    ENTERED_IN_ERROR = "entered_in_error"  # voided via chartedit
+
+
+class RequestOrigin(str, enum.Enum):
+    """WHERE the row came from — OMOP's ``*_type_concept_id`` lesson
+    (design §3). We had provenance only in the audit trail, which means a
+    row could not say for itself whether a human, the generator, a note or
+    an outside partner put it there."""
+
+    GENERATED = "generated"  # the synthetic generator
+    COMPREHENSION = "comprehension"  # extracted from a note
+    AGENT = "agent"
+    CLINICIAN = "clinician"  # entered directly via CLI/UI
+    EXTERNAL = "external"  # arrived from a partner
+
+
 # ─── Reference entities (thin: identity only — modules add richness) ─────────
 
 
@@ -299,6 +334,7 @@ class Visit(Base):
     )
     procedures: Mapped[list["Procedure"]] = relationship(back_populates="visit")
     notes: Mapped[list["VisitNote"]] = relationship(back_populates="visit", cascade="all, delete-orphan")
+    service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="visit")
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
 
@@ -333,6 +369,7 @@ class Prescription(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     visit_id: Mapped[int] = mapped_column(ForeignKey("visits.id"))
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("service_requests.id"))
     drug_name: Mapped[str] = mapped_column(String(100))
     drug_class: Mapped[str | None] = mapped_column(String(80))
     dose: Mapped[str | None] = mapped_column(String(40))
@@ -343,17 +380,28 @@ class Prescription(Base):
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     visit: Mapped["Visit"] = relationship(back_populates="prescriptions")
+    request: Mapped["ServiceRequest | None"] = relationship(back_populates="prescriptions")
 
 
 class LabResult(Base):
-    """A LOINC-coded lab value with reference range and status flag."""
+    """A LOINC-coded lab value with reference range and status flag.
+
+    ``value`` is nullable because a result is not always a number. A urine
+    culture reads "no growth", a pregnancy test "positive", a sensitive
+    troponin "<0.01" — OMOP carries these as ``value_as_concept_id`` and
+    ``operator_concept_id``, and without them whole classes of real result
+    are unstorable (design service-requests §3).
+    """
 
     __tablename__ = "lab_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     visit_id: Mapped[int] = mapped_column(ForeignKey("visits.id"))
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("service_requests.id"))
     test_name: Mapped[str] = mapped_column(String(100))
     value: Mapped[float | None] = mapped_column(Float)
+    value_text: Mapped[str | None] = mapped_column(String(120))  # "positive", "no growth"
+    comparator: Mapped[str | None] = mapped_column(String(2))  # "<", ">", "<=", ">="
     unit: Mapped[str | None] = mapped_column(String(20))
     reference_low: Mapped[float | None] = mapped_column(Float)
     reference_high: Mapped[float | None] = mapped_column(Float)
@@ -362,6 +410,72 @@ class LabResult(Base):
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     visit: Mapped["Visit"] = relationship(back_populates="lab_results")
+    request: Mapped["ServiceRequest | None"] = relationship(back_populates="lab_results")
+
+
+class ServiceRequest(Base):
+    """Something the chart ASKED FOR: a drug, a panel, a referral, a
+    procedure, a return visit (design service-requests-and-interchange.md).
+
+    The chart could previously record only what HAPPENED. A lab existed
+    only once it had a result, so "basic metabolic panel before the next
+    visit" had nowhere to live, and a referral was smuggled through a
+    condition's drug formulary.
+
+    Three deliberate choices, all from §2:
+
+    - **``code`` is nullable.** A request is real before it is coded —
+      that is the point of ordering it. An uncoded request is legitimate
+      state, and exactly what the LOINC and RxNorm modules will fill in.
+      Refuse-don't-guess: we never invent a code to satisfy a column.
+    - **``reason_condition_id`` persists the TREATS relation.**
+      Comprehension already derives "lisinopril *for hypertension*" and
+      then discarded it after FHIR export. This is where it lands.
+    - **``detail`` is JSON for the long tail only.** The fields OMOP shows
+      are load-bearing are real columns; genuinely kind-specific extras
+      (panel members, referral specialty) stay in JSON rather than four
+      kinds' worth of mostly-NULL columns.
+    """
+
+    __tablename__ = "service_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"))
+    requester_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    kind: Mapped[ServiceKind] = mapped_column(SAEnum(ServiceKind))
+    status: Mapped[RequestStatus] = mapped_column(SAEnum(RequestStatus))
+    origin: Mapped[RequestOrigin] = mapped_column(SAEnum(RequestOrigin))
+    display: Mapped[str] = mapped_column(String(200))  # "Basic metabolic panel"
+    code_system: Mapped[str | None] = mapped_column(String(20))  # loinc | rxnorm | snomed_ct
+    code: Mapped[str | None] = mapped_column(String(40))  # None until a coder resolves it
+    reason_condition_id: Mapped[int | None] = mapped_column(ForeignKey("conditions.id"))
+    requested_date: Mapped[date] = mapped_column(Date)
+    occurrence_date: Mapped[date | None] = mapped_column(Date)  # "before the next visit"
+    end_date: Mapped[date | None] = mapped_column(Date)  # explicit, never derived (§3)
+    quantity: Mapped[float | None] = mapped_column(Float)
+    route: Mapped[str | None] = mapped_column(String(40))
+    sig: Mapped[str | None] = mapped_column(String(300))  # verbatim directions
+    stop_reason: Mapped[str | None] = mapped_column(String(200))  # why it ended early
+    detail: Mapped[dict | None] = mapped_column(JSON)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
+
+    patient: Mapped["Patient"] = relationship()
+    visit: Mapped["Visit | None"] = relationship(back_populates="service_requests")
+    requester: Mapped["Provider | None"] = relationship()
+    reason_condition: Mapped["Condition | None"] = relationship()
+    # Fulfilment points BACK at the order, because one order can be
+    # fulfilled many times: a basic metabolic panel returns eight results,
+    # and a prescription is dispensed again at every refill. §4 draws this
+    # as `fulfilled_by` from the request, which is the reading direction —
+    # the foreign key has to sit on the many side to say it.
+    prescriptions: Mapped[list["Prescription"]] = relationship(back_populates="request")
+    lab_results: Mapped[list["LabResult"]] = relationship(back_populates="request")
+
+    @property
+    def fulfilled_by(self) -> list:
+        """Everything that came back for this order, whatever its kind."""
+        return [*self.prescriptions, *self.lab_results]
 
 
 # ─── The rest of the chart ────────────────────────────────────────────────────
