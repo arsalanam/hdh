@@ -45,7 +45,7 @@ checking our model against it found real omissions.
 6. [Interchange: mock labs and pharmacies](#6-interchange)
 7. [Where ontology coding lands](#7-coding)
 8. [Milestones](#8-milestones)
-9. [Open questions — answer inline](#9-questions)
+9. [Open questions — answered](#9-questions)
 
 ---
 
@@ -76,7 +76,7 @@ class ServiceKind(str, enum.Enum):
     LAB = "lab"                 # -> FHIR ServiceRequest
     REFERRAL = "referral"       # -> FHIR ServiceRequest
     PROCEDURE = "procedure"     # -> FHIR ServiceRequest
-    FOLLOW_UP = "follow_up"     # the scalar that wants to be an order
+    FOLLOW_UP = "follow_up"     # source of truth; the scalar derives from it
 
 
 class RequestStatus(str, enum.Enum):
@@ -190,9 +190,12 @@ Today a result appears from nowhere and must be numeric. With a request
 it can be matched to what was ordered — and an *unmatched* result becomes
 visible rather than silently landing.
 
-**`Visit.follow_up_days` stays** (generator convenience) but a
-`FOLLOW_UP` request is emitted alongside, so the agent can see and amend
-a return-visit order like any other.
+**`Visit.follow_up_days` becomes derived.** A `FOLLOW_UP` request is the
+source of truth for a return visit, and the scalar is read from it rather
+than written beside it (§9 Q5). Two writable copies of one fact drift, and
+the drift is silent; one authoritative row means the agent can amend a
+return-visit order exactly as it amends any other, and the audit trail
+shows who moved it.
 
 **Migration:** additive throughout. One new table, nullable columns on
 two existing ones, inspector-guarded like migration 0005. Existing rows
@@ -281,42 +284,90 @@ to.
 | **A** | `ServiceRequest` + enums + OMOP-informed fields, migration, `LabResult.request_id`/`value_text`/`comparator`, `hdh orders list/release`, chartedit integration | requests are first-class, auditable, and analysable |
 | **B** | Comprehension's fifth pass: plan-section orders become requests with verdicts; `rx_options` referral abuse retired | the note's plan finally reaches the chart |
 | **C** | `hdh.modules.interchange`: `PartnerAdapter` protocol, mock lab + pharmacy, outbox/inbox bundles, `hdh interchange run/import`, unmatched-result review queue | the round trip closes without a real integration |
-| **D** | LOINC module (labs), RxNorm module (medications) behind `OntologyService` | coding serves real requests; the vitals alias dict retires |
+| **D** | LOINC module (labs) behind `OntologyService`; then RxNorm, under its own design | coding serves real requests; the vitals alias dict retires |
 
 Each milestone is human-tested before the next begins.
 
-## 9. Open questions — answer inline<a name="9-questions"></a>
+Milestone D splits (§9 Q7): LOINC is a loader plus a funnel against a
+settled protocol and needs no further design, while RxNorm's ingredient /
+SCD / SBD / brand graph and its collision with `Prescription` earn a short
+document of their own — which is also where the lexical-vs-vector
+retrieval question re-opens with a second and third terminology to measure
+against (issue #54).
 
-1. **One table or two?** Proposal: one `ServiceRequest` with a `kind`
-   discriminator, mapped to `MedicationRequest` or `ServiceRequest` at
-   FHIR emit time. Alternative: mirror FHIR with two tables and duplicated
-   lifecycle. One table, or mirror FHIR?
+## 9. Open questions — answered<a name="9-questions"></a>
 
-2. **Does a medication request supersede `Prescription`?** Proposal: no —
-   request is the order, `Prescription` is what came back, linked by
-   `fulfilled_by`. Alternative: fold them into one row with a status,
-   simpler but loses "prescribed" vs "dispensed". Keep both, or merge?
+All seven answered 2026-08-20, each going with the proposal. The reasoning
+is recorded because the RFC (#52) stays open for outside feedback, and any
+of these could be reversed by someone who has run a real interface.
 
-3. **Transport.** Proposal: a directory of FHIR Bundles, with the FHIR API
-   module optionally serving them later. Or should the mock partner be an
-   HTTP service from the start, to exercise the API path?
+1. **One table or two?** → **One `ServiceRequest` with a `kind`
+   discriminator**, mapped to `MedicationRequest` or plain `ServiceRequest`
+   at FHIR emit time. FHIR's split is a wire-format artifact rather than a
+   domain distinction: the lifecycle is identical, so two tables would
+   duplicate the state machine, the audit wiring, the review queue and the
+   chartedit registry entry — while hdh already maps internal models to
+   FHIR at emit time, so the mapping costs one dispatch. Accepted cost:
+   medication-only fields (`sig`, `route`, `quantity`, refills) are
+   nullable on lab and referral rows. If that null-space grows beyond the
+   medication set, a typed sidecar table is the fallback — not a rewrite.
 
-4. **How real should the mock partner be?** Proposal: it generates
-   clinically plausible results from the existing `LabSpec` reference
-   ranges with a seeded RNG — a CBC comes back with plausible values and
-   the occasional abnormal. Simpler alternative: echo fixed values.
+2. **Does a medication request supersede `Prescription`?** → **No — both,
+   linked by `fulfilled_by`.** Order and dispense are clinically distinct,
+   and merging them makes *"prescribed but never filled"* unrepresentable:
+   the same class of omission as `LabResult.value` being a float, which is
+   what the OMOP read caught. It is also what gives the mock pharmacy
+   something to hand back.
 
-5. **Follow-up as a request?** Proposal: emit a `FOLLOW_UP` request
-   alongside `Visit.follow_up_days`, so the agent can amend it like any
-   other order. Or leave it the scalar it is?
+3. **Transport?** → **A directory of FHIR Bundles, outbox/inbox.**
+   Inspectable, diffable in tests, and no server lifecycle in CI; staged
+   directories are close to how real lab interfaces behave anyway. HTTP
+   remains available later behind the same `PartnerAdapter` protocol, which
+   is the point of having the protocol.
 
-6. **How far to take OMOP (§3)?** Proposal: adopt the six field-level
-   lessons now, defer `SPECIMEN` and `FACT_RELATIONSHIP` with the reasons
-   recorded, and treat a full OMOP *export view* as a separate question
-   for later. Or should an OMOP view be a milestone here, given
-   `NOTE_NLP` already lines up with our mention model?
+   *Still genuinely open, and put to the RFC:* whether FHIR is the right
+   wire format at all, given real lab interfaces are overwhelmingly HL7 v2
+   (ORM out, ORU back) and pharmacy is NCPDP SCRIPT. It does not block
+   milestone A, and `PartnerAdapter` is exactly where a v2 answer would
+   land.
 
-7. **Scope of milestone D.** Proposal: LOINC first (labs are the round
-   trip we just built), RxNorm second. Both are loader+funnel modules on
-   the scale of the SNOMED arc — do they need their own drill-down
-   design, or is this doc enough?
+4. **How real should the mock partner be?** → **Plausible, seeded and
+   condition-aware.** Results generate from the existing `LabSpec`
+   reference ranges under a seeded RNG — reproducible, as `--seed N`
+   already promises — with the occasional abnormal, because care gaps and
+   risk scoring only become interesting when abnormals exist.
+
+   **Rider:** where the catalog already knows the patient's state, derive
+   from it. A CKD-4 patient's creatinine must not come back normal, or the
+   chart contradicts itself and the dataset teaches the wrong thing. The
+   mock reads the problem list; it must not become a second disease engine
+   that invents one.
+
+5. **Follow-up as a request?** → **Yes, and the request is the source of
+   truth.** `Visit.follow_up_days` becomes a derived read rather than a
+   second writable copy: dual-writing one fact guarantees drift. A single
+   authoritative row gives follow-ups the same amend/void/audit path and
+   agent tooling as every other order, and gives a plan-section *"return in
+   3 months"* somewhere to land. §4 is updated accordingly.
+
+6. **How far to take OMOP?** → **Adopt the six field-level lessons now,
+   defer the export view.** `SPECIMEN` and `FACT_RELATIONSHIP` stay
+   deferred with their reasons recorded (§3). An OMOP export view is an
+   analytics product rather than an order-recording one, so it becomes its
+   own issue — and it is cheap to add later precisely because `NOTE_NLP`
+   already lines up almost field-for-field with `NoteMention`.
+
+7. **Scope of milestone D?** → **LOINC rides on this doc; RxNorm gets its
+   own.** LOINC is comparatively flat — a code with six axes and no real
+   hierarchy — and the `OntologyService` protocol is already settled, so it
+   is a loader plus a funnel. RxNorm is harder: the ingredient / SCD / SBD
+   / brand graph, dose-form semantics, and a collision with the existing
+   `Prescription` and drug-formulary model.
+
+   That design is also where the **lexical-vs-vector retrieval question
+   re-opens** (issue #54). Phase 1 took confident-wrong answers from 6 to 3
+   using only data SNOMED already ships; the residue is *not retrieved at
+   all*, so it needs recall rather than reranking — and RxNorm and LOINC
+   surfaces (`BMP`, `chem 7`, `A1c`, `HCTZ`) are more abbreviation-dense
+   than SNOMED's. Decide it there, with measurements from a second and
+   third terminology instead of six hand-picked surfaces.
