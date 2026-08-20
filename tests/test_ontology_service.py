@@ -113,3 +113,50 @@ def test_new_entities_and_enum_values_registered(db_session):
     assert set(tables["ontology_closure"].primary_key.columns.keys()) == {"ancestor_id", "descendant_id"}
     assert "concept" in tables["ontology_concepts"].c.kind.type.enums
     assert "attribute" in tables["ontology_edges"].c.edge_type.type.enums
+
+
+# ── the funnel's scoring rules, as pure functions (issue #54) ────────────
+# These decide whether a wrong code reaches a chart, so they are worth
+# testing without a loaded edition. The full-edition measurements live in
+# tests/test_snomed_funnel_robustness.py.
+
+
+def test_abbreviation_shape_is_recognised():
+    """Only a short alphanumeric token can head an "ABBR - Expansion" term."""
+    from hdh.modules.snomed.ontology import _looks_like_abbreviation
+
+    assert _looks_like_abbreviation("SOB")
+    assert _looks_like_abbreviation("t2dm")
+    assert not _looks_like_abbreviation("shortness of breath")  # a phrase
+    assert not _looks_like_abbreviation("hypothyroidism")  # a word
+    assert not _looks_like_abbreviation("b")  # too short to disambiguate
+    # keeps the LIKE pattern literal: no wildcard can reach the query
+    assert not _looks_like_abbreviation("a%b")
+    assert not _looks_like_abbreviation("b/p")
+
+
+def test_a_typo_covers_the_mention_but_a_lay_phrase_does_not():
+    """The rule that separates "hypertenison" (chart it) from "sugar
+    diabetes" (do not). Similarity over the whole string CANNOT make this
+    call — measured on the full edition, typos span 0.35-0.71 and wrong
+    answers 0.33-0.56 — so coverage is judged per word."""
+    from hdh.modules.snomed.ontology import _covers_every_word
+
+    # typos: every word of the mention has a close counterpart
+    assert _covers_every_word("hypothyroidsm", "Hypothyroidism")
+    assert _covers_every_word("astma", "Asthma")
+    assert _covers_every_word("hypertenison", "Hypertensive disorder")
+
+    # lay phrasing: the term answers only half the question
+    assert not _covers_every_word("sugar diabetes", "Bronze diabetes")
+    assert not _covers_every_word("underactive thyroid", "Underactive infant")
+    assert not _covers_every_word("smoker's lung", "Smoker")
+
+
+def test_a_partial_match_can_never_be_charted():
+    """The ceiling exists to sit below the pipeline's review threshold; if
+    that coupling ever breaks, a half-matched guess reaches a chart."""
+    from hdh.modules.comprehension.pipeline import REVIEW_THRESHOLD
+    from hdh.modules.snomed.ontology import PARTIAL_COVERAGE_CEILING
+
+    assert PARTIAL_COVERAGE_CEILING < REVIEW_THRESHOLD

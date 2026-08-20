@@ -16,6 +16,8 @@ more stage, bench-gated (master doc §6).
 
 from __future__ import annotations
 
+import difflib
+import re
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -26,6 +28,62 @@ from hdh.core.ontology import Candidate, Concept
 ONTOLOGY = "snomed_ct"
 
 _TERM_TYPE_RANK = {"preferred": 0, "fsn": 1, "synonym": 2}
+
+#: Ceiling for a fuzzy match that explains only PART of the mention.
+#: Deliberately below the comprehension pipeline's 0.6 review threshold: such
+#: a match is a guess about the words it could not account for, so it should
+#: reach a human rather than a chart. The coupling is intentional — see issue
+#: #54, where 'Bronze diabetes' was charted for "sugar diabetes" at 0.61.
+PARTIAL_COVERAGE_CEILING = 0.55
+
+#: How close a mention's word must be to some word of the term before we
+#: call it accounted for. Measured against the frontier corpus: typos sit at
+#: 0.75–0.96 ("hypertenison"/'Hypertensive' 0.75) while lay phrasing bottoms
+#: out at 0.00–0.55 ("lung" against 'Smoker'), so the gap is wide.
+_FUZZY_WORD_MATCH = 0.7
+
+#: SNOMED's ``ABBR - Expansion`` terms carry 2–10 character abbreviations.
+#: Restricting to alphanumerics keeps the LIKE pattern literal (no escaping
+#: of % or _) as well as cheap.
+_ABBREVIATION_LEN = range(2, 11)
+
+
+def _looks_like_abbreviation(needle: str) -> bool:
+    """Could this mention be an abbreviation SNOMED spells out for us?
+
+    Anything with a space is a phrase, and anything longer than ten
+    characters is a word — neither can head an ``ABBR - Expansion`` term, so
+    querying for them would buy an index scan that cannot hit.
+    """
+    return len(needle) in _ABBREVIATION_LEN and needle.isalnum()
+
+
+def _words(text: str) -> list[str]:
+    """Words worth matching on — two-character fragments carry no signal."""
+    return [w for w in re.split(r"[^a-z0-9]+", text.lower()) if len(w) > 2]
+
+
+def _covers_every_word(mention: str, term: str) -> bool:
+    """Does the term account for EVERY word of the mention?
+
+    This is the difference between a typo and a lay phrase, and only the
+    trigram rung needs it: an FTS hit already matched every lexeme, while
+    trigram scores whole strings and will happily return 'Smoker' for
+    "smoker's lung" or 'Bronze diabetes' for "sugar diabetes" — each a
+    confident answer to half the question (issue #54).
+
+    Similarity alone cannot make this call: measured on the frontier corpus,
+    typos span 0.35–0.71 and wrong answers 0.33–0.56, which overlap. Per
+    word they separate cleanly.
+    """
+    term_words = _words(term)
+    if not term_words:
+        return False
+    return all(
+        max((difflib.SequenceMatcher(None, word, tw).ratio() for tw in term_words), default=0.0)
+        >= _FUZZY_WORD_MATCH
+        for word in _words(mention)
+    )
 
 
 def build_service(session: Any) -> SnomedOntologyService:
@@ -110,13 +168,13 @@ class SnomedOntologyService:
         wanted_tags = {t.lower() for t in ctx.get("semantic_tags", ())}
         anchor_ids = [self._id(code) for code in ctx.get("ancestors", ())]
         concepts_t, _e, _t, closure_t = _tables()
-        best: dict[str, tuple[float, str]] = {}
-        for concept_id, term, term_type, base in matches:
+        best: dict[str, tuple[float, str, bool]] = {}
+        for concept_id, term, term_type, base, covered in matches:
             score = base - 0.01 * _TERM_TYPE_RANK.get(term_type, 2)  # type is a tiebreaker
-            if score > best.get(concept_id, (-1.0, ""))[0]:
-                best[concept_id] = (score, term)
+            if score > best.get(concept_id, (-1.0, "", True))[0]:
+                best[concept_id] = (score, term, covered)
         ranked: list[tuple[float, Candidate]] = []
-        for concept_id, (score, term) in best.items():
+        for concept_id, (score, term, covered) in best.items():
             row = self.session.execute(select(concepts_t).where(concepts_t.c.id == concept_id)).first()
             if row is None:
                 continue
@@ -139,6 +197,13 @@ class SnomedOntologyService:
                 if under is not None:
                     score += 0.2
                     reasons.append("in context subtree")
+            if not covered:
+                # The term explains only part of the mention. Whatever else
+                # recommends it — a matching semantic tag, the right subtree
+                # — it is still a guess about the part it did not match, so
+                # it must not reach chartable confidence.
+                score = min(score, PARTIAL_COVERAGE_CEILING)
+                reasons.append("partial: matches some of the mention")
             # rank on the RAW score (clamping would flatten exact matches
             # into ties with boosted partials); report a clamped score
             ranked.append(
@@ -150,10 +215,18 @@ class SnomedOntologyService:
         ranked.sort(key=lambda pair: (-pair[0], pair[1].concept.code))
         return tuple(candidate for _raw, candidate in ranked[:limit])
 
-    def _search_terms(self, needle: str) -> list[tuple[str, str, str, float]]:
-        """Stage 1 of the funnel: (concept_id, term, term_type, base score)
-        rows from the term index — FTS then trigram on PostgreSQL (the
-        accelerate-stage indexes), exact/prefix/substring elsewhere."""
+    def _search_terms(self, needle: str) -> list[tuple[str, str, str, float, bool]]:
+        """Stage 1 of the funnel: (concept_id, term, term_type, base score,
+        covers_whole_mention) rows from the term index — FTS then trigram on
+        PostgreSQL (the accelerate-stage indexes), exact/prefix/substring
+        elsewhere.
+
+        ``covers_whole_mention`` is False when the term accounts for only
+        SOME of a multi-word mention — 'Bronze diabetes' for "sugar
+        diabetes", 'Underactive infant' for "underactive thyroid". Such a
+        candidate is a guess about the half it did not match, and
+        ``normalize`` caps it below the review threshold.
+        """
         _c, _e, terms_t, _cl = _tables()
         if self.session.get_bind().dialect.name == "postgresql":
             from sqlalchemy import text as sql_text
@@ -168,7 +241,8 @@ class SnomedOntologyService:
                 ),
                 {"q": needle},
             ).all()
-            out = [(row.concept_id, row.term, str(row.term_type), 1.0) for row in exact]
+            out = [(row.concept_id, row.term, str(row.term_type), 1.0, True) for row in exact]
+            out.extend(self._abbreviation_matches(needle))
             fts = self.session.execute(
                 sql_text(
                     "SELECT concept_id, term, term_type, "
@@ -190,7 +264,9 @@ class SnomedOntologyService:
                     base = min(0.5 + 0.4 * float(row.r) / top, 0.9)
                     if term.startswith(needle):
                         base = max(base, 0.85)
-                    out.append((row.concept_id, row.term, str(row.term_type), base))
+                    # An FTS hit always covers the mention: plainto_tsquery
+                    # ANDs its lexemes, so the term matched every one of them.
+                    out.append((row.concept_id, row.term, str(row.term_type), base, True))
             if out:
                 return out
             fuzzy = self.session.execute(
@@ -201,7 +277,16 @@ class SnomedOntologyService:
                 ),
                 {"q": needle},
             ).all()
-            return [(row.concept_id, row.term, str(row.term_type), 0.3 + 0.4 * float(row.s)) for row in fuzzy]
+            return [
+                (
+                    row.concept_id,
+                    row.term,
+                    str(row.term_type),
+                    0.3 + 0.4 * float(row.s),
+                    _covers_every_word(needle, row.term),
+                )
+                for row in fuzzy
+            ]
         rows = self.session.execute(
             select(terms_t.c.concept_id, terms_t.c.term, terms_t.c.term_type)
             .where(
@@ -214,8 +299,58 @@ class SnomedOntologyService:
         for row in rows:
             term = row.term.lower()
             base = 1.0 if term == needle else 0.7 if term.startswith(needle) else 0.4
-            out.append((row.concept_id, row.term, str(row.term_type), base))
+            # every row here matched the whole needle, exactly or as a substring
+            out.append((row.concept_id, row.term, str(row.term_type), base, True))
         return out
+
+    def _abbreviation_matches(self, needle: str) -> list[tuple[str, str, str, float, bool]]:
+        """SNOMED writes abbreviations into the term itself, as
+        ``ABBR - Expansion``: 'SOB - Shortness of breath', 'AF - Atrial
+        fibrillation', 'COPD - Chronic obstructive pulmonary disease'. 9,101
+        active terms in the US Edition follow the shape, so the terminology
+        already carries the abbreviation table we would otherwise curate.
+
+        A mention that IS the abbreviation is an exact hit on that alias and
+        scores like one. Without this, "SOB" loses to 'Sobbing respiration',
+        whose only claim on the mention is that the English stemmer maps
+        'sobbing' → 'sob' — a wrong code, charted at 1.00 (issue #54).
+
+        One abbreviation can head several terms, so the expansion decides how
+        strong the claim is: an expansion the concept ALSO goes by is a true
+        alias, while a longer qualified phrase is a weaker claim on the bare
+        abbreviation. "MI" heads five terms, and only that test separates
+        'MI - myocardial infarction' (a name 22298006 goes by) from
+        'MI - Myocardial infarction aborted', whose concept is actually
+        called *Coronary thrombosis NOT resulting in myocardial infarction* —
+        very nearly the opposite of what the clinician wrote.
+        """
+        if not _looks_like_abbreviation(needle):
+            return []
+        from sqlalchemy import text as sql_text
+
+        # The FTS predicate is what makes this affordable: an abbreviation is
+        # always a lexeme of the term that spells it out, so the GIN index
+        # narrows 1M rows to a handful before the LIKE runs. Without it the
+        # LIKE is a sequential scan — 580ms per mention against 1.2ms.
+        # (An abbreviation that stems to a stop word cannot be found this way;
+        # none of the 2+ character ones we care about do.)
+        rows = self.session.execute(
+            sql_text(
+                "SELECT t.concept_id, t.term, t.term_type, EXISTS ("
+                "    SELECT 1 FROM ontology_terms o"
+                "     WHERE o.concept_id = t.concept_id AND o.active"
+                "       AND lower(o.term) = lower(substr(t.term, position(' - ' in t.term) + 3))"
+                ") AS is_alias "
+                "FROM ontology_terms t "
+                "WHERE t.active "
+                "  AND to_tsvector('english', t.term) @@ plainto_tsquery('english', :q) "
+                "  AND lower(t.term) LIKE :prefix LIMIT 20"
+            ),
+            {"prefix": f"{needle} - %", "q": needle},
+        ).all()
+        return [
+            (row.concept_id, row.term, str(row.term_type), 1.0 if row.is_alias else 0.9, True) for row in rows
+        ]
 
     def subsumes(self, ancestor_code: str, descendant_code: str) -> bool:
         """One indexed closure hit (strict: a concept never subsumes itself)."""
