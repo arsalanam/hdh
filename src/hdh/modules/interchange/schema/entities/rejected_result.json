@@ -1,0 +1,69 @@
+{
+  "entity": "RejectedResult",
+  "tablename": "rejected_results",
+  "module": "interchange_module",
+  "columns": [
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "partner",
+      "type": "String",
+      "length": 60,
+      "nullable": false
+    },
+    {
+      "name": "reason",
+      "type": "Enum",
+      "values": [
+        "unknown_request",
+        "duplicate_result",
+        "order_not_open",
+        "patient_mismatch",
+        "unreadable",
+        "no_encounter"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "detail",
+      "type": "String",
+      "length": 300,
+      "nullable": false
+    },
+    {
+      "name": "request_id",
+      "type": "Integer",
+      "foreign_key": "service_requests.id",
+      "nullable": true
+    },
+    {
+      "name": "source_file",
+      "type": "String",
+      "length": 300
+    },
+    {
+      "name": "received_at",
+      "type": "DateTime"
+    },
+    {
+      "name": "resolved_at",
+      "type": "DateTime"
+    },
+    {
+      "name": "payload",
+      "type": "JSON"
+    }
+  ],
+  "indexes": [
+    {
+      "name": "ix_rejected_result_request",
+      "columns": [
+        "request_id"
+      ]
+    }
+  ]
+}

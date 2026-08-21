@@ -55,6 +55,12 @@ def register(subparsers) -> None:
     release.add_argument("--mrn", default=None, help="Release every draft for one patient")
     release.add_argument("--id", type=int, default=None, dest="row_id", help="One request")
     release.add_argument("--reason", default="released for fulfilment")
+    release.add_argument(
+        "--outbox",
+        default=None,
+        metavar="DIR",
+        help="Also write a FHIR order bundle here, for a partner to pick up",
+    )
     release.add_argument("--dry-run", action="store_true")
 
 
@@ -145,16 +151,31 @@ def _add(session, args) -> None:
 
     patient = _patient(session, args.mrn)
     kind = _enum(ServiceKind, args.kind, "--kind")
-    if args.visit_id is not None:
-        visit = session.get(Visit, args.visit_id)
+    visit_id = args.visit_id
+    if visit_id is not None:
+        visit = session.get(Visit, visit_id)
         if visit is None:
-            raise SystemExit(f"no visit #{args.visit_id}")
+            raise SystemExit(f"no visit #{visit_id}")
         if visit.patient_id != patient.id:
-            raise SystemExit(f"visit #{args.visit_id} belongs to another patient")
+            raise SystemExit(f"visit #{visit_id} belongs to another patient")
+    else:
+        # Attach to the latest encounter and SAY so. An order with no visit
+        # is legal, but a result returning against one has nowhere to live —
+        # the importer refuses it — so silently leaving it unattached would
+        # only defer the problem to the least convenient moment.
+        latest = (
+            session.query(Visit)
+            .filter(Visit.patient_id == patient.id)
+            .order_by(Visit.visit_date.desc(), Visit.id.desc())
+            .first()
+        )
+        if latest is not None:
+            visit_id = latest.id
+            print(f"   (attached to the latest visit #{visit_id}, {latest.visit_date})")
 
     request = ServiceRequest(
         patient_id=patient.id,
-        visit_id=args.visit_id,
+        visit_id=visit_id,
         kind=kind,
         status=RequestStatus.DRAFT,
         # A person typed this at a terminal, which is what CLINICIAN means.
@@ -217,3 +238,49 @@ def _release(session, args) -> None:
         print(("✅ " if outcome.applied else "⚠️  ") + outcome.detail)
     if not all(outcome.applied for outcome in outcomes):
         raise SystemExit(1)
+    if args.outbox and not args.dry_run:
+        _write_outbox(session, drafts, args.outbox)
+
+
+def _write_outbox(session, released, directory: str) -> None:
+    """Hand the released orders to a partner (design §6).
+
+    Optional on purpose: releasing an order is a clinical act on its own,
+    and hdh must still be usable with no partner configured at all. The
+    bundle carries the patient's active diagnoses, as a real requisition
+    does — it is what lets a mock lab answer in a way that fits the patient
+    rather than returning generic noise (§9 Q4).
+    """
+    from pathlib import Path
+
+    from hdh.core.models import Condition, ConditionStatus
+    from hdh.modules.interchange.bundles import order_bundle, write_bundle
+    from hdh.modules.interchange.contracts import OutboundOrder
+
+    diagnoses: dict[int, tuple[str, ...]] = {}
+    orders = []
+    for row in released:
+        if row.patient_id not in diagnoses:
+            codes = (
+                session.query(Condition.icd10_code)
+                .filter(Condition.patient_id == row.patient_id, Condition.status == ConditionStatus.ACTIVE)
+                .all()
+            )
+            diagnoses[row.patient_id] = tuple(sorted({c[0] for c in codes if c[0]}))
+        orders.append(
+            OutboundOrder(
+                request_id=row.id,
+                kind=_value(row.kind),
+                display=row.display,
+                patient_mrn=row.patient.mrn,
+                requested_date=row.requested_date,
+                code_system=row.code_system,
+                code=row.code,
+                occurrence_date=row.occurrence_date,
+                sig=row.sig,
+                diagnoses=diagnoses[row.patient_id],
+            )
+        )
+    name = f"orders-{min(o.request_id for o in orders)}-{max(o.request_id for o in orders)}.json"
+    path = write_bundle(Path(directory), name, order_bundle(orders))
+    print(f"📤 {len(orders)} order(s) → {path}")

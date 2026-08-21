@@ -246,3 +246,31 @@ def test_0007_turns_follow_up_days_into_orders_without_losing_it(alembic_cfg):
         restored = dict(conn.execute(text("SELECT id, follow_up_days FROM visits")).all())
     assert restored == {1: 90, 2: 14, 3: None}
     engine.dispose()
+
+
+def test_0008_adds_the_interchange_review_queue(alembic_cfg):
+    """The simple half of the guarded pattern: one new table, no column
+    changes. `create_all` builds it on a fresh database; this covers one
+    that already exists."""
+    from sqlalchemy import text
+
+    from hdh.core.schema_registry import bootstrap_schema
+
+    cfg, _tmp_path, _versions = alembic_cfg
+    bootstrap_schema()
+    from hdh.core.models import Base
+
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE rejected_results"))
+    command.stamp(cfg, "0007")
+    assert not inspect(engine).has_table("rejected_results")
+
+    command.upgrade(cfg, "head")
+
+    assert inspect(engine).has_table("rejected_results")
+    command.upgrade(cfg, "head")  # idempotent
+    command.downgrade(cfg, "0007")
+    assert not inspect(engine).has_table("rejected_results")
+    engine.dispose()
