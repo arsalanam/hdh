@@ -107,3 +107,77 @@ def test_reconcile_migration_repairs_stamped_drift(alembic_cfg):
     with engine.begin() as conn:  # idempotent: a second reconcile is a no-op
         assert reconcile_missing_columns(conn) == []
     engine.dispose()
+
+
+#: The pre-0006 shape of the two tables that gained a request pointer.
+#: Written out rather than produced by dropping columns, because SQLite
+#: refuses to DROP a column named in a foreign-key clause — and rebuilding
+#: the old shape is a truer simulation of an old database anyway.
+_PRE_ORDERS_TABLES = {
+    "lab_results": """
+        CREATE TABLE lab_results (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            visit_id INTEGER NOT NULL,
+            test_name VARCHAR(100) NOT NULL,
+            value FLOAT,
+            unit VARCHAR(20),
+            reference_low FLOAT,
+            reference_high FLOAT,
+            status VARCHAR(8) NOT NULL,
+            loinc_code VARCHAR(10),
+            voided_at DATETIME,
+            FOREIGN KEY(visit_id) REFERENCES visits (id)
+        )""",
+    "prescriptions": """
+        CREATE TABLE prescriptions (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            visit_id INTEGER NOT NULL,
+            drug_name VARCHAR(100) NOT NULL,
+            drug_class VARCHAR(80),
+            dose VARCHAR(40),
+            frequency VARCHAR(40),
+            duration_days INTEGER,
+            refills INTEGER,
+            is_new BOOLEAN,
+            voided_at DATETIME,
+            FOREIGN KEY(visit_id) REFERENCES visits (id)
+        )""",
+}
+
+
+def test_0006_adds_service_requests_to_a_database_stamped_at_0005(alembic_cfg):
+    """A database built before orders existed has neither the table nor the
+    columns that point at it. ``create_all`` would add the table but never
+    ALTER ``lab_results``, so the columns are the half that needs the
+    migration — the stale-schema failure class issue #30 was about."""
+    from sqlalchemy import text
+
+    from hdh.core.schema_registry import bootstrap_schema
+
+    cfg, _tmp_path, _versions = alembic_cfg
+    bootstrap_schema()
+    from hdh.core.models import Base
+
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:  # roll the schema back to before orders
+        conn.execute(text("DROP TABLE service_requests"))
+        for table, ddl in _PRE_ORDERS_TABLES.items():
+            conn.execute(text(f"DROP TABLE {table}"))
+            conn.execute(text(ddl))
+    command.stamp(cfg, "0005")
+
+    inspector = inspect(engine)
+    assert not inspector.has_table("service_requests")
+    assert "request_id" not in {c["name"] for c in inspector.get_columns("lab_results")}
+
+    command.upgrade(cfg, "head")
+
+    inspector = inspect(engine)
+    assert inspector.has_table("service_requests")
+    lab_columns = {c["name"] for c in inspector.get_columns("lab_results")}
+    assert {"request_id", "value_text", "comparator"} <= lab_columns
+    assert "request_id" in {c["name"] for c in inspector.get_columns("prescriptions")}
+
+    command.upgrade(cfg, "head")  # idempotent: nothing left to add
+    engine.dispose()

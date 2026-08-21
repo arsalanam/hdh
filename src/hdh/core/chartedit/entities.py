@@ -12,6 +12,7 @@ mutated — corrections are addenda.
 
 from __future__ import annotations
 
+import enum
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -40,6 +41,13 @@ class AmendableEntity(Protocol):
     def describe(self, row) -> str:
         """A short human label for outcome lines."""
         ...
+
+
+def _label(value: object) -> str:
+    """Render a label field the way a person wrote it, not the way Python
+    spells it — an outcome line reading "ServiceKind.LAB" is noise where
+    "lab" is the word the clinician used."""
+    return value.value if isinstance(value, enum.Enum) else str(value)
 
 
 @dataclass(frozen=True)
@@ -110,7 +118,7 @@ class _Spec:
         return target(text)
 
     def describe(self, row) -> str:
-        parts = [str(getattr(row, name)) for name in self.label_fields if getattr(row, name, None)]
+        parts = [_label(getattr(row, name)) for name in self.label_fields if getattr(row, name, None)]
         return f"{self.entity} #{row.id} ({' · '.join(parts)})" if parts else f"{self.entity} #{row.id}"
 
 
@@ -187,6 +195,33 @@ REGISTRY: Mapping[str, _Spec] = {
             reason_required=True,
             patient_path=("patient_id",),
             label_fields=("visit_date",),
+        ),
+        _Spec(
+            # An order is a clinical instruction, so changing one needs a
+            # reason like any other. `origin` and `requested_date` are
+            # deliberately NOT amendable: provenance and the moment of
+            # asking are what make the row auditable, and a chart that can
+            # rewrite them cannot answer "who ordered this, and when".
+            entity="ServiceRequest",
+            model_name="ServiceRequest",
+            amendable_fields=frozenset(
+                {
+                    "status",
+                    "display",
+                    "code_system",
+                    "code",
+                    "reason_condition_id",
+                    "occurrence_date",
+                    "end_date",
+                    "quantity",
+                    "route",
+                    "sig",
+                    "stop_reason",
+                }
+            ),
+            reason_required=True,
+            patient_path=("patient_id",),
+            label_fields=("kind", "display"),
         ),
     )
 }

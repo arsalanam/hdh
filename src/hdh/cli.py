@@ -26,6 +26,8 @@ from hdh.core.conditions import default_catalog
 from hdh.core.exporters import export_fhir, export_json, export_text, patient_to_text
 from hdh.core.generators import build_dataset, generate_visit_history
 from hdh.core.models import Condition, Patient, Visit, get_engine, get_session
+from hdh.core.orders import register as register_orders
+from hdh.core.orders import run as run_orders
 
 
 def cmd_stats(session):
@@ -306,14 +308,12 @@ def cmd_migrate(args):
         raise SystemExit("hdh migrate: verification failed (see table counts above)")
 
 
-def main():
-    """CLI entry point: parse arguments, open the DB session, dispatch the command."""
-    # Windows consoles default to legacy code pages that can't print the
-    # box-drawing and status characters used in CLI output.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+def _build_parser() -> argparse.ArgumentParser:
+    """Every subcommand this CLI accepts.
 
+    Split out of main() so dispatch reads as dispatch: the parser is
+    configuration, and it grows with every feature module added.
+    """
     parser = argparse.ArgumentParser(description="Family Medicine Synthetic Dataset CLI")
     parser.add_argument("--db", default="family_medicine.db", help="Path to SQLite database file")
 
@@ -370,6 +370,7 @@ def main():
     mig_p.add_argument("--force", action="store_true", help="Clear existing rows in the target first")
 
     register_chart(sub)  # chart maintenance: amend / void / audit trail
+    register_orders(sub)  # service requests: what the chart asked for
 
     # Feature-module subcommands (each module defers heavy imports to run time)
     from hdh.modules import CLI_MODULES
@@ -380,6 +381,19 @@ def main():
         except ImportError:
             continue
         mod.register_cli(sub)
+
+    return parser
+
+
+def main():
+    """CLI entry point: parse arguments, open the DB session, dispatch the command."""
+    # Windows consoles default to legacy code pages that can't print the
+    # box-drawing and status characters used in CLI output.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+    parser = _build_parser()
 
     args = parser.parse_args()
 
@@ -408,6 +422,9 @@ def main():
 
     elif args.command == "chart":
         run_chart(session, args)
+
+    elif args.command == "orders":
+        run_orders(session, args)
 
     elif args.command == "stats":
         cmd_stats(session)
