@@ -35,7 +35,8 @@ strategy belongs to the layers that know what the search is *for*.
 7. [The agent surface](#7-agent)
 8. [Applying the correction to LOINC and SNOMED](#8-retrofit)
 9. [Milestones](#9-milestones)
-10. [Open questions — answer inline](#10-questions)
+10. [Test scenarios: notes that are actually hard](#10-scenarios)
+11. [Open questions — answered](#11-questions)
 
 ---
 
@@ -221,6 +222,12 @@ So the resolution is a **composition**, not a similarity score:
 4. and if any step is ambiguous, the request stays **coded at the level
    we are sure of** — the ingredient — rather than guessing a tablet.
 
+**A branded order carries the branded code** (§11 Q5). When the note names
+a brand, the walk ends at the SBD rather than the SCD, because what was
+prescribed is what the chart should say — and the ingredient stays one
+graph hop away for any analysis that wants it. Scenario A's "Junovia"
+(§10) is this path with a misspelling in front of it.
+
 That last point is the refuse-don't-guess contract in its RxNorm form. It
 also answers a question that would otherwise be a coin toss: *which level
 do we code at?* The answer is **the deepest level the evidence supports**,
@@ -296,26 +303,123 @@ has the fixture), and only then RxNorm — which is written against
 | **M1** | `hdh.core.termsearch`: the funnel, the coverage rule, the ceilings, a `SearchProfile` contract. SNOMED delegates to it. Shared UTS acquisition. | the #53 ratchet does not move |
 | **M2** | LOINC delegates too; `_covers_every_word` import deleted; a quality-gate check for cross-module imports | no module reaches into another's internals |
 | **M3** | `hdh.modules.rxnorm`: loader (RRF), graph edges, `SearchProfile`, `OntologyService` #4, fabricated fixture | a drug vocabulary lands with no funnel of its own |
-| **M4** | Compositional coding: ingredient → strength → form, coded at the deepest supported level; `Prescription`/`MedicationStatement` gain code columns; `hdh rxnorm code` | "Lisinopril 10mg once daily" resolves to an SCD, and says why |
-| **M5** | Agent tools; the comprehensive test plan across all three vocabularies | the interface holds under a conversation |
+| **M4** | Compositional coding: ingredient → strength → form, at the deepest supported level and **branded when the note names a brand** (§11 Q3, Q5); `Prescription`/`MedicationStatement` gain code columns; `RxSpec` carries an RXCUI (§11 Q4); `hdh rxnorm code` | **Scenario A's medication rows** (§10): an ER dose form, a quantity-times-strength, a verbatim sig, and a misspelt brand |
+| **M5** | Agent tools; the comprehensive test plan over the §10 scenarios | the interface holds under a conversation, and against notes we did not write |
 
 Each milestone is human-tested before the next begins.
 
-## 10. Open questions — answer inline<a name="10-questions"></a>
+## 10. Test scenarios: notes that are actually hard<a name="10-scenarios"></a>
+
+Every note in the test corpus so far was written by us, and it shows: they
+have SOAP headers, one drug per sentence, and a strength written the way
+the catalog writes it. Real notes are compressed, misspelt, and full of
+things that are mentioned without being ordered.
+
+These scenarios are the corpus for the comprehensive plan. **RxNorm's own
+milestones test the medication rows only** — the rest are recorded here so
+they are not re-invented, and so the modules that own them can be measured
+against the same notes rather than against convenient ones.
+
+### Scenario A — the diabetes follow-up
+
+> patient with h/o type 2 diabetes and well treated hypertension came with
+> higher than 7 Hba1c … i continued Metformin ER 2 x 500mg with evening
+> meal and added Junovia 25 mg OD and asked for repeat HbA1c after 90 days
+> .. eyesight and foot exam was normal .. refill and new drug order placed
+
+One sentence per line of a real chart, and eleven distinct problems:
+
+| Fragment | What it is | What must happen | Why it is hard |
+|---|---|---|---|
+| `h/o type 2 diabetes` | problem | charted, chronic, ACTIVE | "h/o" means *established*, not *resolved* — the opposite reading is a silent inversion |
+| `well treated hypertension` | problem + control | charted with `controlled = True` | the qualifier is the clinical fact; dropping it loses why no change was made |
+| `higher than 7 Hba1c` | lab RESULT | `value 7`, `comparator ">"` | a result stated in prose, not a vitals line — and the comparator column exists precisely for this |
+| `continued` | status word | `is_new = False` | continuation vs new is what makes the refill row correct |
+| `Metformin ER` | medication, generic | RxCUI at **extended-release** dose form | "ER" changes the product: ER 500 MG ≠ 500 MG. Drop it and the code is a different drug |
+| `2 x 500mg` | quantity × strength | strength 500 mg, quantity 2 | the note's arithmetic is not the label's — 1000 mg is the dose, 500 mg is the product |
+| `with evening meal` | frequency/timing | `sig` verbatim | not a frequency code; the sig is what a pharmacy reads |
+| `Junovia 25 mg OD` | medication, **brand, misspelt** | fuzzy → Januvia → **branded** RxCUI (§11 Q5) | one edit from a brand name, and brands are a different TTY at a different level |
+| `repeat HbA1c after 90 days` | LAB order | request, `occurrence_date = visit + 90d` | a request and a result for the same test in one note |
+| `eyesight and foot exam was normal` | two procedures | charted as performed, normal | diabetic eye and foot exams are care-gap items — losing them costs a gap |
+| *(no blood pressure anywhere)* | **absence** | **no vitals row** | hypertension is discussed at length; a system that infers a BP has invented a clinical fact |
+
+**What this note already breaks.** It has no SOAP headers — it is prose,
+which is how most real notes look — so `segment()` returns a single
+`UNKNOWN` section and **no PLAN**. Milestone B's fifth pass keys on the
+plan section to tell a request from a result, so against this note it
+creates **zero orders**: both drugs, the HbA1c request and the refill are
+silently dropped. Verified, not predicted.
+
+That is the right thing for the fifth pass to do given what it can see,
+and the wrong outcome. It means unstructured notes need an ordering signal
+that is not the section — the status words are already extracted
+(`continued`, `added`, `asked for`, `placed`), and they say what the
+section cannot. Recorded here rather than fixed in passing, because it
+belongs to comprehension and not to RxNorm.
+
+**The medication rows are RxNorm's milestone-4 acceptance test.** Rows 5–8
+are the compositional path of §5 end to end: an ER dose form, a
+quantity-times-strength, a verbatim sig, and a misspelt brand that has to
+resolve through the graph rather than by string similarity.
+
+### Scenario B — the switch, with a reason
+
+> stopped lisinopril due to persistent dry cough, started losartan 50 mg
+> daily instead
+
+- a medication **stopped**, with `stop_reason` — the OMOP field §3 of the
+  service-requests design adopted, exercised for the first time by a note
+- a medication started *because* the other stopped: two requests whose
+  relationship is the point
+- "instead" is the only thing linking them, and losing it makes the chart
+  read as a patient on both an ACE inhibitor and an ARB — a combination
+  that is actively contraindicated
+
+### Scenario C — the combination product
+
+> continue Janumet 50-1000 BID
+
+- one brand naming **two ingredients** (sitagliptin + metformin), which in
+  RxNorm is a multiple-ingredient concept, not two drugs
+- `50-1000` is a paired strength, and splitting it wrongly produces two
+  plausible and wrong codes
+- the reconciliation question this exists to test: a patient on Janumet is
+  already on metformin, so charting Scenario A's metformin *and* this
+  would double an ingredient without ever naming it twice
+
+### How these get used
+
+1. Each scenario becomes a **replay fixture** — a note plus the record of
+   what should come out — so a new failure is a new file rather than new
+   code, which is the pattern the comprehension corpus already uses.
+2. The medication rows are asserted by RxNorm's milestones. The rest are
+   asserted by whichever module owns them, against **the same note**.
+3. A scenario is never "passed" by loosening it. Rows that cannot be
+   satisfied yet are recorded as expected failures with the reason, the
+   way the #53 frontier list is — so the corpus says what is not working
+   instead of quietly not asking.
+
+## 11. Open questions — answered<a name="11-questions"></a>
+
+All seven answered 2026-08-21. Six confirmed the proposal; **Q5 changed
+it** — a branded order carries the branded RXCUI rather than the clinical
+drug with the brand filed in `detail`, because what was prescribed is what
+the chart should say (§5, §9 M4). Q7's answer became §10.
+
 
 1. **Is the retrofit worth doing before RxNorm?** Proposal: yes — M1 and
    M2 first, so RxNorm never grows a funnel to remove later. The cost is
    two milestones before any new capability lands. The alternative is to
    build RxNorm on the current shape and retrofit all three afterwards,
    which is cheaper now and more expensive at every later step. Retrofit
-   first, or capability first?
+   first, or capability first? Yes
 
 2. **Where should `termsearch` live — `hdh.core` or its own module?**
    Proposal: `hdh.core`, because three modules depend on it and core is
    what modules are allowed to depend on. Against: it is a retrieval
    strategy rather than a chart concept, and core has so far meant "the
    chart". Core, or `hdh.modules.termsearch` with the ontology modules
-   depending on it explicitly?
+   depending on it explicitly? Core
 
 3. **Which RxCUI level do we store when the evidence is partial?**
    Proposal: the deepest level supported — SCD when strength and form are
@@ -323,24 +427,25 @@ Each milestone is human-tested before the next begins.
    with the level recorded so a reader can see what was inferred.
    Alternative: always the ingredient, and treat strength/form as
    attributes of the request rather than part of the code. Deepest, or
-   always-ingredient?
+   always-ingredient? Deepest possible
 
 4. **Should the condition catalog's `RxSpec` carry an RXCUI?** It would
    make generated prescriptions codeable with no comprehension involved,
    and turn the formulary from strings into drugs. It also means the
    catalog can no longer be authored without a licensed release to check
-   against. In scope for M4, or its own arc?
+   against. In scope for M4, or its own arc? M4
 
 5. **Brands.** Proposal: load SBD/BN and resolve *to* them when a note
    names a brand ("Zestril"), but code the request at the clinical-drug
    level with the brand recorded in `detail`. Or should a branded order
    carry the branded RXCUI, since that is what was actually prescribed?
+    Branded RXCUI
 
 6. **How far does the shared funnel go?** Proposal: `termsearch` owns
    every rung including a future dense one, and comprehension owns
    context-aware reranking because only it holds the sentence (§3). Is
    that the right seam, or should reranking also be shared so the agent
-   gets it too?
+   gets it too? Yes agree with proposal
 
 7. **What does the comprehensive test plan need to cover** that the
    per-module suites do not? Proposal: cross-vocabulary interference (a
