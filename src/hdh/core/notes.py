@@ -30,6 +30,8 @@ def render_soap(  # quality: allow(no-god-class) — a pure renderer's keyword-o
     prescriptions: list[dict],  # drug_name, dose, frequency, duration_days, is_new
     labs: list[tuple[str, float | None, str | None, str]],  # name, value, unit, status
     procedures: list[str],
+    referrals: list[str] | None = None,  # ordered, not prescribed (#49)
+    advice: list[str] | None = None,  # said, and charted nowhere (#49)
 ) -> str:
     """Render one SOAP note from plain values (no ORM, no queries)."""
     s_lines = [f"{age}-year-old {sex} presents with: {chief_complaint}."]
@@ -67,6 +69,13 @@ def render_soap(  # quality: allow(no-god-class) — a pure renderer's keyword-o
         p_parts.append(f"{status} {rx['drug_name']} {rx['dose']} {rx['frequency']}{dur}.")
     for proc in procedures:
         p_parts.append(f"Procedure performed: {proc}.")
+    for target in referrals or ():
+        p_parts.append(f"Referral to {target}.")
+    for item in advice or ():
+        # Advice is real clinical communication and belongs in the note.
+        # It is NOT a chart entry — "Rest & fluids" was being charted as a
+        # prescription, which is what #49 was about.
+        p_parts.append(f"Advised: {item}.")
     if follow_up_days:
         p_parts.append(f"Follow up in {follow_up_days} days.")
     else:

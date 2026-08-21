@@ -19,6 +19,7 @@ from hdh.core.conditions import (
     OnsetProfile,
     RiskFactor,
     RiskKind,
+    RxKind,
     RxSpec,
 )
 from hdh.core.models import Sex, VisitType
@@ -133,7 +134,7 @@ URI_RX = [
 
 FLU_RX = [
     RxSpec("Oseltamivir (Tamiflu)", "Antiviral", "75mg", "BID", 5, 0),
-    RxSpec("Rest & fluids", "Supportive", "—", "—", 7, 0),
+    RxSpec("Rest & fluids", "Supportive", "—", "—", 7, 0, RxKind.ADVICE),
 ]
 
 UTI_RX = [
@@ -271,7 +272,7 @@ _DEFINITIONS: dict[str, _Draft] = {
         spo2_delta=(-4, 2),
         pain=(3, 2),
         labs=cbc(),
-        rx_options=[RxSpec("Saline nasal suction", "Supportive", "—", "PRN", 7, 0)],
+        rx_options=[RxSpec("Saline nasal suction", "Supportive", "—", "PRN", 7, 0, RxKind.ADVICE)],
         follow_up_days=3,
         seasonal_weights=RSV_SEASON,
     ),
@@ -371,7 +372,7 @@ _DEFINITIONS: dict[str, _Draft] = {
         hr_delta=(10, 5),
         pain=(6, 2),
         labs=cbc() + [LabSpec("Monospot", "5334-9", "result", 0, 0, 0, 0)],
-        rx_options=[RxSpec("Rest & fluids", "Supportive", "—", "—", 14, 0)],
+        rx_options=[RxSpec("Rest & fluids", "Supportive", "—", "—", 14, 0, RxKind.ADVICE)],
         follow_up_days=14,
         seasonal_weights=FLAT,
     ),
@@ -383,7 +384,8 @@ _DEFINITIONS: dict[str, _Draft] = {
         hr_delta=(8, 4),
         pain=(2, 1),
         labs=tsh(),
-        rx_options=[RxSpec("Behavioral therapy referral", "Referral", "—", "—", None, 0)] + ANXIETY_RX,
+        rx_options=[RxSpec("Behavioral therapy", "Referral", "—", "—", None, 0, RxKind.REFERRAL)]
+        + ANXIETY_RX,
         follow_up_days=30,
         seasonal_weights=FLAT,
     ),
@@ -549,7 +551,7 @@ _DEFINITIONS: dict[str, _Draft] = {
         visit_type="follow_up",
         pain=(1, 1),
         labs=lipid_panel() + hba1c(),
-        rx_options=[RxSpec("Lifestyle counseling referral", "Referral", "—", "—", None, 0)],
+        rx_options=[RxSpec("Lifestyle counseling", "Referral", "—", "—", None, 0, RxKind.REFERRAL)],
         follow_up_days=90,
         seasonal_weights=FLAT,
     ),

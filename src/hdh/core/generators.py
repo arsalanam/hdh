@@ -18,7 +18,7 @@ from datetime import date, timedelta
 from faker import Faker
 from sqlalchemy import insert as sa_insert
 
-from .conditions import ConditionCatalog, LabSpec, SamplingContext, Stage, default_catalog
+from .conditions import ConditionCatalog, LabSpec, RxKind, SamplingContext, Stage, default_catalog
 from .models import (
     Allergy,
     AllergySeverity,
@@ -819,6 +819,27 @@ def _row(obj, model) -> dict:
     }
 
 
+def _referral_request(patient, visit, target: str):
+    """A referral is an ORDER, not a prescription (#49, design §5).
+
+    It used to be an ``RxSpec`` with an em-dash dose and frequency, which
+    is how "Lifestyle counseling referral" ended up in a patient's drug
+    list. As a request it says what it is, and a real referral to
+    cardiology would look the same.
+    """
+    return ServiceRequest(
+        patient_id=patient.id,
+        visit_id=visit.id,
+        requester_id=visit.provider_id,
+        kind=ServiceKind.REFERRAL,
+        status=RequestStatus.ACTIVE,
+        origin=RequestOrigin.GENERATED,
+        display=target,
+        requested_date=visit.visit_date,
+        detail={"specialty": target},
+    )
+
+
 def _follow_up_request(patient, visit, days: int):
     """The generated order behind "return in N days" (issue #59).
 
@@ -903,6 +924,8 @@ def _generate_one(
         _emit_conditions(session, patient, visit, cprofile, chronic_seen, history)
 
         visit_rx: list[dict] = []
+        visit_referrals: list[str] = []
+        visit_advice: list[str] = []
         if cprofile.rx_options:
             if cprofile.rx_pick_all:
                 rx_list = cprofile.rx_options
@@ -910,6 +933,19 @@ def _generate_one(
                 n_rx = random.choices([1, 2], weights=[75, 25], k=1)[0]
                 rx_list = random.sample(cprofile.rx_options, k=min(n_rx, len(cprofile.rx_options)))
             for rx_spec in rx_list:
+                # A formulary entry is not always a drug (#49). A referral
+                # becomes an order; advice belongs in the note and NOWHERE
+                # in the chart — charting it made the record claim the
+                # patient had been prescribed "Rest & fluids".
+                if rx_spec.kind is RxKind.ADVICE:
+                    visit_advice.append(rx_spec.drug_name)
+                    continue
+                if rx_spec.kind is RxKind.REFERRAL:
+                    visit_referrals.append(rx_spec.drug_name)
+                    request_rows.append(
+                        _row(_referral_request(patient, visit, rx_spec.drug_name), ServiceRequest)
+                    )
+                    continue
                 rx = {
                     "visit_id": visit.id,
                     "drug_name": rx_spec.drug_name,
@@ -947,6 +983,8 @@ def _generate_one(
                     vital=vital,
                     conditions=[(cprofile.description, cprofile.icd10_code)],
                     prescriptions=visit_rx,
+                    referrals=visit_referrals,
+                    advice=visit_advice,
                     labs=[
                         (lab.test_name, lab.value, lab.unit, str(lab.status).split(".")[-1])
                         for lab in visit_labs

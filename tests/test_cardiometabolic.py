@@ -98,7 +98,14 @@ def population(tmp_path_factory):
     db = tmp_path_factory.mktemp("breadth") / "population.db"
     engine = get_engine(str(db))
     session = get_session(engine)
-    build_dataset(session, n_patients=250, years_of_history=4, verbose=False, seed=SEED)
+    # 500, not 250, because of test_rolled_onsets_are_clinically_ordered:
+    # that test's sample is only the CKD-AND-hypertension overlap, which at
+    # 250 patients is ~24 charts. The population rate is 93% (measured over
+    # 2,400 patients across three seeds), but n=24 has a wide enough spread
+    # that any change to RNG consumption elsewhere can drop it under 0.8 —
+    # which is a guard that cries wolf rather than one that catches
+    # regressions. Doubling the cohort roughly doubles the overlap.
+    build_dataset(session, n_patients=500, years_of_history=4, verbose=False, seed=SEED)
     yield session
     session.close()
     engine.dispose()
@@ -153,6 +160,8 @@ def test_rolled_onsets_are_clinically_ordered(population):
         total += 1
         if ckd_row.onset_date >= driver.onset_date:
             ordered += 1
+    # Measured population rate: 93% (213/229 over three seeds x 800
+    # patients). 0.8 leaves room for sampling noise without going slack.
     assert total > 0 and ordered / total >= 0.8, (ordered, total)
 
 
