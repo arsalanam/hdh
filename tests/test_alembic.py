@@ -8,6 +8,7 @@ against a throwaway SQLite database and a throwaway versions directory.
 """
 
 import os
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -92,7 +93,6 @@ def test_reconcile_migration_repairs_stamped_drift(alembic_cfg):
     with engine.begin() as conn:  # simulate the pre-expansion shape
         conn.execute(text("ALTER TABLE patients DROP COLUMN marital_status"))
         conn.execute(text("ALTER TABLE patients DROP COLUMN language"))
-        conn.execute(text("ALTER TABLE visits DROP COLUMN follow_up_days"))
     command.stamp(cfg, "0002")  # stamped BEFORE the reconcile revision existed
 
     registry = bootstrap_schema()
@@ -103,7 +103,6 @@ def test_reconcile_migration_repairs_stamped_drift(alembic_cfg):
     inspector = inspect(engine)
     assert "marital_status" in {c["name"] for c in inspector.get_columns("patients")}
     assert "language" in {c["name"] for c in inspector.get_columns("patients")}
-    assert "follow_up_days" in {c["name"] for c in inspector.get_columns("visits")}
     with engine.begin() as conn:  # idempotent: a second reconcile is a no-op
         assert reconcile_missing_columns(conn) == []
     engine.dispose()
@@ -180,4 +179,70 @@ def test_0006_adds_service_requests_to_a_database_stamped_at_0005(alembic_cfg):
     assert "request_id" in {c["name"] for c in inspector.get_columns("prescriptions")}
 
     command.upgrade(cfg, "head")  # idempotent: nothing left to add
+    engine.dispose()
+
+
+def test_0007_turns_follow_up_days_into_orders_without_losing_it(alembic_cfg):
+    """The scalar becomes a FOLLOW_UP request (#59, design §9 Q5).
+
+    The point of this migration is data, not shape: a chart that has been
+    asking patients back for years must not lose that when the column goes.
+    So this builds the OLD shape with real values, migrates, and checks the
+    interval survives — including a round trip back."""
+    from sqlalchemy import text
+
+    from hdh.core.schema_registry import bootstrap_schema
+
+    cfg, _tmp_path, _versions = alembic_cfg
+    bootstrap_schema()
+    from hdh.core.models import Base
+
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE visits ADD COLUMN follow_up_days INTEGER"))
+        conn.execute(
+            text(
+                "INSERT INTO patients (id, mrn, first_name, last_name, date_of_birth, sex) "
+                "VALUES (1, 'MRN-0007', 'Old', 'Chart', '1970-01-01', 'FEMALE')"
+            )
+        )
+        for visit_id, day, days in ((1, "2026-01-10", 90), (2, "2026-02-20", 14), (3, "2026-03-05", None)):
+            conn.execute(
+                text(
+                    "INSERT INTO visits (id, patient_id, visit_date, visit_type, follow_up_days) "
+                    "VALUES (:i, 1, :d, 'FOLLOW_UP', :f)"
+                ),
+                {"i": visit_id, "d": day, "f": days},
+            )
+    command.stamp(cfg, "0006")
+
+    command.upgrade(cfg, "head")
+
+    inspector = inspect(engine)
+    assert "follow_up_days" not in {c["name"] for c in inspector.get_columns("visits")}
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT visit_id, requested_date, occurrence_date, origin FROM service_requests "
+                "WHERE kind = 'FOLLOW_UP' ORDER BY visit_id"
+            )
+        ).all()
+    # the PRN visit (None) must not have invented an order
+    assert [r.visit_id for r in rows] == [1, 2]
+    intervals = {
+        r.visit_id: (
+            date.fromisoformat(str(r.occurrence_date)) - date.fromisoformat(str(r.requested_date))
+        ).days
+        for r in rows
+    }
+    assert intervals == {1: 90, 2: 14}
+    assert {r.origin for r in rows} == {"GENERATED"}
+
+    command.downgrade(cfg, "0006")
+    inspector = inspect(engine)
+    assert "follow_up_days" in {c["name"] for c in inspector.get_columns("visits")}
+    with engine.begin() as conn:
+        restored = dict(conn.execute(text("SELECT id, follow_up_days FROM visits")).all())
+    assert restored == {1: 90, 2: 14, 3: None}
     engine.dispose()

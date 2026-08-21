@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from hdh.core.fhir import build_bundle, module_enrichers
+from hdh.core.generators import _follow_up_request
 from hdh.core.models import get_engine, get_session
 from hdh.core.schema_registry import bootstrap_schema
 
@@ -95,9 +96,12 @@ def golden_patient(tmp_path_factory):
         visit_type=VisitType.FOLLOW_UP,
         chief_complaint="Diabetes follow-up",
         provider_id=prov.id,
-        follow_up_days=90,
     )
     s.add(v)
+    s.flush()
+    # "return in 90 days" is an ORDER now, not a column (#59) — and
+    # Visit.follow_up_days reads back through it.
+    s.add(_follow_up_request(p, v, 90))
     s.flush()
     s.add_all(
         [

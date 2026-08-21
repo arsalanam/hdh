@@ -217,10 +217,14 @@ def cmd_add_spike(session, condition_name: str, multiplier: float, month: int, n
             visit_date=vdate,
             visit_type=cprofile.visit_type,
             chief_complaint=cprofile.chief_complaint,
-            follow_up_days=cprofile.follow_up_days,
         )
         session.add(visit)
         session.flush()
+
+        if cprofile.follow_up_days:  # the return visit is an order now (#59)
+            from hdh.core.generators import _follow_up_request
+
+            session.add(_follow_up_request(p, visit, cprofile.follow_up_days))
 
         vital = generate_vital(visit.id, p.age, p.sex, p.bmi_baseline, cprofile)
         session.add(vital)
