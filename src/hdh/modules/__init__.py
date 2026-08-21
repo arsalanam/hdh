@@ -18,6 +18,7 @@ CLI_MODULES = {
     "hdh.modules.snomed.cli": None,
     "hdh.modules.narrative.cli": None,
     "hdh.modules.comprehension.cli": "agent",
+    "hdh.modules.interchange.cli": None,
     "hdh.modules.fhir_api.cli": "api",
 }
 
@@ -46,4 +47,5 @@ SCHEMA_MODULES = (
     "hdh.modules.icd10cm",
     "hdh.modules.snomed",
     "hdh.modules.comprehension",
+    "hdh.modules.interchange",
 )
