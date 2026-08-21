@@ -1,0 +1,8 @@
+LOINC_NUM,COMPONENT,PROPERTY,TIME_ASPCT,SYSTEM,SCALE_TYP,METHOD_TYP,CLASS,STATUS,SHORTNAME,LONG_COMMON_NAME,DisplayName,RELATEDNAMES2
+11111-1,Blorbium,SCnc,Pt,Ser/Plas,Qn,,CHEM,ACTIVE,Blorbium SerPl,Blorbium [Moles/volume] in Serum or Plasma,Blorbium,Blorb;Blorbium level;Serum blorbium
+11111-2,Blorbium,SCnc,Pt,Urine,Qn,,CHEM,ACTIVE,Blorbium Ur,Blorbium [Moles/volume] in Urine,Blorbium (U),Urine blorbium;Ur blorb
+22222-2,Quixate,MCnc,Pt,Ser/Plas,Qn,,CHEM,ACTIVE,Quixate SerPl,Quixate [Mass/volume] in Serum or Plasma,Quixate,QXT;Quix;Quixate level
+33333-3,Fleeble panel,-,Pt,Ser/Plas,-,,CHEM,ACTIVE,Fleeble Pnl SerPl,Fleeble panel - Serum or Plasma,Fleeble panel,Fleeble panel;FLP
+44444-4,Zonkocytes,NCnc,Pt,Bld,Qn,,HEM/BC,ACTIVE,Zonkocytes Bld,Zonkocyte count [#/volume] in Blood,Zonkocytes,Zonk count;ZC;Zonkocyte
+55555-5,Grimble virus,PrThr,Pt,Nasal,Ord,Probe.amp.tar,MICRO,ACTIVE,Grimble Nasal Ql,Grimble virus [Presence] in Nasal swab,Grimble,Grimble;Grimble virus;GRV
+99999-9,Blorbium,SCnc,Pt,Ser/Plas,Qn,,CHEM,DEPRECATED,Obs blorb,Obsolete blorbium assay,Obsolete blorbium,Old blorbium

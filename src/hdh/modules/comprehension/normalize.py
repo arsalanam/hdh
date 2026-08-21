@@ -23,8 +23,18 @@ _SNOMED_TAGS: dict[MentionType, tuple[str, ...]] = {
     MentionType.ALLERGY: ("substance", "product"),
 }
 
-# The vitals panel, named as clinicians write it → LOINC (our own
-# terminology constants; deterministic, no catalog required).
+# The vitals panel, named as clinicians write it → LOINC.
+#
+# This is NOT the general lab vocabulary any more — that is the LOINC
+# module's job now (design service-requests §7). What survives here is
+# narrow and load-bearing: these codes are the contract with the chart
+# itself. `applier._VITAL_COLUMNS` keys off them to decide which column of
+# the vitals row a reading belongs in, so "HR" must resolve to 8867-4 and
+# not to whichever heart-rate code a term search likes best.
+#
+# Everything the table does not cover — "B/P", "Tmax", any real lab — now
+# falls through to the LOINC funnel, which is what §12 recorded as the
+# brittleness worth fixing.
 VITAL_ALIASES: dict[str, tuple[str, str]] = {
     "bp": ("55284-4", "Blood pressure"),
     "blood pressure": ("55284-4", "Blood pressure"),
@@ -97,6 +107,26 @@ class MentionNormalizer:
         self._snomed = get_ontology_service("snomed_ct", session)
         self._labs = _lab_aliases()
         self._drugs = _drug_names()
+        self._loinc = self._loinc_service(session)
+
+    @staticmethod
+    def _loinc_service(session):
+        """The LOINC funnel, or None when no release is loaded.
+
+        LOINC is licensed, so most installations will not have it, and
+        comprehension has to keep working without it — the alias table
+        above is what it falls back to.
+        """
+        from sqlalchemy import func, select
+
+        from hdh.core.models import Base
+        from hdh.core.ontology import get_ontology_service
+
+        concepts = Base.metadata.tables["ontology_concepts"]
+        loaded = session.execute(
+            select(func.count()).select_from(concepts).where(concepts.c.ontology == "loinc")
+        ).scalar()
+        return get_ontology_service("loinc", session) if loaded else None
 
     def candidates(self, mention: Mention) -> tuple[Code, ...]:
         """Ranked codes for one mention (empty = honestly unlinked)."""
@@ -118,8 +148,24 @@ class MentionNormalizer:
         if mention.mention_type is MentionType.LAB_VITAL:
             hit = self._labs.get(mention.text.strip().lower())
             if hit:
+                # The vitals contract wins: these codes decide which column
+                # of the vitals row the reading lands in.
                 code, display = hit
                 return (Code("loinc", code, display, 1.0, in_shared_tables=False),)
+            if self._loinc is not None:
+                # Everything else — "B/P", "Tmax", a real lab — resolves by
+                # term search instead of failing to resolve at all.
+                found = self._loinc.normalize(mention.text, {"limit": 3})
+                return tuple(
+                    Code(
+                        system="loinc",
+                        code=c.concept.code,
+                        display=c.concept.display,
+                        score=c.score,
+                        in_shared_tables=True,
+                    )
+                    for c in found
+                )
             return ()
         if mention.mention_type is MentionType.MEDICATION:
             drug = self._drugs.get(mention.text.strip().lower())
