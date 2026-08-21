@@ -1,0 +1,6 @@
+{
+  "name": "loinc_module",
+  "version": "1.0.0",
+  "depends_on": ["base"],
+  "priority": 25
+}

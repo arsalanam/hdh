@@ -419,23 +419,30 @@ class DataAbstractionCheck:
 class HierarchyEncapsulationCheck:
     """Tree-strategy columns are the owning module's private storage.
 
-    ``ontology_concepts.path`` / ``hierarchy_depth`` are ICD-10-CM's
-    materialized-tree strategy; both are NULL by contract for DAG
-    ontologies (SNOMED), so direct queries elsewhere return silently
-    empty results — the worst failure class. Outside the owner, dispatch
-    through ``hdh.core.ontology.get_ontology_service`` instead (design
-    notes-comprehension-service.md §5 item 2).
+    ``ontology_concepts.path`` / ``hierarchy_depth`` hold a materialized
+    tree, and they are NULL by contract for ontologies that store their
+    hierarchy another way (SNOMED's closure table) — so a direct query
+    from outside returns silently empty results, the worst failure class.
+    Consumers dispatch through ``hdh.core.ontology.get_ontology_service``
+    instead (design notes-comprehension-service.md §5 item 2).
+
+    The columns are private to whichever ONTOLOGY MODULE stores its tree
+    that way, not to one named module: ICD-10-CM was first, and LOINC ships
+    the same shape (a dotted PATH_TO_ROOT in MultiAxialHierarchy.csv). What
+    the rule forbids is reading them from outside an ontology module, where
+    the NULL contract is invisible.
     """
 
     name = "hierarchy-encapsulation"
     principle = "Per-ontology hierarchy strategy stays module-private"
 
-    OWNER_PREFIX = "src/hdh/modules/icd10cm/"
+    #: Ontology modules that store their hierarchy as a materialized path.
+    OWNER_PREFIXES = ("src/hdh/modules/icd10cm/", "src/hdh/modules/loinc/")
     PRIVATE_COLUMNS = frozenset({"path", "hierarchy_depth"})
 
     def run(self, module: Module) -> list[Finding]:
-        """Flag `<table>.c.path` / `.c.hierarchy_depth` outside the owner."""
-        if module.path.startswith(self.OWNER_PREFIX):
+        """Flag `<table>.c.path` / `.c.hierarchy_depth` outside the owners."""
+        if module.path.startswith(self.OWNER_PREFIXES):
             return []
         findings = []
         for node in ast.walk(module.tree):
@@ -451,7 +458,7 @@ class HierarchyEncapsulationCheck:
                         "error",
                         module,
                         node.lineno,
-                        f"column `{node.attr}` is the icd10cm module's private tree "
+                        f"column `{node.attr}` is an ontology module's private tree "
                         f"strategy (NULL for DAG ontologies) — dispatch through "
                         f"get_ontology_service() instead",
                     )
