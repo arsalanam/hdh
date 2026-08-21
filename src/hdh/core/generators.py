@@ -36,6 +36,10 @@ from .models import (
     Prescription,
     Procedure,
     Provider,
+    RequestOrigin,
+    RequestStatus,
+    ServiceKind,
+    ServiceRequest,
     Specialty,
     Visit,
     VisitNote,
@@ -605,7 +609,6 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, scope: 
             visit_date=vdate,
             visit_type=cprofile.visit_type,
             chief_complaint=cprofile.chief_complaint,
-            follow_up_days=cprofile.follow_up_days,
         )
         all_visits.append((visit, cprofile, cprofile.name))
 
@@ -816,6 +819,32 @@ def _row(obj, model) -> dict:
     }
 
 
+def _follow_up_request(patient, visit, days: int):
+    """The generated order behind "return in N days" (issue #59).
+
+    A follow-up used to be an integer on the visit that nobody could
+    explain the provenance of. As a request it carries an origin, it shows
+    up in `hdh orders list` beside labs and medications, and a clinician can
+    move it through the audited edit path like any other order.
+
+    `occurrence_date` holds the interval, so `Visit.follow_up_days` reads
+    back exactly what was asked for.
+    """
+    from datetime import timedelta
+
+    return ServiceRequest(
+        patient_id=patient.id,
+        visit_id=visit.id,
+        requester_id=visit.provider_id,
+        kind=ServiceKind.FOLLOW_UP,
+        status=RequestStatus.ACTIVE,
+        origin=RequestOrigin.GENERATED,
+        display=f"Follow-up visit in {days} days",
+        requested_date=visit.visit_date,
+        occurrence_date=visit.visit_date + timedelta(days=days),
+    )
+
+
 @dataclass(frozen=True)
 class NoteFacts:
     """Patient-level facts the note renderer needs (built in memory)."""
@@ -858,12 +887,18 @@ def _generate_one(
     lab_rows: list[dict] = []
     proc_rows: list[dict] = []
     note_rows: list[dict] = []
+    request_rows: list[dict] = []
     rx_stream: list[tuple] = []
     sex_word = "male" if str(patient.sex).endswith("M") else "female"
 
     for visit, cprofile, cname in visit_tuples:
         vital = generate_vital(visit.id, patient.age, patient.sex, _bmi(patient), cprofile)
         vital_rows.append(_row(vital, Vital))
+
+        if cprofile.follow_up_days:
+            request_rows.append(
+                _row(_follow_up_request(patient, visit, cprofile.follow_up_days), ServiceRequest)
+            )
 
         _emit_conditions(session, patient, visit, cprofile, chronic_seen, history)
 
@@ -903,7 +938,7 @@ def _generate_one(
                     provider_name=provider_names.get(visit.provider_id, "Unassigned"),
                     visit_date=visit.visit_date,
                     chief_complaint=visit.chief_complaint,
-                    follow_up_days=visit.follow_up_days,
+                    follow_up_days=cprofile.follow_up_days,
                     age=patient.age,
                     sex=sex_word,
                     allergies=list(facts.allergies),
@@ -928,6 +963,7 @@ def _generate_one(
         (LabResult, lab_rows),
         (Procedure, proc_rows),
         (VisitNote, note_rows),
+        (ServiceRequest, request_rows),
     ):
         if rows:
             session.execute(sa_insert(model), rows)

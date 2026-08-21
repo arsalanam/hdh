@@ -267,3 +267,105 @@ def test_an_enum_label_reads_as_a_person_wrote_it(db_session, chart):
     described = spec_for("ServiceRequest").describe(request)
     assert "lab · Basic metabolic panel" in described
     assert "ServiceKind" not in described
+
+
+# ── follow-ups are orders now (issue #59, design §9 Q5) ──────────────────
+
+
+def test_follow_up_days_is_read_from_the_order(db_session, chart):
+    """The scalar became a derived read. Two writable copies of one fact
+    drift silently, so the request is the single source of truth."""
+    from datetime import timedelta
+
+    patient, visit = chart
+    assert visit.follow_up_days is None  # PRN until something asks
+
+    db_session.add(
+        _order(
+            patient,
+            visit,
+            kind=ServiceKind.FOLLOW_UP,
+            display="Follow-up visit in 90 days",
+            occurrence_date=visit.visit_date + timedelta(days=90),
+        )
+    )
+    db_session.commit()
+    db_session.expunge_all()
+
+    stored = db_session.get(Visit, visit.id)
+    assert stored.follow_up_days == 90
+    assert stored.follow_up_request.kind is ServiceKind.FOLLOW_UP
+
+
+def test_the_scalar_can_no_longer_be_written(db_session, chart):
+    """A setter would reopen the dual-write the design rejected."""
+    patient, visit = chart
+    with pytest.raises(AttributeError):
+        visit.follow_up_days = 30
+
+
+def test_voiding_the_order_removes_the_follow_up(db_session, chart):
+    """Cancelling a return visit is a chart edit like any other, and the
+    derived value has to follow it — otherwise the note still says "follow
+    up in 90 days" after a clinician cancelled it."""
+    from datetime import timedelta
+
+    from hdh.core.chartedit import ChartEdit, EditAction, apply_edits
+
+    patient, visit = chart
+    request = _order(
+        patient,
+        visit,
+        kind=ServiceKind.FOLLOW_UP,
+        display="Follow-up visit in 60 days",
+        occurrence_date=visit.visit_date + timedelta(days=60),
+    )
+    db_session.add(request)
+    db_session.commit()
+    assert db_session.get(Visit, visit.id).follow_up_days == 60
+
+    apply_edits(
+        db_session,
+        _actor(),
+        [ChartEdit("ServiceRequest", request.id, EditAction.VOID, {}, "patient declined")],
+    )
+    db_session.expunge_all()
+    assert db_session.get(Visit, visit.id).follow_up_days is None
+
+
+def test_amending_the_order_moves_the_return_visit(db_session, chart):
+    """The practical payoff of #59: a return visit is now amendable and
+    audited, instead of an integer nobody can explain the provenance of."""
+    from datetime import timedelta
+
+    from hdh.core.chartedit import ChartEdit, EditAction, apply_edits
+
+    patient, visit = chart
+    request = _order(
+        patient,
+        visit,
+        kind=ServiceKind.FOLLOW_UP,
+        display="Follow-up visit in 90 days",
+        occurrence_date=visit.visit_date + timedelta(days=90),
+    )
+    db_session.add(request)
+    db_session.commit()
+
+    moved = (visit.visit_date + timedelta(days=30)).isoformat()
+    outcome = apply_edits(
+        db_session,
+        _actor(),
+        [
+            ChartEdit(
+                "ServiceRequest",
+                request.id,
+                EditAction.AMEND,
+                {"occurrence_date": moved},
+                "patient asked to be seen sooner",
+            )
+        ],
+    )[0]
+    assert outcome.applied
+
+    db_session.expunge_all()
+    assert db_session.get(Visit, visit.id).follow_up_days == 30

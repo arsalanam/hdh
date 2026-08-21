@@ -13,7 +13,15 @@ from datetime import date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from hdh.core.models import Condition, Patient, Prescription, Visit, VisitType
+from hdh.core.models import (
+    Condition,
+    Patient,
+    Prescription,
+    ServiceKind,
+    ServiceRequest,
+    Visit,
+    VisitType,
+)
 
 # Grace multiplier applied to a visit's follow_up_days before it counts as missed
 FOLLOW_UP_GRACE = 1.5
@@ -79,12 +87,27 @@ def detect_gaps(
         .filter(Visit.visit_type == VisitType.PREVENTIVE)
         .group_by(Visit.patient_id)
     }
-    # follow_up_days of each patient's latest visit
+    # The most recent follow-up ORDER per patient. This used to read
+    # Visit.follow_up_days, which is now derived from the request (#59) and
+    # so cannot be selected as a column — and reading it per visit through
+    # the property would be one lazy load each. The order carries the dates
+    # directly, which is also more honest: the interval is what was asked
+    # for, not something recomputed here.
     latest_follow_up: dict[int, tuple[date, int | None]] = {}
-    for pid, vdate, fu in session.query(Visit.patient_id, Visit.visit_date, Visit.follow_up_days).all():
-        cur = latest_follow_up.get(pid)
-        if cur is None or vdate > cur[0]:
-            latest_follow_up[pid] = (vdate, fu)
+    for pid, requested, occurrence in (
+        session.query(
+            ServiceRequest.patient_id,
+            ServiceRequest.requested_date,
+            ServiceRequest.occurrence_date,
+        )
+        .filter(ServiceRequest.kind == ServiceKind.FOLLOW_UP)
+        .all()
+    ):
+        if occurrence is None:
+            continue
+        current = latest_follow_up.get(pid)
+        if current is None or requested > current[0]:
+            latest_follow_up[pid] = (requested, (occurrence - requested).days)
 
     uncontrolled: dict[int, list[str]] = {}
     for pid, desc in (

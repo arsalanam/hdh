@@ -319,8 +319,6 @@ class Visit(Base):
     visit_type: Mapped[VisitType] = mapped_column(SAEnum(VisitType))
     chief_complaint: Mapped[str | None] = mapped_column(String(200))
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
-    # Follow-up scheduling
-    follow_up_days: Mapped[int | None] = mapped_column(Integer)  # None = PRN
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
     provider: Mapped["Provider | None"] = relationship()
@@ -336,6 +334,33 @@ class Visit(Base):
     notes: Mapped[list["VisitNote"]] = relationship(back_populates="visit", cascade="all, delete-orphan")
     service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="visit")
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
+
+    @property
+    def follow_up_request(self) -> "ServiceRequest | None":
+        """The order saying when this patient should be seen again."""
+        for request in self.service_requests:
+            if request.kind is ServiceKind.FOLLOW_UP and request.voided_at is None:
+                return request
+        return None
+
+    @property
+    def follow_up_days(self) -> int | None:
+        """Days until the requested return visit — DERIVED (issue #59).
+
+        This used to be a column written beside the request. Two writable
+        copies of one fact drift, and silently, so the ``FOLLOW_UP``
+        ``ServiceRequest`` is now the source of truth and this reads from
+        it. ``None`` still means PRN — no return visit was asked for.
+
+        Reading this lazy-loads the visit's requests. Callers in a hot loop
+        should use the value they already have (the generator passes the
+        condition profile's number straight to ``render_soap``) or
+        eager-load ``service_requests``.
+        """
+        request = self.follow_up_request
+        if request is None or request.occurrence_date is None:
+            return None
+        return (request.occurrence_date - self.visit_date).days
 
 
 class Vital(Base):
