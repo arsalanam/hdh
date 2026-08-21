@@ -279,12 +279,12 @@ to.
 
 ## 8. Milestones<a name="8-milestones"></a>
 
-| | Delivers | Proves |
-|---|---|---|
-| **A** | `ServiceRequest` + enums + OMOP-informed fields, migration, `LabResult.request_id`/`value_text`/`comparator`, `hdh orders list/release`, chartedit integration | requests are first-class, auditable, and analysable |
-| **B** | Comprehension's fifth pass: plan-section orders become requests with verdicts; `rx_options` referral abuse retired | the note's plan finally reaches the chart |
-| **C** | `hdh.modules.interchange`: `PartnerAdapter` protocol, mock lab + pharmacy, outbox/inbox bundles, `hdh interchange run/import`, unmatched-result review queue | the round trip closes without a real integration |
-| **D** | LOINC module (labs) behind `OntologyService`; then RxNorm, under its own design | coding serves real requests; the vitals alias dict retires |
+| | Delivers | Proves | Status |
+|---|---|---|---|
+| **A** | `ServiceRequest` + enums + OMOP-informed fields, migration, `LabResult.request_id`/`value_text`/`comparator`, `hdh orders list/release`, chartedit integration | requests are first-class, auditable, and analysable | **shipped** (PR #58) — plus `Visit.follow_up_days` retired in favour of the request (#59, PR #60) |
+| **B** | Comprehension's fifth pass: plan-section orders become requests with verdicts; `rx_options` referral abuse retired | the note's plan finally reaches the chart | **shipped** |
+| **C** | `hdh.modules.interchange`: `PartnerAdapter` protocol, mock lab + pharmacy, outbox/inbox bundles, `hdh interchange run/import`, unmatched-result review queue | the round trip closes without a real integration | next |
+| **D** | LOINC module (labs) behind `OntologyService`; then RxNorm, under its own design | coding serves real requests; the vitals alias dict retires | |
 
 Each milestone is human-tested before the next begins.
 

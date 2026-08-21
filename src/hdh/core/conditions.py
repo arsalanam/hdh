@@ -153,9 +153,24 @@ class LabSpec:
     condition_shift_sd: float = 0.0
 
 
+class RxKind(enum.Enum):
+    """What a formulary entry actually IS.
+
+    ``rx_options`` carried three different things under one name, and the
+    chart could not tell them apart: real drugs, referrals, and plain
+    advice. Charting the last two as prescriptions made the record claim a
+    patient had been PRESCRIBED "Rest & fluids", and gave every referral an
+    em-dash dose and frequency (issue #49; design service-requests §5).
+    """
+
+    DRUG = "drug"  # → Prescription
+    REFERRAL = "referral"  # → a REFERRAL ServiceRequest
+    ADVICE = "advice"  # → the note says it; the chart records nothing
+
+
 @dataclass(frozen=True)
 class RxSpec:
-    """One prescription option in a condition's formulary."""
+    """One entry in a condition's formulary — a drug unless it says so."""
 
     drug_name: str
     drug_class: str
@@ -163,6 +178,7 @@ class RxSpec:
     frequency: str
     duration_days: int | None  # None = chronic / ongoing
     refills: int = 0
+    kind: RxKind = RxKind.DRUG
 
 
 @dataclass(frozen=True)
