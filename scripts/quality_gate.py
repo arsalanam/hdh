@@ -466,6 +466,59 @@ class HierarchyEncapsulationCheck:
         return [f for f in findings if not module.waived(self.name, f.line)]
 
 
+class ModulePrivacyCheck:
+    """A module may use another module's public API, never its internals.
+
+    ``hdh/modules/__init__.py`` has said so in prose since the modules
+    existed, and prose does not hold: the LOINC funnel ended up importing
+    SNOMED's private ``_covers_every_word`` because the shared home for it
+    did not exist yet (design rxnorm-and-terminology-boundaries.md §1).
+
+    The line is PRIVACY, not dependency. The agent module legitimately
+    imports ``detect_gaps`` from caregaps and ``model`` from risk —
+    exposing other modules' capabilities as tools is its whole job. What
+    it must never do is reach past a module's public surface, because a
+    private name carries no promise and changing one should not be able to
+    break a different module.
+    """
+
+    name = "module-privacy"
+    principle = "Modules use each other's public API, never their internals"
+
+    PREFIX = "src/hdh/modules/"
+
+    def run(self, module: Module) -> list[Finding]:
+        """Flag `from hdh.modules.<other> import _private` across modules."""
+        if not module.path.startswith(self.PREFIX):
+            return []
+        owner = module.path[len(self.PREFIX) :].split("/")[0]
+        findings = []
+        for node in ast.walk(module.tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            parts = node.module.split(".")
+            if len(parts) < 3 or parts[0] != "hdh" or parts[1] != "modules":
+                continue
+            other = parts[2]
+            if other == owner:
+                continue
+            private = [alias.name for alias in node.names if alias.name.startswith("_")]
+            if not private:
+                continue
+            findings.append(
+                _finding(
+                    self,
+                    "error",
+                    module,
+                    node.lineno,
+                    f"imports {', '.join(private)} from the {other} module — that is "
+                    f"{other}'s internals, which carry no promise; use its public API "
+                    f"or move the shared part to hdh.core",
+                )
+            )
+        return [f for f in findings if not module.waived(self.name, f.line)]
+
+
 CHECKS: tuple[QualityCheck, ...] = (
     ContractCheck(),
     GodClassCheck(),
@@ -475,6 +528,7 @@ CHECKS: tuple[QualityCheck, ...] = (
     InjectionSafetyCheck(),
     DataAbstractionCheck(),
     HierarchyEncapsulationCheck(),
+    ModulePrivacyCheck(),
 )
 
 

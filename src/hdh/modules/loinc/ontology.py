@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from hdh.core.ontology import Candidate, Concept
 
@@ -42,11 +42,6 @@ _TERM_TYPE_RANK = {"preferred": 0, "synonym": 1}
 #: A "sodium" with no specimen is a serum sodium; nobody orders a CSF
 #: sodium without saying so.
 _DEFAULT_SYSTEMS = ("ser/plas", "bld", "ser", "plas", "bld/plas")
-
-#: Same ceiling, and the same reason, as the SNOMED funnel: a match that
-#: explains only part of the mention is a guess about the rest, so it must
-#: reach a human rather than a chart (issue #54).
-PARTIAL_COVERAGE_CEILING = 0.55
 
 
 def build_service(session: Any) -> LoincOntologyService:
@@ -135,148 +130,59 @@ class LoincOntologyService:
         return tuple(seen)
 
     def normalize(self, mention: str, context: dict | None = None) -> tuple[Candidate, ...]:
-        """Ranked LOINC candidates for a free-text mention.
+        """Ranked LOINC candidates, run by :mod:`hdh.core.termsearch`.
+
+        The rungs and the scoring are shared with every other vocabulary.
+        What stays here is what only LOINC knows: the specimen axis, which
+        separates codes that text alone cannot.
 
         ``context`` keys (all optional): ``limit``; ``system`` — the
-        specimen the caller meant ("ser/plas", "urine"), which is the axis
-        that separates codes text alone cannot; ``classes`` — LOINC CLASS
-        values to prefer (e.g. "CHEM").
+        specimen the caller meant ("ser/plas", "urine"); ``classes`` —
+        LOINC CLASS values to prefer (e.g. "CHEM").
         """
-        ctx = context or {}
-        limit = int(ctx.get("limit", 10))
-        needle = mention.strip().lower()
-        if not needle:
-            return ()
+        from hdh.core import termsearch
 
-        wanted_system = (ctx.get("system") or "").strip().lower()
-        wanted_classes = {c.upper() for c in ctx.get("classes", ())}
+        return termsearch.search(self.session, self._profile(), mention, context)
 
-        best: dict[str, tuple[float, str, bool]] = {}
-        for concept_id, term, term_type, base, covered in self._search_terms(needle):
-            score = base - 0.01 * _TERM_TYPE_RANK.get(term_type, 1)
-            if score > best.get(concept_id, (-1.0, "", True))[0]:
-                best[concept_id] = (score, term, covered)
+    def _profile(self):
+        """This vocabulary's shape, for the shared funnel.
 
-        concepts_t, _terms = _tables()
-        ranked: list[tuple[float, Candidate]] = []
-        for concept_id, (score, term, covered) in best.items():
-            row = self.session.execute(select(concepts_t).where(concepts_t.c.id == concept_id)).first()
-            if row is None:
-                continue
-            concept = self._concept(row)
-            reasons = [f"term: {term}"]
-            system = (concept.properties.get("system") or "").lower()
-            if wanted_system:
-                if wanted_system in system:
-                    score += 0.15
-                    reasons.append(f"system: {system}")
-                elif system:
-                    score -= 0.15
-            elif system in _DEFAULT_SYSTEMS:
-                # an unqualified order means blood, and saying so beats
-                # letting a urine code win on alphabetical luck
-                score += 0.05
-                reasons.append("default specimen")
-            if wanted_classes and (concept.properties.get("class") or "").upper() in wanted_classes:
-                score += 0.1
-                reasons.append("class")
-            if not covered:
-                score = min(score, PARTIAL_COVERAGE_CEILING)
-                reasons.append("partial: matches some of the mention")
-            ranked.append(
-                (
-                    score,
-                    Candidate(concept=concept, score=round(min(score, 1.0), 3), reason="; ".join(reasons)),
-                )
-            )
-        ranked.sort(key=lambda pair: (-pair[0], pair[1].concept.code))
-        return tuple(candidate for _raw, candidate in ranked[:limit])
+        No abbreviation separator: LOINC keeps its abbreviations as
+        ordinary synonyms in RELATEDNAMES2 rather than spelling them out
+        inside the term, so there is no ``ABBR - Expansion`` rung to run.
+        """
+        from hdh.core.termsearch import SearchProfile
 
-    # ── internals ────────────────────────────────────────────────────────
+        return SearchProfile(
+            ontology=ONTOLOGY,
+            term_type_rank=_TERM_TYPE_RANK,
+            abbreviation_separator=None,
+            adjust=self._adjust,
+        )
 
-    def _search_terms(self, needle: str) -> list[tuple[str, str, str, float, bool]]:
-        """(concept_id, term, term_type, base score, covers_whole_mention)."""
-        _concepts, terms_t = _tables()
-        if self.session.get_bind().dialect.name == "postgresql":
-            return self._search_postgres(needle)
-        rows = self.session.execute(
-            select(terms_t.c.concept_id, terms_t.c.term, terms_t.c.term_type)
-            .where(
-                terms_t.c.active,
-                terms_t.c.concept_id.like(f"{ONTOLOGY}:%"),
-                or_(
-                    self._lower(terms_t.c.term) == needle,
-                    self._lower(terms_t.c.term).like(f"%{needle}%"),
-                ),
-            )
-            .limit(200)
-        ).all()
-        out = []
-        for row in rows:
-            term = row.term.lower()
-            base = 1.0 if term == needle else 0.85 if term.startswith(needle) else 0.5
-            out.append((row.concept_id, row.term, str(row.term_type), base, True))
+    def _adjust(self, concept: Concept, context) -> list[tuple[float, str]]:
+        """The specimen and class preferences only LOINC can apply.
+
+        A bare "sodium" matches serum, urine, CSF and dialysate equally on
+        text, and they are different tests. A caller who means urine says
+        so; one who says nothing means blood, because that is what an
+        unqualified order means in family medicine.
+        """
+        out: list[tuple[float, str]] = []
+        system = (concept.properties.get("system") or "").lower()
+        wanted_system = (context.get("system") or "").strip().lower()
+        if wanted_system:
+            if wanted_system in system:
+                out.append((0.15, f"system: {system}"))
+            elif system:
+                out.append((-0.15, ""))
+        elif system in _DEFAULT_SYSTEMS:
+            out.append((0.05, "default specimen"))
+
+        wanted_classes = {c.upper() for c in context.get("classes", ())}
+        if wanted_classes and (concept.properties.get("class") or "").upper() in wanted_classes:
+            out.append((0.1, "class"))
         return out
-
-    @staticmethod
-    def _lower(column):
-        from sqlalchemy import func
-
-        return func.lower(column)
-
-    def _search_postgres(self, needle: str) -> list[tuple[str, str, str, float, bool]]:
-        from sqlalchemy import text as sql_text
-
-        from hdh.core.termsearch import covers_every_word
-
-        exact = self.session.execute(
-            sql_text(
-                "SELECT concept_id, term, term_type FROM ontology_terms "
-                "WHERE active AND concept_id LIKE :ns AND lower(term) = :q LIMIT 20"
-            ),
-            {"q": needle, "ns": f"{ONTOLOGY}:%"},
-        ).all()
-        out = [(r.concept_id, r.term, str(r.term_type), 1.0, True) for r in exact]
-        fts = self.session.execute(
-            sql_text(
-                "SELECT concept_id, term, term_type, "
-                "       ts_rank(to_tsvector('english', term), plainto_tsquery('english', :q), 1) AS r "
-                "FROM ontology_terms WHERE active AND concept_id LIKE :ns "
-                "AND to_tsvector('english', term) @@ plainto_tsquery('english', :q) "
-                "ORDER BY r DESC, length(term) ASC LIMIT 100"
-            ),
-            {"q": needle, "ns": f"{ONTOLOGY}:%"},
-        ).all()
-        if fts:
-            top = float(fts[0].r) or 1.0
-            for row in fts:
-                term = row.term.lower()
-                if term == needle:
-                    continue
-                base = min(0.5 + 0.4 * float(row.r) / top, 0.9)
-                if term.startswith(needle):
-                    base = max(base, 0.85)
-                out.append((row.concept_id, row.term, str(row.term_type), base, True))
-        if out:
-            return out
-        fuzzy = self.session.execute(
-            sql_text(
-                "SELECT concept_id, term, term_type, similarity(term, :q) AS s "
-                "FROM ontology_terms WHERE active AND concept_id LIKE :ns AND term % :q "
-                "ORDER BY s DESC LIMIT 50"
-            ),
-            {"q": needle, "ns": f"{ONTOLOGY}:%"},
-        ).all()
-        return [
-            (
-                r.concept_id,
-                r.term,
-                str(r.term_type),
-                0.3 + 0.4 * float(r.s),
-                covers_every_word(needle, r.term),
-            )
-            for r in fuzzy
-        ]
 
     def _row(self, code: str):
         concepts_t, _terms = _tables()
