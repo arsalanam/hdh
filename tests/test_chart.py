@@ -106,3 +106,32 @@ def test_structured_allergies(db_session):
     if a is not None:  # small panel may legitimately have none
         assert a.substance and a.severity is not None
     assert not hasattr(Patient, "fam_hx_diabetes")  # the booleans are gone
+
+
+def test_household_ages_hold_for_every_adult_not_just_the_first():
+    """A minor's mother/father can be ANY adult in the household, so the
+    20–40 year gap has to hold against the youngest and oldest of them.
+
+    This is the bug the coherence test above caught in CI and not locally:
+    clamping the child into 0–17 silently stretched the gap (a 17-year-old
+    with a 66-year-old "father", 49 years), and a spouse up to six years
+    younger than the parent could shrink it the other way. Swept rather
+    than sampled, because the failure was one household in a few hundred.
+    """
+    from hdh.core.generators import _household_ages
+
+    worst_low, worst_high = 99, 0
+    for size in (2, 3, 4, 5):
+        for _ in range(4000):
+            ages = _household_ages(size)
+            adults = [a for a in ages if a >= 18]
+            minors = [a for a in ages if a < 18]
+            if not (adults and minors):
+                continue
+            gaps = [adult - minor for minor in minors for adult in adults]
+            worst_low, worst_high = min(worst_low, *gaps), max(worst_high, *gaps)
+
+    # the intended range, with a year of margin either side for the DOB
+    # day jitter that turns 20.0 years into 19 after floor division
+    assert 20 <= worst_low, worst_low
+    assert worst_high <= 40, worst_high
