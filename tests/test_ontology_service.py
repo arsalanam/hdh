@@ -38,8 +38,14 @@ def test_dispatcher_returns_icd_service(catalog):
 
 
 def test_dispatcher_unknown_ontology_is_loud(catalog):
-    with pytest.raises(LookupError, match="rxnorm"):
-        get_ontology_service("rxnorm", catalog)
+    """The name must be one that will never become real.
+
+    This asked for "rxnorm" until the RxNorm module landed and quietly
+    turned the test's premise false — a placeholder that came true. A
+    deliberately impossible name cannot rot the same way.
+    """
+    with pytest.raises(LookupError, match="not_a_vocabulary"):
+        get_ontology_service("not_a_vocabulary", catalog)
 
 
 def test_lookup_returns_typed_concept(catalog):
