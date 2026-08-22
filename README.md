@@ -300,6 +300,8 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   (symptom billing coverage + amend/void with an audit trail)
 - Design docs — [notes-comprehension-service.md](docs/design/notes-comprehension-service.md) ·
   [comprehension-extraction-schema.md](docs/design/comprehension-extraction-schema.md) ·
+  [service-requests-and-interchange.md](docs/design/service-requests-and-interchange.md) ·
+  [rxnorm-and-terminology-boundaries.md](docs/design/rxnorm-and-terminology-boundaries.md) ·
   [snomed-module.md](docs/design/snomed-module.md) ·
   [icd10cm-ontology-module.md](docs/design/icd10cm-ontology-module.md) ·
   [clinical-breadth.md](docs/design/clinical-breadth.md) ·
