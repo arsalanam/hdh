@@ -227,7 +227,7 @@ class LoincOntologyService:
     def _search_postgres(self, needle: str) -> list[tuple[str, str, str, float, bool]]:
         from sqlalchemy import text as sql_text
 
-        from hdh.modules.snomed.ontology import _covers_every_word
+        from hdh.core.termsearch import covers_every_word
 
         exact = self.session.execute(
             sql_text(
@@ -273,7 +273,7 @@ class LoincOntologyService:
                 r.term,
                 str(r.term_type),
                 0.3 + 0.4 * float(r.s),
-                _covers_every_word(needle, r.term),
+                covers_every_word(needle, r.term),
             )
             for r in fuzzy
         ]
