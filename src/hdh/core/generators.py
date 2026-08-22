@@ -796,17 +796,43 @@ def _household_sizes(n_patients: int) -> list[int]:
     return sizes
 
 
+#: A resident child is a minor (0–17) whose parent is 20–40 years older,
+#: so a household that HAS one needs a parent aged 20–57. Deciding the
+#: composition before the parent's age is what keeps that true.
+_PARENT_GAP = (20, 40)
+_CHILD_AGES = (0, 17)
+
+
 def _household_ages(size: int) -> list[int]:
-    """Coherent ages: adults first, children 20–40 years younger."""
+    """Coherent ages: adults first, children 20–40 years younger.
+
+    The composition is decided BEFORE the parent's age, because the two
+    constrain each other. Clamping the child instead — which is what this
+    did — produced a 17-year-old with a 66-year-old "father": the clamp
+    silently stretched the gap to 49 years, and the household-coherence
+    test rightly rejected it.
+    """
     if size == 1:
         return [random.choice([random.randint(18, 65), random.randint(66, 90)])]
-    parent_age = random.randint(28, 62)
+
+    spouse = random.random() < 0.75
+    children = max(0, size - 1 - (1 if spouse else 0))
+    # EVERY adult in the household is a candidate parent — the relationship
+    # pass gives a minor a mother/father from whichever adults are there —
+    # so the gap has to hold for the youngest and the oldest of them, not
+    # just for the one we happened to draw first. A spouse may be six years
+    # older, hence the 51 rather than 57.
+    parent_age = random.randint(28, 51 if children else 62)
+
     ages = [parent_age]
-    if size >= 2 and random.random() < 0.75:
+    if spouse:
         ages.append(_clamp(parent_age + random.randint(-6, 6), 20, 90))
-    while len(ages) < size:
-        child_age = parent_age - random.randint(20, 40)
-        ages.append(int(_clamp(child_age, 0, 17)))
+
+    adults = [age for age in ages if age >= 18]
+    for _ in range(children):
+        youngest = max(_CHILD_AGES[0], max(adults) - _PARENT_GAP[1])
+        oldest = min(_CHILD_AGES[1], min(adults) - _PARENT_GAP[0])
+        ages.append(random.randint(youngest, oldest))
     return ages[:size]
 
 
