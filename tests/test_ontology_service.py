@@ -123,7 +123,7 @@ def test_new_entities_and_enum_values_registered(db_session):
 
 def test_abbreviation_shape_is_recognised():
     """Only a short alphanumeric token can head an "ABBR - Expansion" term."""
-    from hdh.modules.snomed.ontology import _looks_like_abbreviation
+    from hdh.core.termsearch import looks_like_abbreviation as _looks_like_abbreviation
 
     assert _looks_like_abbreviation("SOB")
     assert _looks_like_abbreviation("t2dm")
@@ -140,7 +140,7 @@ def test_a_typo_covers_the_mention_but_a_lay_phrase_does_not():
     diabetes" (do not). Similarity over the whole string CANNOT make this
     call — measured on the full edition, typos span 0.35-0.71 and wrong
     answers 0.33-0.56 — so coverage is judged per word."""
-    from hdh.modules.snomed.ontology import _covers_every_word
+    from hdh.core.termsearch import covers_every_word as _covers_every_word
 
     # typos: every word of the mention has a close counterpart
     assert _covers_every_word("hypothyroidsm", "Hypothyroidism")
@@ -156,7 +156,7 @@ def test_a_typo_covers_the_mention_but_a_lay_phrase_does_not():
 def test_a_partial_match_can_never_be_charted():
     """The ceiling exists to sit below the pipeline's review threshold; if
     that coupling ever breaks, a half-matched guess reaches a chart."""
+    from hdh.core.termsearch import PARTIAL_COVERAGE_CEILING
     from hdh.modules.comprehension.pipeline import REVIEW_THRESHOLD
-    from hdh.modules.snomed.ontology import PARTIAL_COVERAGE_CEILING
 
     assert PARTIAL_COVERAGE_CEILING < REVIEW_THRESHOLD

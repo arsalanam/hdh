@@ -300,13 +300,20 @@ has the fixture), and only then RxNorm — which is written against
 
 | | Delivers | Proves |
 |---|---|---|
-| **M1** | `hdh.core.termsearch`: the funnel, the coverage rule, the ceilings, a `SearchProfile` contract. SNOMED delegates to it. Shared UTS acquisition. | the #53 ratchet does not move |
+| **M1** | `hdh.core.termsearch`: the funnel, the coverage rule, the ceilings, a `SearchProfile` contract. SNOMED delegates to it. | the #53 ratchet does not move |
 | **M2** | LOINC delegates too; `_covers_every_word` import deleted; a quality-gate check for cross-module imports | no module reaches into another's internals |
 | **M3** | `hdh.modules.rxnorm`: loader (RRF), graph edges, `SearchProfile`, `OntologyService` #4, fabricated fixture | a drug vocabulary lands with no funnel of its own |
 | **M4** | Compositional coding: ingredient → strength → form, at the deepest supported level and **branded when the note names a brand** (§11 Q3, Q5); `Prescription`/`MedicationStatement` gain code columns; `RxSpec` carries an RXCUI (§11 Q4); `hdh rxnorm code` | **Scenario A's medication rows** (§10): an ER dose form, a quantity-times-strength, a verbatim sig, and a misspelt brand |
 | **M5** | Agent tools; the comprehensive test plan over the §10 scenarios | the interface holds under a conversation, and against notes we did not write |
 
 Each milestone is human-tested before the next begins.
+
+**Shared UTS acquisition moved from M1 to M3.** It was listed here on the
+assumption that RxNorm downloads the way SNOMED does, but there is exactly
+one implementation to generalise from — and generalising from one is the
+mistake this whole document is correcting. The funnel was worth extracting
+because two copies existed and the differences between them were visible.
+The downloader gets the same treatment when RxNorm gives it a second case.
 
 ## 10. Test scenarios: notes that are actually hard<a name="10-scenarios"></a>
 
