@@ -230,6 +230,40 @@ def _control_refinement(session, base_code: str, base_display: str, controlled: 
     return best.concept
 
 
+def _update_control(session, row, item: ComprehendedMention, result: ApplyResult) -> None:
+    """Carry a note's control assertion onto a problem the chart already has.
+
+    Silent when the note says nothing about control: absence of a phrase is
+    not an assertion that the condition is uncontrolled, so an unchanged flag
+    is the correct outcome and must not be written as one.
+    """
+    from hdh.core.chartedit import record_update
+    from hdh.core.chartedit.contracts import Actor
+    from hdh.core.models import EditSource
+
+    controlled = _control_state(item)
+    if controlled is None or bool(row.controlled) == controlled:
+        return
+    before = row.controlled
+    row.controlled = controlled
+    session.flush()
+    record_update(
+        session,
+        Actor(name="comprehension", source=EditSource.PIPELINE, provider_id=None),
+        "Condition",
+        row,
+        {"controlled": (before, controlled)},
+        reason="control state asserted by a note",
+    )
+    result.verdicts.append(
+        Verdict(
+            "updated",
+            "condition",
+            f"{item.mention.text!r}: controlled {before} → {controlled}",
+        )
+    )
+
+
 def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: ApplyResult) -> None:
     from hdh.core.models import Condition, ConditionStatus
 
@@ -268,6 +302,12 @@ def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: A
                     f"{item.mention.text!r} ≡ chart {existing[0].icd10_code} — referenced, not duplicated",
                 )
             )
+            # Referencing the problem is not the same as learning nothing
+            # about it. Control is the thing a follow-up note is FOR — "now
+            # uncontrolled" is news about a problem the chart already has —
+            # and writing it only on creation meant the flag could be set
+            # once, on the day a problem was first charted, and never again.
+            _update_control(session, existing[0], item, result)
             continue
         icd10 = _icd_for_snomed(session, item.code.code)
         if icd10 is None:

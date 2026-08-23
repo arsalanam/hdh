@@ -11,12 +11,23 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TypedDict
 
+#: What the gate lets through. This list is the agent's advertised surface,
+#: so it has to keep pace with the toolset: every entry below names something
+#: `build_tools` can actually do. It had fallen a long way behind — note
+#: comprehension, chart maintenance and SNOMED all shipped without a line
+#: here, so the agent held 21 tools and was gated to discuss about half of
+#: them, refusing to chart a dictated note as "outside the gatekeeper role".
 DEFAULT_ALLOWED_TOPICS = (
     "patients, cohorts, and clinical data in the synthetic family-medicine dataset",
     "care gaps, risk scores, visits, diagnoses, prescriptions, labs, vitals",
     "dataset statistics, SQL questions about the database, SOAP notes",
-    "ICD-10-CM coding: finding the right code for a clinical description, "
-    "code lookups, hierarchy, laterality, and Excludes/code-first rules",
+    "clinical notes: reading, comprehending, coding, and CHARTING a dictated "
+    "or free-text note onto a patient's record",
+    "chart maintenance: amending or voiding an entry and reading its audit trail",
+    "orders and service requests: labs, medications, referrals, follow-up visits",
+    "clinical terminology: ICD-10-CM, SNOMED CT, RxNorm and LOINC — finding the "
+    "right code for a description, lookups, hierarchy, laterality, and "
+    "Excludes/code-first rules",
     "how the hdh tool itself works",
 )
 

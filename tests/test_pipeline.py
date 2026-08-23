@@ -220,3 +220,76 @@ def test_tool_result_clipping():
     assert "truncated 4,000 chars" in big["content"]
     assert small["content"] == "short"
     assert clip_tool_results(None, cap=10) is None
+
+
+# ── the intent maps must name things that exist ──────────────────────────
+
+
+def test_every_intent_table_is_a_real_table():
+    """`_schema_summary` filters by name, so a stale entry does not fail — it
+    silently drops the table from the SQL tool's schema description and the
+    executor never learns the table exists.
+
+    Four intents named `chronic_conditions` and one named `diagnoses` long
+    after the unified problem list became `conditions`, which meant every
+    patient_lookup, cohort_search, risk and care_gaps question was answered
+    by an agent that could not see the problem list.
+    """
+    from hdh.core.models import Base
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.agent.pipeline.gateway import INTENT_TABLES
+
+    bootstrap_schema()
+    real = set(Base.metadata.tables)
+    for intent, tables in INTENT_TABLES.items():
+        unknown = set(tables) - real
+        assert not unknown, f"intent {intent!r} names tables that do not exist: {sorted(unknown)}"
+
+
+def test_every_intent_tool_is_a_real_tool(tmp_path):
+    """The same drift on the other axis: `include` filters by name, so a
+    renamed or missing tool narrows the intent's toolset in silence."""
+    from hdh.core.models import get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+    from hdh.modules.agent.tools import build_tools
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path / "intent.db"))
+    session = get_session(engine)
+    from hdh.core.models import Base
+
+    Base.metadata.create_all(engine)
+    available = {tool.name for tool in build_tools(session)}
+    session.close()
+    engine.dispose()
+
+    for intent, tools in INTENT_TOOLS.items():
+        # optional toolsets (ontology catalogs, comprehension) are absent on
+        # an empty database, so only flag names no build path can ever emit
+        unknown = {name for name in tools if name not in available and not _is_optional(name)}
+        assert not unknown, f"intent {intent!r} names tools that do not exist: {sorted(unknown)}"
+
+
+def _is_optional(name: str) -> bool:
+    """Tools whose builder returns [] without a loaded catalog or stored note."""
+    return name.startswith(("icd_", "snomed_", "rxnorm_", "loinc_")) or name in {
+        "apply_note",
+        "comprehend_note",
+        "get_note_record",
+        "search_note_mentions",
+    }
+
+
+def test_writing_to_a_chart_has_its_own_intent():
+    """A dictated note names a patient, so without a charting intent it
+    classifies as patient_lookup and the executor gets read-only tools — the
+    agent then looks the patient up and reports that the visit is missing,
+    which is true and useless."""
+    from hdh.modules.agent.pipeline.gateway import INTENT_SCHEMA, INTENT_TOOLS
+
+    assert "charting" in INTENT_SCHEMA["properties"]["intent"]["enum"]
+    assert "apply_note" in INTENT_TOOLS["charting"]
+    assert not INTENT_TOOLS["patient_lookup"] & {"apply_note", "amend_chart_entry", "void_chart_entry"}, (
+        "a read-only intent must not be able to write"
+    )

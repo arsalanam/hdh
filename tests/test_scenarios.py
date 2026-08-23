@@ -294,7 +294,7 @@ def test_a_control_qualifier_reaches_the_problem_list(control_world):
     """
     from hdh.core.models import ConditionStatus
 
-    session, patient, base_code = control_world
+    session, patient, base_code, _visit, _note_for = control_world
     charted = [c for c in patient.conditions if c.status is ConditionStatus.ACTIVE]
 
     assert charted, "the condition never reached the chart at all"
@@ -360,23 +360,76 @@ def control_world(tmp_path_factory):
     session.add(visit)
     session.flush()
 
-    note = "A: well controlled Chronic blorbitis."
-    raw = {
-        "mentions": [
-            {
-                "type": "problem",
-                "text": "Chronic blorbitis",
-                "occurrence": 1,
-                # exactly what extract.py's rule 4 instructs the model to emit
-                "attributes": [{"kind": "control", "text": "well controlled", "occurrence": 1}],
-            }
-        ],
-        "relations": [],
-        "shared_triggers": [],
-    }
-    comprehended = comprehend_note(session, comprehend_text(note, stub_extractor(raw)))
-    apply_to_chart(session, patient, comprehended, VisitTarget(visit=visit))
+    def note_for(phrase: str | None):
+        """A comprehended note asserting Chronic blorbitis, optionally with a
+        control phrase in front of it."""
+        text = f"A: {phrase} Chronic blorbitis." if phrase else "A: Chronic blorbitis."
+        attributes = []
+        if phrase:
+            # exactly what extract.py's rule 4 instructs the model to emit
+            attributes = [{"kind": "control", "text": phrase, "occurrence": 1}]
+        raw = {
+            "mentions": [
+                {
+                    "type": "problem",
+                    "text": "Chronic blorbitis",
+                    "occurrence": 1,
+                    "attributes": attributes,
+                }
+            ],
+            "relations": [],
+            "shared_triggers": [],
+        }
+        return comprehend_note(session, comprehend_text(text, stub_extractor(raw)))
+
+    apply_to_chart(session, patient, note_for("well controlled"), VisitTarget(visit=visit))
     assert ConditionStatus  # imported for the test body
-    yield session, patient, snomed_ids.CHRONIC_BLORBITIS
+    yield session, patient, snomed_ids.CHRONIC_BLORBITIS, visit, note_for
     session.close()
     engine.dispose()
+
+
+def test_control_changes_on_a_problem_the_chart_already_has(control_world):
+    """The case the control flag exists for.
+
+    A first note charts the problem; a later note says it is no longer
+    controlled. Because the second note CONFIRMS the existing row rather than
+    creating one, the whole control path used to be skipped — the flag could
+    be written on the day a problem was first charted and never again, which
+    is precisely backwards for a chronic disease.
+    """
+    from hdh.core.chartedit import history
+    from hdh.core.models import Condition
+    from hdh.modules.comprehension.applier import VisitTarget, apply_to_chart
+
+    session, patient, _base, visit, note_for = control_world
+
+    row = session.query(Condition).filter(Condition.patient_id == patient.id).one()
+    assert row.controlled is True, "the fixture's first note should have charted it as controlled"
+
+    later = apply_to_chart(session, patient, note_for("uncontrolled"), VisitTarget(visit=visit))
+    assert any(v.action == "confirmed" for v in later.verdicts), (
+        "a second note must not duplicate the problem"
+    )
+    assert any(v.action == "updated" and "controlled" in v.detail for v in later.verdicts)
+    session.refresh(row)
+    assert row.controlled is False, "the note said uncontrolled and the problem list did not hear it"
+
+    # and the change is attributable, not a silent mutation
+    events = [e for e in history(session, patient.id) if e.entity == "Condition"]
+    assert any(e.action == "amend" and "controlled" in (e.after or {}) for e in events)
+
+
+def test_a_note_that_says_nothing_about_control_leaves_the_flag_alone(control_world):
+    """Absence of a control phrase is not an assertion of poor control."""
+    from hdh.core.models import Condition
+    from hdh.modules.comprehension.applier import VisitTarget, apply_to_chart
+
+    session, patient, _base, visit, note_for = control_world
+    row = session.query(Condition).filter(Condition.patient_id == patient.id).one()
+    before = row.controlled
+
+    result = apply_to_chart(session, patient, note_for(None), VisitTarget(visit=visit))
+    assert not any(v.action == "updated" for v in result.verdicts)
+    session.refresh(row)
+    assert row.controlled == before
