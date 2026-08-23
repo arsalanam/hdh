@@ -9,9 +9,9 @@ and running ``just db-revision "msg"`` therefore produces the right diff.
 
 import os
 
+from alembic import context
 from sqlalchemy import create_engine
 
-from alembic import context
 from hdh.core.schema_registry import bootstrap_schema
 
 bootstrap_schema()  # must precede the metadata import — see module docstring

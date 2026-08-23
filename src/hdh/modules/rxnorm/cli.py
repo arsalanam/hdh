@@ -27,6 +27,12 @@ def register_cli(subparsers) -> None:
     graph = sub.add_parser("graph", help="What a drug is made of, and what is built from it")
     graph.add_argument("rxcui")
 
+    code = sub.add_parser("code", help="Assign RxCUIs to medication orders that have none")
+    code.add_argument("--request", type=int, default=None, help="One order; default is every uncoded one")
+    code.add_argument("--mrn", default=None, help="Restrict to one patient")
+    code.add_argument("--min-score", type=float, default=0.6, help="Below this, leave it for a human")
+    code.add_argument("--dry-run", action="store_true")
+
     parser.set_defaults(func=run_cli)
 
 
@@ -36,6 +42,8 @@ def run_cli(session, args) -> None:
         _load(session, args)
     elif args.rxnorm_cmd == "search":
         _search(session, args)
+    elif args.rxnorm_cmd == "code":
+        _code(session, args)
     else:
         _graph(session, args)
 
@@ -93,3 +101,84 @@ def _graph(session, args) -> None:
     show("brands:", service.brands_of(args.rxcui))
     for rela, targets in sorted(service.attributes(args.rxcui).items()):
         show(f"{rela}:", targets)
+
+
+def _code(session, args) -> None:
+    """Fill in the code a medication request was created without.
+
+    §2 of the service-requests design made `code` nullable because a
+    request is real before anyone codes it. This is the other half — and
+    it goes through the audited edit path, so the chart can say the code
+    came from the RxNorm module rather than from the clinician who wrote
+    the order.
+
+    The strength and route come from the request's own `sig`, which
+    comprehension kept verbatim precisely so that a later reader could do
+    this (design §5).
+    """
+    from hdh.core.chartedit import Actor, ChartEdit, EditAction, apply_edits
+    from hdh.core.models import EditSource, Patient, ServiceKind, ServiceRequest
+    from hdh.modules.rxnorm.coding import resolve
+
+    query = session.query(ServiceRequest).filter(
+        ServiceRequest.kind == ServiceKind.MEDICATION, ServiceRequest.code.is_(None)
+    )
+    if args.request is not None:
+        query = query.filter(ServiceRequest.id == args.request)
+    if args.mrn is not None:
+        patient = session.query(Patient).filter(Patient.mrn == args.mrn).first()
+        if patient is None:
+            raise SystemExit(f"no patient {args.mrn}")
+        query = query.filter(ServiceRequest.patient_id == patient.id)
+
+    pending = query.order_by(ServiceRequest.id).all()
+    if not pending:
+        print("no uncoded medication orders")
+        return
+
+    service = _service(session)
+    edits, skipped = [], []
+    for request in pending:
+        coding = resolve(
+            service,
+            request.display,
+            route=request.route,
+            raw=f"{request.display} {request.sig or ''}",
+            minimum_score=args.min_score,
+        )
+        if coding is None:
+            # Refuse-don't-guess: an uncoded order is legitimate state, and
+            # a wrong RxCUI is worse than no RxCUI at all.
+            skipped.append(f"#{request.id} {request.display!r} — no confident match")
+            continue
+        edits.append(
+            (
+                request,
+                coding,
+                ChartEdit(
+                    "ServiceRequest",
+                    request.id,
+                    EditAction.AMEND,
+                    {"code": coding.rxcui, "code_system": "rxnorm"},
+                    f"coded by the RxNorm module at {coding.tty} ({'; '.join(coding.evidence)})",
+                ),
+            )
+        )
+
+    if edits:
+        outcomes = apply_edits(
+            session,
+            Actor(name="rxnorm-module", source=EditSource.PIPELINE),
+            [edit for _r, _c, edit in edits],
+            dry_run=args.dry_run,
+        )
+        prefix = "would code" if args.dry_run else "coded"
+        for (request, coding, _edit), outcome in zip(edits, outcomes, strict=True):
+            mark = "✅" if outcome.applied else "⚠️ "
+            print(f"{mark} {prefix} #{request.id} {request.display[:34]:<34} → {coding.rxcui} ({coding.tty})")
+            for line in coding.evidence:
+                print(f"       · {line}")
+    if skipped:
+        print(f"\nleft for a human ({len(skipped)}):")
+        for line in skipped:
+            print(f"  ⚠️  {line}")
