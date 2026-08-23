@@ -12,6 +12,7 @@ code travels in the mention's properties instead.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from hdh.modules.comprehension.contracts import AttributeKind, Mention, MentionType
@@ -96,6 +97,48 @@ def _drug_names() -> dict[str, str]:
     return names
 
 
+#: Displays that assert an outcome. A note saying the exam was NORMAL must
+#: not be coded to one of these — 'Diabetic foot examination not done' and
+#: 'Sight deteriorating' are not near-misses, they are the opposite of what
+#: was written, and both scored above the review line (#72).
+_NEGATIVE_OUTCOMES = (
+    "not done",
+    "not performed",
+    "declined",
+    "refused",
+    "abnormal",
+    "deteriorat",
+    "worsening",
+)
+
+#: What a note says when an exam was unremarkable. Matched on WORD
+#: boundaries: "abnormal" contains "normal", and a substring test read an
+#: abnormal exam as a normal one — then refused the abnormal concept for
+#: contradicting a claim the note never made.
+_BOUNDARY = chr(92) + "b"  # a literal word boundary (see trap: escaping)
+_NORMAL_RE = re.compile(_BOUNDARY + r"(?:normal|unremarkable|nad|no abnormalit(?:y|ies))" + _BOUNDARY)
+
+
+def _contradicts_the_note(mention: Mention, display: str) -> bool:
+    """Does this candidate assert the opposite of what the note said?
+
+    Only ever REMOVES a candidate, and only when the note made a positive
+    statement to contradict. Silence is not an assertion: a mention with no
+    interpretation attribute constrains nothing, and this returns False.
+
+    The funnel cannot make this call — lexically 'Diabetic foot examination
+    not done' is an excellent match for "foot exam", which is exactly the
+    problem. It takes the note's own words to know the answer is wrong.
+    """
+    interpretation = _attribute(mention, AttributeKind.INTERPRETATION)
+    if not interpretation:
+        return False
+    if not _NORMAL_RE.search(interpretation.lower()):
+        return False
+    lowered = display.lower()
+    return any(phrase in lowered for phrase in _NEGATIVE_OUTCOMES)
+
+
 def _attribute(mention: Mention, kind) -> str | None:
     """One attribute's text, or None."""
     return next((a.text for a in mention.attributes if a.kind is kind), None)
@@ -160,6 +203,7 @@ class MentionNormalizer:
                     in_shared_tables=True,
                 )
                 for c in found
+                if not _contradicts_the_note(mention, c.concept.display)
             )
         if mention.mention_type is MentionType.LAB_VITAL:
             hit = self._labs.get(mention.text.strip().lower())

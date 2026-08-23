@@ -60,7 +60,12 @@ ATTRIBUTE_LEGALITY: dict[AttributeKind, frozenset[MentionType]] = {
     AttributeKind.ROUTE: frozenset({MentionType.MEDICATION}),
     AttributeKind.VALUE: frozenset({MentionType.LAB_VITAL}),
     AttributeKind.UNIT: frozenset({MentionType.LAB_VITAL}),
-    AttributeKind.INTERPRETATION: frozenset({MentionType.LAB_VITAL}),
+    # PROCEDURE too: "foot exam was normal" is the outcome of an exam, and
+    # SNOMED models those outcomes as distinct concepts — 'Diabetic foot
+    # examination normal' sits beside '... not done' and '... declined'.
+    # Without somewhere to record it, "was normal" was simply dropped and
+    # the exam could be coded to the concept asserting the opposite (#72).
+    AttributeKind.INTERPRETATION: frozenset({MentionType.LAB_VITAL, MentionType.PROCEDURE}),
     AttributeKind.LATERALITY: frozenset({MentionType.PROBLEM, MentionType.PROCEDURE}),
     AttributeKind.BODY_SITE: frozenset({MentionType.PROBLEM, MentionType.PROCEDURE}),
     AttributeKind.SEVERITY: frozenset({MentionType.PROBLEM, MentionType.ALLERGY}),
