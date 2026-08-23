@@ -55,6 +55,11 @@ _PRE_TRIGGERS: tuple[tuple[str, Assertion], ...] = (
     ("grandfather", Assertion.FAMILY_HISTORY),
     ("grandparent", Assertion.FAMILY_HISTORY),
     ("history of", Assertion.HISTORICAL),
+    # The abbreviations are how notes actually write it. Spelling it out is
+    # the exception, so without these the commonest form of "this is
+    # background, not today" reads as a present-tense complaint.
+    ("h/o", Assertion.HISTORICAL),
+    ("hx of", Assertion.HISTORICAL),
     ("possible", Assertion.UNCERTAIN),
     ("probable", Assertion.UNCERTAIN),
     ("suspected", Assertion.UNCERTAIN),

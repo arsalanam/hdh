@@ -249,3 +249,65 @@ def test_dry_run_computes_verdicts_but_writes_nothing(world, comprehended):
     session.expire_all()
     assert len(patient.visits) == before_visits  # ...and nothing persisted
     assert len(patient.allergies) == before_allergies
+
+
+# ── the chief complaint is an assertion question (#71) ───────────────────
+
+
+def _visit_from(session, patient, text, raw):
+    """Chart a note onto a brand-new visit and hand back the visit."""
+    from hdh.core.models import Visit
+
+    note = comprehend_note(session, comprehend_text(text, stub_extractor(raw)))
+    result = apply_to_chart(session, patient, note)
+    return session.get(Visit, result.visit_id)
+
+
+def test_a_denied_symptom_is_not_the_chief_complaint(world):
+    """Notes routinely open by ruling things out, so "the first problem
+    mention" is reliably the wrong answer.
+
+    Reproduced on the dev PG before this: a note opening "no hypoglycaemia,
+    no chest pain or shortness of breath" charted a visit whose chief
+    complaint was 'hypoglycaemia' — a symptom the note denies, presented to
+    every downstream reader as the reason the patient came.
+    """
+    session, patient = world
+    text = "S: No hypoglycaemia, no chest pain. Here for Chronic blorbitis review."
+    raw = {
+        "mentions": [
+            {"type": "problem", "text": "hypoglycaemia", "occurrence": 1, "attributes": []},
+            {"type": "problem", "text": "chest pain", "occurrence": 1, "attributes": []},
+            {"type": "problem", "text": "Chronic blorbitis", "occurrence": 1, "attributes": []},
+        ]
+    }
+    visit = _visit_from(session, patient, text, raw)
+    assert visit.chief_complaint == "Chronic blorbitis"
+
+
+def test_a_note_with_only_denied_problems_names_none(world):
+    """Refuse-don't-guess, applied to one column: when nothing qualifies,
+    saying the note does not name a complaint beats naming a denial."""
+    session, patient = world
+    raw = {"mentions": [{"type": "problem", "text": "chest pain", "occurrence": 1, "attributes": []}]}
+    visit = _visit_from(session, patient, "S: No chest pain today.", raw)
+    assert visit.chief_complaint == "Note-derived encounter"
+
+
+def test_history_is_background_not_the_reason_for_the_visit(world):
+    """HISTORICAL and UNCERTAIN reach the problem list but must not become
+    the chief complaint — "h/o type 2 diabetes" is what the patient arrived
+    with, not what today is about. This is why the rule here is stricter
+    than the one that decides what gets charted."""
+    session, patient = world
+    # separate sentences: the historical trigger is window-scoped and would
+    # otherwise reach the second mention too
+    text = "S: Patient with a history of Chronic blorbitis. Today presents with Acute flenum."
+    raw = {
+        "mentions": [
+            {"type": "problem", "text": "Chronic blorbitis", "occurrence": 1, "attributes": []},
+            {"type": "problem", "text": "Acute flenum", "occurrence": 1, "attributes": []},
+        ]
+    }
+    visit = _visit_from(session, patient, text, raw)
+    assert visit.chief_complaint == "Acute flenum"
