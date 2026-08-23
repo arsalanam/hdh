@@ -2,6 +2,7 @@
 100012||CUI|RO|100001||CUI|ingredient_of|||RXNORM||||N||
 100011||CUI|RO|100010||CUI|constitutes|||RXNORM||||N||
 100021||CUI|RO|100011||CUI|has_tradename|||RXNORM||||N||
+100021||CUI|RO|100020||CUI|has_tradename|||RXNORM||||N||
 100021||CUI|RO|100001||CUI|ingredient_of|||RXNORM||||N||
 100020||CUI|RO|100001||CUI|ingredient_of|||RXNORM||||N||
 100030||CUI|RO|100011||CUI|has_dose_form|||RXNORM||||N||
@@ -12,4 +13,5 @@
 300011||CUI|RO|100010||CUI|constitutes|||RXNORM||||N||
 300011||CUI|RO|200010||CUI|constitutes|||RXNORM||||N||
 300021||CUI|RO|300011||CUI|has_tradename|||RXNORM||||N||
+300021||CUI|RO|300020||CUI|has_tradename|||RXNORM||||N||
 100030||CUI|RO|300011||CUI|has_dose_form|||RXNORM||||N||

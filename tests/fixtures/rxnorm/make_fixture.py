@@ -57,6 +57,7 @@ RELATIONS = [
     ("100012", "ingredient_of", "100001"),
     ("100011", "constitutes", "100010"),
     ("100021", "has_tradename", "100011"),
+    ("100021", "has_tradename", "100020"),  # BN is more general than the SBD
     ("100021", "ingredient_of", "100001"),
     ("100020", "ingredient_of", "100001"),
     ("100030", "has_dose_form", "100011"),
@@ -68,6 +69,7 @@ RELATIONS = [
     ("300011", "constitutes", "100010"),
     ("300011", "constitutes", "200010"),
     ("300021", "has_tradename", "300011"),
+    ("300021", "has_tradename", "300020"),
     ("100030", "has_dose_form", "300011"),
 ]
 

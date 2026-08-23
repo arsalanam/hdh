@@ -179,6 +179,11 @@ class RxSpec:
     duration_days: int | None  # None = chronic / ongoing
     refills: int = 0
     kind: RxKind = RxKind.DRUG
+    #: The drug this entry IS, when a licensed RxNorm release was available
+    #: to check it against. Optional on purpose: the catalog must stay
+    #: authorable without one, and an unverified guess would be worse than
+    #: the free text it replaces (design rxnorm §6, §11 Q4).
+    rxcui: str | None = None
 
 
 @dataclass(frozen=True)

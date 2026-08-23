@@ -274,3 +274,33 @@ def test_0008_adds_the_interchange_review_queue(alembic_cfg):
     command.downgrade(cfg, "0007")
     assert not inspect(engine).has_table("rejected_results")
     engine.dispose()
+
+
+def test_0009_adds_code_columns_to_the_medication_rows(alembic_cfg):
+    """A code annotates what was written, so these are additive columns
+    beside the free text — and `create_all` never ALTERs an existing
+    table, which is the half a migration exists for."""
+    from sqlalchemy import text
+
+    from hdh.core.schema_registry import bootstrap_schema
+
+    cfg, _tmp_path, _versions = alembic_cfg
+    bootstrap_schema()
+    from hdh.core.models import Base
+
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:  # roll back to the pre-0009 shape
+        for table in ("prescriptions", "medication_statements"):
+            for column in ("code_system", "code"):
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+    command.stamp(cfg, "0008")
+
+    command.upgrade(cfg, "head")
+
+    inspector = inspect(engine)
+    for table in ("prescriptions", "medication_statements"):
+        columns = {c["name"] for c in inspector.get_columns(table)}
+        assert {"code_system", "code"} <= columns, table
+    command.upgrade(cfg, "head")  # idempotent
+    engine.dispose()

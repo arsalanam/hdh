@@ -402,6 +402,12 @@ class Prescription(Base):
     duration_days: Mapped[int | None] = mapped_column(Integer)
     refills: Mapped[int | None] = mapped_column(Integer, default=0)
     is_new: Mapped[bool | None] = mapped_column(Boolean, default=True)  # False = continuation
+    # A code ANNOTATES what was written; it never replaces it. The free-text
+    # fields record what the clinician actually put on the chart, and an
+    # RXCUI is a later reading of it — added by the RxNorm module, at the
+    # deepest level the evidence supports (design rxnorm §6, §11 Q3).
+    code_system: Mapped[str | None] = mapped_column(String(20))  # "rxnorm"
+    code: Mapped[str | None] = mapped_column(String(40))
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     visit: Mapped["Visit"] = relationship(back_populates="prescriptions")
@@ -540,6 +546,10 @@ class MedicationStatement(Base):
     start_date: Mapped[date | None] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)
     indication_id: Mapped[int | None] = mapped_column(ForeignKey("conditions.id"))
+    # The cross-visit list is what a reconciliation actually reads, so it
+    # carries the code too (design rxnorm §6).
+    code_system: Mapped[str | None] = mapped_column(String(20))
+    code: Mapped[str | None] = mapped_column(String(40))
 
     patient: Mapped["Patient"] = relationship(back_populates="medications")
     indication: Mapped["Condition | None"] = relationship()

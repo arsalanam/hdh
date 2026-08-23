@@ -45,7 +45,7 @@ def test_a_release_loads_concepts_terms_and_both_kinds_of_edge(tmp_path):
     session = get_session(get_engine(str(tmp_path / "rx.db")))
     report = run_load(session, FIXTURE)
     assert report.concepts == 15
-    assert report.ladder_edges == 11  # the specificity rungs
+    assert report.ladder_edges == 13  # the specificity rungs, brands included
     assert report.attribute_edges == 4  # dose form, precise ingredient
     session.close()
 
@@ -157,3 +157,98 @@ def test_this_module_contains_no_funnel_of_its_own():
     source = (Path(__file__).parent.parent / "src/hdh/modules/rxnorm/ontology.py").read_text(encoding="utf-8")
     for smell in ("ts_rank", "plainto_tsquery", "similarity(", "PARTIAL_COVERAGE", "difflib"):
         assert smell not in source, f"{smell} belongs in hdh.core.termsearch, not here"
+
+
+# ── compositional coding (M4): §5's walk, and where it refuses ───────────
+
+
+def _code(service, name, **kw):
+    from hdh.modules.rxnorm.coding import resolve
+
+    return resolve(service, name, **kw)
+
+
+def test_a_name_and_a_strength_reach_the_clinical_drug(service):
+    """§5's walk: lexical search finds the ingredient, the graph does the
+    rest. The note never says "Oral Tablet" and does not have to."""
+    coding = _code(service, "Blorbizide", strength="10 MG", route="PO", raw="Blorbizide 10mg PO daily")
+    assert (coding.rxcui, coding.tty) == (fx.BLORBIZIDE_10_TAB, "SCD")
+
+
+def test_extended_release_is_a_different_drug(service):
+    """§10 Scenario A: "Metformin ER" is not "Metformin". Drop the ER and
+    the code is a different product taken differently."""
+    plain = _code(service, "Blorbizide", strength="10 MG", route="PO", raw="Blorbizide 10mg PO")
+    extended = _code(service, "Blorbizide", strength="10 MG", route="PO", raw="Blorbizide ER 10mg PO")
+
+    assert plain.rxcui == fx.BLORBIZIDE_10_TAB
+    assert extended.rxcui == fx.BLORBIZIDE_10_ER
+    assert plain.rxcui != extended.rxcui
+
+
+def test_quantity_times_strength_is_not_the_strength(service):
+    """§10 Scenario A: "2 x 500mg" means 500 MG of product taken twice.
+    The note's arithmetic is not the label's, and coding the 1000 would
+    look for a product that may not exist."""
+    from hdh.modules.rxnorm.coding import parse_strength
+
+    assert parse_strength("2 x 500mg") == "500 MG"
+    assert parse_strength("10mg") == "10 MG"
+
+    coding = _code(service, "Blorbizide", raw="Blorbizide ER 2 x 10mg with evening meal")
+    assert coding.rxcui == fx.BLORBIZIDE_10_ER
+
+
+def test_a_bare_drug_name_stops_at_the_ingredient(service):
+    """The difference between "the deepest level the evidence supports"
+    and "the deepest level reachable" is a chart full of doses nobody
+    prescribed. A note naming only a drug supports only the ingredient."""
+    coding = _code(service, "Blorbizide", raw="Blorbizide")
+    assert (coding.rxcui, coding.tty) == (fx.BLORBIZIDE_IN, "IN")
+    assert any("as deep as the evidence goes" in line for line in coding.evidence)
+
+
+def test_a_strength_that_does_not_exist_refuses_rather_than_substitutes(service):
+    """The worst thing this code could do is chart a dose the clinician
+    never wrote. Falling through to another strength is exactly that."""
+    coding = _code(service, "Blorbizide", strength="99 MG", route="PO", raw="Blorbizide 99mg PO")
+    assert coding.rxcui == fx.BLORBIZIDE_IN  # stopped, did not substitute
+    assert any("no product at 99 MG" in line for line in coding.evidence)
+
+
+def test_a_brand_carries_the_branded_code(service):
+    """§11 Q5: what was prescribed is what the chart should say, with the
+    ingredient one graph hop away for any analysis that wants it."""
+    coding = _code(service, "Zorbex", strength="10 MG", route="PO", raw="Zorbex 10 mg OD")
+    assert (coding.rxcui, coding.tty) == (fx.ZORBEX_10_TAB, "SBD")
+    assert fx.BLORBIZIDE_IN in {c.code for c in service.ingredients_of(coding.rxcui)}
+
+
+def test_a_brand_without_a_strength_stops_at_the_brand(service):
+    """Symmetric with the clinical walk: brands carry several strengths,
+    so descending to one of them would invent the dose."""
+    coding = _code(service, "Zorbex", raw="Zorbex")
+    assert (coding.rxcui, coding.tty) == (fx.ZORBEX_BN, "BN")
+
+
+def test_one_named_drug_does_not_code_to_a_combination(service):
+    """Scenario C from the other direction. The combination really does
+    contain 10 mg of blorbizide in an oral tablet, so strength and form
+    alone cannot separate them — and coding a patient to a combination
+    they were not prescribed adds a drug to their chart."""
+    coding = _code(service, "Blorbizide", strength="10 MG", route="PO", raw="Blorbizide 10mg PO")
+    assert coding.rxcui != fx.COMBO_SCD
+    assert len(service.ingredients_of(coding.rxcui)) == 1
+
+
+def test_an_unknown_drug_is_left_uncoded(service):
+    """An uncoded order is legitimate state (§2); a wrong RxCUI is not."""
+    assert _code(service, "whole-body vibe tincture", raw="whole-body vibe tincture") is None
+
+
+def test_every_coding_records_why_it_stopped_where_it_did(service):
+    """A code a reader cannot account for is a code they cannot trust."""
+    coding = _code(service, "Blorbizide", strength="10 MG", route="PO", raw="Blorbizide 10mg PO")
+    assert coding.evidence
+    assert any("strength: 10 MG" in line for line in coding.evidence)
+    assert any("name:" in line for line in coding.evidence)

@@ -981,6 +981,9 @@ def _generate_one(
                     "duration_days": rx_spec.duration_days,
                     "refills": rx_spec.refills,
                     "is_new": cname not in final_chronic or random.random() > 0.5,
+                    # a formulary entry that knows its drug passes the code on
+                    "code_system": "rxnorm" if rx_spec.rxcui else None,
+                    "code": rx_spec.rxcui,
                 }
                 rx_rows.append(rx)
                 visit_rx.append(rx)
