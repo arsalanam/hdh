@@ -284,19 +284,24 @@
        second, tighter layout. Every dimension in this stylesheet is in rem,
        so one root font-size maps the whole 78rem composition onto the 273mm
        content width and every proportion survives intact.
-       10.7pt is that ratio, not a taste: screen content is 1160px wide
-       (78rem sheet less its padding) and the landscape sheet gives 1032px,
-       so 16px x (1032/1160) = 14.2px = 10.7pt.
+       10.1pt is that ratio, not a taste: screen content is 1160px wide
+       (78rem sheet less its padding); the landscape sheet gives 1032px and
+       the inset below spends 62px of it, so 16px x (970/1160) = 13.4px.
        Overriding individual sizes here is what made the PDF look cramped
        while the page itself looked right. */
     html {
-      font-size: 10.7pt;
+      font-size: 10.1pt;
       background: var(--ground);
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
     body { font-size: 1rem; background: var(--ground); }
-    .sheet { max-width: none; padding: 0; }
+    /* Text needs an inset of its own. With padding:0 the page margin was
+       the only one, so every line sat hard against the trim — and against
+       the banner's edge, which reads as a mistake rather than a full-bleed.
+       The banner still spans the sheet by stepping back out of it. */
+    .sheet { max-width: none; padding: 0 2.2rem; }
+    .hero-figure { margin-left: -2.2rem; margin-right: -2.2rem; }
 
     /* Only atomic pieces must stay whole. NOT .band: one taller than the
        sheet gets pushed to a fresh page and overflows it anyway, so every
