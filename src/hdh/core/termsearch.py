@@ -46,6 +46,20 @@ PARTIAL_COVERAGE_CEILING = 0.55
 #: bottoms out at 0.00–0.55 ("lung" against 'Smoker'), so the gap is wide.
 FUZZY_WORD_MATCH = 0.7
 
+#: How hard to penalise words the TERM adds that the mention never asked for.
+#: Coverage (above) is the mirror of this and only half the question: it asks
+#: what the term FAILED to explain. Nothing asked what the term INVENTED, so
+#: every elaboration of a concept scored identically to the concept itself —
+#: "type 2 diabetes" tied `Type 2 diabetes mellitus` with `Cataract due to
+#: diabetes mellitus type 2`, five ways at 1.000, and the tie fell to whatever
+#: the raw score happened to be. A note that says "type 2 diabetes" is not
+#: saying "cataract".
+#:
+#: 0.5 is set so that one extra word out of four (mellitus) costs less than a
+#: single word of missing coverage, while four out of seven costs more — the
+#: elaboration has to be substantial before it outranks a longer exact match.
+ELABORATION_PENALTY = 0.5
+
 #: An abbreviation short enough to be one. Restricting to alphanumerics
 #: also keeps the LIKE pattern literal — no escaping of % or _.
 ABBREVIATION_LENGTH = range(2, 11)
@@ -75,6 +89,47 @@ class SearchProfile:
 def _words(text: str) -> list[str]:
     """Words worth matching on — two-character fragments carry no signal."""
     return [w for w in re.split(r"[^a-z0-9]+", text.lower()) if len(w) > 2]
+
+
+def elaboration(mention: str, term: str) -> float:
+    """The fraction of the TERM's words the mention never supplied.
+
+    0.0 when the term says exactly what was asked, approaching 1.0 for a
+    concept that merely contains the mention inside a longer clinical
+    statement. Symmetric with :func:`covers_every_word`, and deliberately
+    computed on the same fuzzy word match so a typo is not counted as an
+    addition.
+    """
+    term_words = _words(term)
+    if not term_words:
+        return 0.0
+    mention_words = _words(mention)
+    if not mention_words:
+        return 0.0
+    unmatched = sum(
+        1
+        for tw in term_words
+        if max((difflib.SequenceMatcher(None, word, tw).ratio() for word in mention_words), default=0.0)
+        < FUZZY_WORD_MATCH
+    )
+    return unmatched / len(term_words)
+
+
+def _is_abbreviation_alias(profile: SearchProfile, needle: str, term: str) -> bool:
+    """Is ``term`` the ``ABBR - Expansion`` spelling-out of ``needle``?
+
+    Such a term is exempt from the elaboration penalty. The expansion is the
+    abbreviation's DEFINITION, not a claim the note failed to make: "SOB -
+    Shortness of breath" says exactly what "SOB" says. Charging it four
+    unasked-for words out of five drops it below 'Sobbing respiration', which
+    is how the funnel came to answer a question about breathlessness with a
+    question about crying.
+    """
+    separator = profile.abbreviation_separator
+    if not separator:
+        return False
+    head, found, _expansion = term.partition(separator)
+    return bool(found) and head.strip().lower() == needle.strip().lower()
 
 
 def covers_every_word(mention: str, term: str) -> bool:
@@ -278,19 +333,33 @@ def search(
     )
 
     best: dict[str, tuple[float, str, bool]] = {}
+    #: A concept is as lexically strong as its BEST matching term and as
+    #: elaborate as its most CONCISE one — two different argmaxes over the
+    #: same rows, so they are tracked apart. Folding them into one selection
+    #: makes a concept's strongest term also decide its penalty, which flips
+    #: "Blorbium [Moles/volume] in Urine" (preferred) to "Blorbium (U)"
+    #: (synonym) and silently forfeits the 0.01 term-type tiebreak.
+    least_extra: dict[str, float] = {}
     for concept_id, term, term_type, base, covered in rows:
         score = base - 0.01 * profile.term_type_rank.get(term_type, 2)  # type is a tiebreaker
         if score > best.get(concept_id, (-1.0, "", True))[0]:
             best[concept_id] = (score, term, covered)
+        extra = 0.0 if _is_abbreviation_alias(profile, needle, term) else elaboration(needle, term)
+        if extra < least_extra.get(concept_id, 1.0):
+            least_extra[concept_id] = extra
 
     concepts_t, _terms = _tables()
     ranked: list[tuple[float, Candidate]] = []
     for concept_id, (score, term, covered) in best.items():
+        extra = least_extra.get(concept_id, 0.0)
         row = session.execute(select(concepts_t).where(concepts_t.c.id == concept_id)).first()
         if row is None:
             continue
         concept = _concept(row)
         reasons = [f"term: {term}"]
+        if extra:
+            score -= ELABORATION_PENALTY * extra
+            reasons.append(f"elaboration: {extra:.2f} of the term is unasked-for")
         if profile.adjust is not None:
             for delta, reason in profile.adjust(concept, ctx):
                 score += delta

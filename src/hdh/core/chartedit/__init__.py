@@ -17,7 +17,13 @@ The rules that make an agent-maintained chart credible:
   report the same words.
 """
 
-from hdh.core.chartedit.api import apply_edits, history, purge_visit, record_creation
+from hdh.core.chartedit.api import (
+    apply_edits,
+    history,
+    purge_visit,
+    record_creation,
+    record_update,
+)
 from hdh.core.chartedit.contracts import Actor, ChartEdit, EditAction, EditOutcome
 from hdh.core.chartedit.entities import REGISTRY, spec_for
 
@@ -31,5 +37,6 @@ __all__ = [
     "history",
     "purge_visit",
     "record_creation",
+    "record_update",
     "spec_for",
 ]

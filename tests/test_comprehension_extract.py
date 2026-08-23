@@ -311,3 +311,61 @@ def test_control_attribute_legal_on_problems_only():
         ]
     }
     assert any("illegal on a medication mention" in reason for reason in _reject(bad))
+
+
+# ── counting the entity vs counting the string ───────────────────────────────
+
+# The free-form note that exposed this: "Hba1c" for the value the patient
+# arrived with, "HbA1c" for the test being ordered. Two mentions to a reader;
+# one of each spelling to `str.find`.
+CASE_NOTE = (
+    "Patient with h/o type 2 diabetes came with higher than 7 Hba1c. I asked for repeat HbA1c after 90 days."
+)
+
+
+def test_occurrence_two_resolves_when_the_note_changes_case_midway():
+    """The model asked for occurrence 2 of "HbA1c" and it was right about
+    WHICH mention — the order, not the value. Counting case-sensitively there
+    is no second one, and the whole note used to die for it (three retries,
+    same failure, every entity lost)."""
+    raw = {"mentions": [{"type": "lab_vital", "text": "HbA1c", "occurrence": 2, "attributes": []}]}
+    extraction = build_extraction(CASE_NOTE, raw, segment(CASE_NOTE))
+    mention = extraction.mentions[0]
+    assert mention.span.start == CASE_NOTE.index("repeat HbA1c") + len("repeat ")
+    assert mention.text == "HbA1c"
+
+
+def test_the_note_spelling_wins_so_the_span_stays_verbatim():
+    """Folding case decides WHICH occurrence, never what is stored. Asking for
+    "HBA1C" lands on the note's own bytes, because a span that disagreed with
+    the note would break every consumer that slices by offset."""
+    raw = {"mentions": [{"type": "lab_vital", "text": "HBA1C", "occurrence": 1, "attributes": []}]}
+    extraction = build_extraction(CASE_NOTE, raw, segment(CASE_NOTE))
+    mention = extraction.mentions[0]
+    assert mention.text == "Hba1c", "the model's casing was stored instead of the note's"
+    assert CASE_NOTE[mention.span.start : mention.span.end] == mention.text
+
+
+def test_exact_case_still_wins_when_both_spellings_exist():
+    """The fold is a SECOND attempt, so a note that spells it exactly once the
+    model's way is unaffected — occurrence 1 of "HbA1c" is the order, not the
+    earlier "Hba1c" that a case-insensitive first pass would have grabbed."""
+    raw = {"mentions": [{"type": "lab_vital", "text": "HbA1c", "occurrence": 1, "attributes": []}]}
+    extraction = build_extraction(CASE_NOTE, raw, segment(CASE_NOTE))
+    assert extraction.mentions[0].span.start == CASE_NOTE.index("repeat HbA1c") + len("repeat ")
+
+
+def test_a_word_that_is_absent_in_any_casing_is_still_rejected():
+    """The fold must not become a way to smuggle in text the note never had —
+    that is the hallucination the verbatim invariant exists to catch."""
+    reasons = _reject({"mentions": [_mention("problem", "Sarcoidosis", 1)]})
+    assert any("not found" in reason for reason in reasons)
+
+
+def test_an_occurrence_past_the_end_is_still_rejected():
+    """Asking for the third HbA1c when the note has two, in any casing, is a
+    real miscount and stays a failure."""
+    raw = {"mentions": [{"type": "lab_vital", "text": "HbA1c", "occurrence": 3, "attributes": []}]}
+    with pytest.raises(ExtractionError) as err:
+        build_extraction(CASE_NOTE, raw, segment(CASE_NOTE))
+    assert any("occurrence 3" in reason for reason in err.value.reasons)

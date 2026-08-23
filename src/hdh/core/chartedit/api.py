@@ -8,7 +8,7 @@ without writing its event in the same transaction.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -180,6 +180,44 @@ def record_creation(session, actor: Actor, entity: str, row, reason: str = "") -
     if spec.patient_id(row) is None:
         return None
     event = _audit(session, actor, spec, row, _Change("create", reason, {}, {"created": spec.describe(row)}))
+    return event.id
+
+
+def record_update(
+    session,
+    actor: Actor,
+    entity: str,
+    row,
+    changes: Mapping[str, tuple[Any, Any]],
+    reason: str = "",
+) -> int | None:
+    """Audit fields another writer just changed on an existing row.
+
+    The sibling of :func:`record_creation`, and needed for the same reason.
+    ``apply_edits`` is the route for a REQUESTED edit and commits as part of
+    its contract; a writer that owns its own transaction — the comprehension
+    applier, which must be able to roll a whole note back for ``--dry-run``
+    — cannot use it, and without this would mutate a chart leaving no trace
+    of who changed what.
+
+    ``changes`` maps field name to ``(before, after)``, so one note that
+    revises several fields of a row is one event rather than several.
+    """
+    spec = spec_for(entity)
+    if spec.patient_id(row) is None or not changes:
+        return None
+    event = _audit(
+        session,
+        actor,
+        spec,
+        row,
+        _Change(
+            "amend",
+            reason,
+            {field: _jsonable(before) for field, (before, _after) in changes.items()},
+            {field: _jsonable(after) for field, (_before, after) in changes.items()},
+        ),
+    )
     return event.id
 
 

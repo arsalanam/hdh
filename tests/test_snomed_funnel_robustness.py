@@ -126,9 +126,20 @@ FRONTIER: tuple[tuple[str, str, str], ...] = (
 #:
 #: 6 -> 3 when the ABBR-alias rung and the per-word coverage rule landed:
 #: "SOB" resolves outright, and "sugar diabetes" / "smoker's lung" dropped
-#: below the review line. The three that remain need vocabulary or
-#: semantics, not ranking.
-MAX_CONFIDENT_WRONG = 3
+#: below the review line.
+#:
+#: 3 -> 1 with the elaboration penalty (termsearch.ELABORATION_PENALTY).
+#: Coverage had asked only what a term failed to explain; nothing asked what
+#: it invented, so every elaboration of a concept tied the concept itself and
+#: the winner fell out of raw-score noise. Penalising unasked-for words fixed
+#: the whole class at once — and, unprompted, dropped "foot exam" ->
+#: 'Diabetic foot examination not done' below the review line, which had been
+#: charting the OPPOSITE of what the note said.
+#:
+#: The one that remains is not a ranking bug: "can't catch my breath" really
+#: does contain the words of 'Catching breath', and no lexical rule
+#: distinguishes them. That one needs semantics.
+MAX_CONFIDENT_WRONG = 1
 
 #: Below this, the pipeline routes a mention to human review rather than
 #: charting it (pipeline.REVIEW_THRESHOLD).
@@ -237,3 +248,57 @@ def test_frontier_surfaces(service, surface, expected, why):
     enrichment or dense retrieval lands, these pass and announce it."""
     top = _top(service, surface)
     assert top is not None and top.concept.code == expected, f"{surface!r}: {why}"
+
+
+# ── control refinement (§10.0): where the vocabulary supports it ─────────
+
+
+def test_control_refinement_works_for_diabetes_and_refuses_for_hypertension(service):
+    """The asymmetry that decides the mechanism.
+
+    SNOMED expresses disease control three different ways: diabetes and
+    asthma get control-qualified DISORDERS, hypertension gets separate
+    FINDINGS that are not subtypes at all, and most conditions get
+    nothing — 22 such concepts exist in the whole edition, several of them
+    `Uncontrolled fire in forest`.
+
+    So `Condition.controlled` has to be primary and the code refinement an
+    enrichment. This measures both halves against the real edition.
+    """
+    from hdh.modules.comprehension.applier import _control_refinement
+
+    diabetes = _control_refinement(service.session, "44054006", "Type 2 diabetes mellitus", False)
+    assert diabetes is not None and diabetes.code == "443694000"
+    assert "uncontrolled" in diabetes.display.lower()
+
+    well = _control_refinement(service.session, "44054006", "Type 2 diabetes mellitus", True)
+    assert well is not None and well.code == "444110003"
+
+    # hypertension has no control-qualified subtype: the honest answer is
+    # None, and the flag alone carries the meaning
+    assert _control_refinement(service.session, "59621000", "Essential hypertension", False) is None
+
+
+def test_the_refinement_guards_reject_a_plausible_wrong_answer(service):
+    """Subsumption alone is not enough to accept a refinement.
+
+    Building the phrase and searching for it puts four real subtypes of
+    essential hypertension in the results — *Benign*, *Labile*, *Systolic*,
+    *Malignant*. Every one is genuinely subsumed by the concept being
+    refined and every one is a different disease from "uncontrolled". Only
+    the control-word guard separates them from a true refinement, and only
+    the confidence guard keeps the whole search from mattering.
+    """
+    from hdh.modules.comprehension.applier import _CONTROL_WORDS
+
+    hits = service.normalize(
+        "Uncontrolled Essential hypertension", {"semantic_tags": ["disorder", "finding"], "limit": 8}
+    )
+    subsumed = [h for h in hits if service.subsumes("59621000", h.concept.code)]
+    assert subsumed, "no subsumed candidate to guard against"
+    for hit in subsumed:
+        display = (hit.concept.display or "").lower()
+        assert not any(word in display for word in _CONTROL_WORDS), (
+            f"{hit.concept.display!r} passes BOTH the subsumption and control-word guards — "
+            "if this is genuinely a control qualifier the refinement should accept it"
+        )

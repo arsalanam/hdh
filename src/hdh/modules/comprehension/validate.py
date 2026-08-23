@@ -58,24 +58,39 @@ def _locate(note: str, item: dict, label: str, reasons: list[str]) -> Span | Non
     occurrence = int(item.get("occurrence", 1))
     start = _nth_occurrence(note, text, occurrence)
     if start == -1:
-        reasons.append(f"{label}: occurrence {occurrence} of {text!r} not found in the note")
-        return None
+        # The model counts the ENTITY; the locator counts the exact string.
+        # A note that writes "Hba1c" for the value and "HbA1c" for the order
+        # has two mentions to a reader and one of each spelling to `find`, so
+        # "occurrence 2" is right about which mention and wrong about the
+        # bytes. Recount case-insensitively and take the note's spelling: the
+        # model says WHICH, the note says WHAT, and the span stays verbatim.
+        start = _nth_occurrence(note, text, occurrence, fold_case=True)
+        if start == -1:
+            reasons.append(f"{label}: occurrence {occurrence} of {text!r} not found in the note")
+            return None
+        text = item["text"] = note[start : start + len(text)]
     return Span(start, start + len(text))
 
 
-def _nth_occurrence(note: str, text: str, occurrence: int) -> int:
+def _nth_occurrence(note: str, text: str, occurrence: int, fold_case: bool = False) -> int:
     """The nth STANDALONE occurrence of text (not embedded mid-word — the
     extractor counts tokens, so "T" must never match the T in "NOTE");
-    plain substring search is the fallback when no standalone match exists."""
+    plain substring search is the fallback when no standalone match exists.
+
+    ``fold_case`` is the second attempt only (see :func:`_locate`): it changes
+    which occurrence is COUNTED, never what is stored, so a caller that folds
+    must re-read the note at the returned offset."""
     import re
 
-    pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(text)}(?![A-Za-z0-9])")
+    flags = re.IGNORECASE if fold_case else 0
+    pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(text)}(?![A-Za-z0-9])", flags)
     matches = [m.start() for m in pattern.finditer(note)]
     if not matches:
+        haystack, needle = (note.lower(), text.lower()) if fold_case else (note, text)
         matches = []
         start = -1
         while True:
-            start = note.find(text, start + 1)
+            start = haystack.find(needle, start + 1)
             if start == -1:
                 break
             matches.append(start)

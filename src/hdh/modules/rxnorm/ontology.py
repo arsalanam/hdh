@@ -46,7 +46,15 @@ _TERM_TYPE_RANK = {"preferred": 0, "synonym": 1}
 LADDER = ("IN", "PIN", "MIN", "BN", "SCDC", "SCD", "SBD")
 
 #: Boost applied to a candidate whose term type the caller asked for.
-_LEVEL_BOOST = 0.2
+#:
+#: Larger than half ``termsearch.ELABORATION_PENALTY``, and deliberately: a
+#: deeper level is ALWAYS a longer name ("Blorbizide" -> "Blorbizide 10 MG
+#: Oral Tablet"), so the elaboration penalty is guaranteed to push against
+#: exactly the candidate an explicit level hint asks for. The hint is
+#: information the caller has and the funnel does not; the penalty is a prior
+#: for when nobody said. Information outranks a prior, so the swing this
+#: applies (2x) has to clear the penalty's maximum.
+_LEVEL_BOOST = 0.35
 
 
 def build_service(session: Any) -> RxNormOntologyService:

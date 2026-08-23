@@ -22,6 +22,11 @@ You are a topic gatekeeper for a clinical-data assistant over a SYNTHETIC
 family-medicine dataset. Allowed topics:
 {topics}
 
+You judge the SUBJECT ONLY. A request to record, chart, amend or void
+something is on topic whenever its subject is — deciding whether an action
+should run is the agent's job and the tools' own guards, never yours. "Not
+my role to perform actions" is not a reason to reject.
+
 Reply with exactly one line:
 ALLOWED: <three-word topic label>     — if the question fits the topics
 OFF_TOPIC: <three-word reason>        — otherwise\
@@ -30,7 +35,12 @@ OFF_TOPIC: <three-word reason>        — otherwise\
 INTENT_PROMPT = """\
 Classify a question for a clinical-data agent: the intent category, the
 clinical entities mentioned (MRNs, conditions, age groups, ...), and a
-one-sentence plan for which tools to use.\
+one-sentence plan for which tools to use.
+
+Choose 'charting' whenever the request is to WRITE to a chart — record or
+chart a note, document an encounter, amend or void an entry. Such a request
+almost always names a patient, so an MRN alone never makes it a lookup: ask
+what the sentence is asking you to DO.\
 """
 
 VALIDATOR_PROMPT = """\
@@ -65,6 +75,7 @@ INTENT_SCHEMA = {
                 "stats",
                 "sql",
                 "coding",
+                "charting",
                 "other",
             ],
         },
@@ -85,15 +96,50 @@ INTENT_TOOLS: dict[str, set[str]] = {
     "care_gaps": {"get_care_gaps", "query_database", "get_patient_chart"},
     "stats": {"dataset_stats", "query_database"},
     "sql": {"query_database", "dataset_stats"},
-    "coding": {"icd_codify", "icd_search", "icd_lookup", "icd_pattern", "query_database"},
+    "coding": {
+        "icd_codify",
+        "icd_search",
+        "icd_lookup",
+        "icd_pattern",
+        "snomed_normalize",
+        "snomed_lookup",
+        "snomed_subsumes",
+        "rxnorm_search",
+        "rxnorm_code_drug",
+        "query_database",
+    },
+    # Writing is its own intent. Without it a dictated note classifies as
+    # patient_lookup — an MRN is the most salient thing in the sentence — and
+    # the executor is handed three read-only tools, so the agent dutifully
+    # looks the patient up and reports that the visit does not exist.
+    "charting": {
+        "apply_note",
+        "comprehend_note",
+        "get_note_record",
+        "get_patient_chart",
+        "amend_chart_entry",
+        "void_chart_entry",
+        "chart_history",
+        "snomed_normalize",
+        "query_database",
+    },
 }
 
 INTENT_TABLES: dict[str, tuple[str, ...]] = {
-    "patient_lookup": ("patients", "chronic_conditions", "visits", "prescriptions"),
-    "cohort_search": ("patients", "chronic_conditions", "visits", "prescriptions"),
-    "risk": ("patients", "chronic_conditions", "visits", "vitals", "lab_results"),
-    "care_gaps": ("patients", "chronic_conditions", "visits", "prescriptions"),
-    "coding": ("diagnoses", "visits", "patients", "ontology_concepts", "ontology_edges"),
+    "patient_lookup": ("patients", "conditions", "visits", "prescriptions"),
+    "cohort_search": ("patients", "conditions", "visits", "prescriptions"),
+    "risk": ("patients", "conditions", "visits", "vitals", "lab_results"),
+    "care_gaps": ("patients", "conditions", "visits", "prescriptions"),
+    "coding": ("conditions", "visits", "patients", "ontology_concepts", "ontology_edges"),
+    "charting": (
+        "patients",
+        "visits",
+        "visit_notes",
+        "conditions",
+        "prescriptions",
+        "service_requests",
+        "note_records",
+    ),
 }
 
 ECONOMY_PROMPT = (

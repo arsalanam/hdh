@@ -62,8 +62,14 @@ def test_icd_tools_register_and_filter(coding_session):
     names = {t.name for t in tools}
     assert {"icd_codify", "icd_lookup", "icd_search", "icd_pattern"} <= names
 
-    coding_tools = build_tools(coding_session, include=INTENT_TOOLS["coding"])
-    assert {t.name for t in coding_tools} == INTENT_TOOLS["coding"]
+    # `include` narrows to the intent and never beyond it. Equality would be
+    # wrong: the coding intent spans SNOMED and RxNorm too, and those tools
+    # are absent without their catalogs — which is the whole point of a
+    # builder that returns [] rather than tools that can only fail.
+    coding_names = {t.name for t in build_tools(coding_session, include=INTENT_TOOLS["coding"])}
+    assert coding_names <= INTENT_TOOLS["coding"], "the filter let through a tool the intent never asked for"
+    assert {"icd_codify", "icd_lookup", "icd_search", "icd_pattern"} <= coding_names
+    assert "query_database" in coding_names
     assert "coding" in INTENT_SCHEMA["properties"]["intent"]["enum"]
 
 

@@ -252,3 +252,51 @@ def test_every_coding_records_why_it_stopped_where_it_did(service):
     assert coding.evidence
     assert any("strength: 10 MG" in line for line in coding.evidence)
     assert any("name:" in line for line in coding.evidence)
+
+
+# ── the agent surface (M5) ───────────────────────────────────────────────
+
+
+def test_the_agent_tools_appear_only_when_a_catalog_is_loaded(tmp_path):
+    """A tool that can only fail is worse than a missing one: the model
+    will call it, read an error, and try to work around it."""
+    pytest.importorskip("anthropic")
+    from hdh.modules.rxnorm.agent_tools import build_rxnorm_tools
+
+    bootstrap_schema()
+    empty = get_session(get_engine(str(tmp_path / "empty.db")))
+    assert build_rxnorm_tools(empty) == []
+    empty.close()
+
+
+def test_the_agent_tools_hold_no_decision_of_their_own(service):
+    """Design §7: an agent tool may not contain a decision a non-agent
+    caller would also need. `rxnorm_code_drug` must agree with
+    `coding.resolve` exactly, because `hdh rxnorm code` uses the latter —
+    a tool with its own copy makes the agent and the CLI diverge, and only
+    one of them is tested.
+    """
+    pytest.importorskip("anthropic")
+    import json
+
+    from hdh.modules.rxnorm.agent_tools import build_rxnorm_tools
+    from hdh.modules.rxnorm.coding import resolve
+
+    tools = {tool.name: tool for tool in build_rxnorm_tools(service.session)}
+    assert set(tools) == {"rxnorm_search", "rxnorm_code_drug", "rxnorm_ingredients", "rxnorm_brands"}
+
+    answer = json.loads(tools["rxnorm_code_drug"].call({"mention": "Blorbizide ER 10mg", "route": "PO"}))
+    direct = resolve(service, "Blorbizide", route="PO", raw="Blorbizide ER 10mg")
+    assert answer["rxcui"] == direct.rxcui == fx.BLORBIZIDE_10_ER
+    assert answer["evidence"] == list(direct.evidence)
+
+
+def test_the_coding_tool_reports_a_refusal_rather_than_a_guess(service):
+    """The refusal has to survive the wire, or the agent will read silence
+    as "no answer" and invent one."""
+    pytest.importorskip("anthropic")
+    from hdh.modules.rxnorm.agent_tools import build_rxnorm_tools
+
+    tools = {tool.name: tool for tool in build_rxnorm_tools(service.session)}
+    answer = tools["rxnorm_code_drug"].call({"mention": "whole-body vibe tincture"})
+    assert "uncoded" in answer.lower()
