@@ -106,6 +106,9 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "snomed_subsumes",
         "rxnorm_search",
         "rxnorm_code_drug",
+        "loinc_search",
+        "loinc_lookup",
+        "loinc_specimen_variants",
         "query_database",
     },
     # Writing is its own intent. Without it a dictated note classifies as
@@ -121,6 +124,7 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "void_chart_entry",
         "chart_history",
         "snomed_normalize",
+        "loinc_search",
         "query_database",
     },
 }

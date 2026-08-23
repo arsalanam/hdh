@@ -311,3 +311,77 @@ def test_history_is_background_not_the_reason_for_the_visit(world):
     }
     visit = _visit_from(session, patient, text, raw)
     assert visit.chief_complaint == "Acute flenum"
+
+
+# ── chronicity and onset are two questions (#76) ─────────────────────────
+
+
+def _fresh_patient(session, mrn: str):
+    """A patient nobody else's test has written to."""
+    from hdh.core.models import Patient, Sex
+
+    patient = Patient(
+        mrn=mrn, first_name="Fresh", last_name="Chart", date_of_birth=date(1958, 6, 1), sex=Sex.MALE
+    )
+    session.add(patient)
+    session.flush()
+    return patient
+
+
+def test_a_known_chronic_condition_reaches_the_chronic_problem_list(world):
+    """`chronic=False` was hardcoded, so a note could never put anything on
+    the chronic problem list no matter what it said.
+
+    Reproduced on the dev PG: after three notes asserting type 2 diabetes,
+    E11.9 was absent from the patient's chronic list. The agent reported it
+    as a care gap — the right read of the data, and the wrong data.
+    """
+    from hdh.modules.comprehension.applier import _is_chronic
+
+    assert _is_chronic("E11.9", "Type 2 diabetes mellitus")
+    assert _is_chronic("I10", "Essential hypertension")
+    # the display carries what the catalog does not know
+    assert _is_chronic("B99.8", "Chronic blorbitis")
+
+
+def test_history_is_not_chronicity(world):
+    """ "h/o pneumonia" is history and is not a chronic condition. The two
+    questions are separate and only one of them decides this column."""
+    from hdh.modules.comprehension.applier import _is_chronic
+
+    assert not _is_chronic("J18.9", "Pneumonia")
+    assert not _is_chronic("R51.9", "Headache, unspecified")
+
+
+def test_a_problem_the_patient_arrived_with_has_no_invented_onset(world):
+    """`onset_date=visit.visit_date` said a disease the note called history
+    began at this encounter — which any rule measuring duration believes."""
+    session, _shared = world
+    # a patient of its own: the module-scoped fixture accumulates conditions
+    # across tests, and a problem already on the chart takes the CONFIRMED
+    # path — which creates no row and so proves nothing about onset
+    patient = _fresh_patient(session, "MRN-ONSET-HX")
+    text = "S: Patient with a history of Chronic blorbitis, stable."
+    raw = {"mentions": [{"type": "problem", "text": "Chronic blorbitis", "occurrence": 1, "attributes": []}]}
+    note = comprehend_note(session, comprehend_text(text, stub_extractor(raw)))
+    assert note.mentions[0].assertion.assertion.value == "historical"
+
+    apply_to_chart(session, patient, note)
+    session.expire_all()
+    charted = [c for c in patient.conditions if c.description == "Chronic blorbitis"]
+    assert charted, "a historical problem still belongs on the chart"
+    assert charted[0].onset_date is None, "the note did not say when it started"
+    assert charted[0].chronic is True
+
+
+def test_a_new_problem_is_dated_today(world):
+    """The other half: a problem the note presents as current DID start at
+    this encounter as far as the chart knows, so it keeps its date."""
+    session, _shared = world
+    patient = _fresh_patient(session, "MRN-ONSET-NEW")
+    raw = {"mentions": [{"type": "problem", "text": "Chronic blorbitis", "occurrence": 1, "attributes": []}]}
+    note = comprehend_note(session, comprehend_text("A: Chronic blorbitis.", stub_extractor(raw)))
+    apply_to_chart(session, patient, note)
+    session.expire_all()
+    charted = [c for c in patient.conditions if c.description == "Chronic blorbitis"]
+    assert charted and charted[0].onset_date is not None

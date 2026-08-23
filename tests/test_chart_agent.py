@@ -247,3 +247,67 @@ def test_review_resolution_refuses_what_it_cannot_place(chart):
     before = session.query(Condition).count()
     run_review(session, argparse.Namespace(resolve=record_id, decision="reject", icd10=None, mention=None))
     assert session.query(Condition).count() == before
+
+
+# ── optional toolsets fail loudly, absent ones quietly (#78) ─────────────
+
+
+def test_a_builder_that_raises_warns_and_leaves_the_agent_usable(tmp_path, caplog, monkeypatch):
+    """A crashing toolset and an absent one used to be indistinguishable.
+
+    One `except Exception: continue` covered "not installed", "no catalog"
+    and "the builder blew up". The agent simply had fewer tools and answered
+    worse, with nothing anywhere saying why — which is how a whole missing
+    module stayed invisible until someone read the tool list by eye.
+    """
+    import logging
+
+    from hdh.core.models import Base, get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.agent import tools as agent_tools
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path / "loud.db"))
+    Base.metadata.create_all(engine)
+    session = get_session(engine)
+
+    def explode(_session):
+        raise RuntimeError("catalog table is missing a column")
+
+    import hdh.modules.icd10cm.agent_tools as icd
+
+    monkeypatch.setattr(icd, "build_icd_tools", explode)
+
+    with caplog.at_level(logging.WARNING, logger="hdh.agent"):
+        built = agent_tools.build_tools(session)
+
+    assert built, "one broken toolset must not cost the agent every tool"
+    warned = [r.getMessage() for r in caplog.records]
+    assert any("build_icd_tools" in message for message in warned), "the failure was swallowed silently"
+    assert any("MISSING" in message for message in warned), (
+        "the warning must say the tools are gone, not merely that something happened"
+    )
+    session.close()
+    engine.dispose()
+
+
+def test_a_module_that_is_not_installed_stays_quiet(tmp_path, caplog):
+    """The case the broad catch was written for, and the only one that
+    should be silent: an optional module simply is not there."""
+    import logging
+
+    from hdh.core.models import Base, get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.agent import tools as agent_tools
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path / "quiet.db"))
+    Base.metadata.create_all(engine)
+    session = get_session(engine)
+
+    with caplog.at_level(logging.WARNING, logger="hdh.agent"):
+        agent_tools._ontology_tools(session)
+
+    assert not caplog.records, f"an empty catalog should not warn: {[r.message for r in caplog.records]}"
+    session.close()
+    engine.dispose()

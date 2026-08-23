@@ -302,3 +302,59 @@ def test_the_refinement_guards_reject_a_plausible_wrong_answer(service):
             f"{hit.concept.display!r} passes BOTH the subsumption and control-word guards — "
             "if this is genuinely a control qualifier the refinement should accept it"
         )
+
+
+# ── a code must not contradict the note (#72) ────────────────────────────
+
+
+def test_the_exam_outcomes_the_note_can_contradict_are_real_concepts(service):
+    """The evidence the #72 guard is built on.
+
+    SNOMED models exam outcomes as distinct concepts, so "foot exam was
+    normal" has somewhere true to go — and somewhere false, which is what
+    made this a charted-wrong bug rather than a near-miss.
+    """
+    hits = service.normalize(
+        "diabetic foot examination", {"semantic_tags": ["procedure", "finding"], "limit": 5}
+    )
+    displays = [h.concept.display.lower() for h in hits]
+    assert any("normal" in d for d in displays), "no positive outcome to prefer"
+    assert any("not done" in d or "declined" in d for d in displays), "no negative outcome to guard against"
+
+
+def test_a_normal_exam_is_not_coded_as_one_that_was_not_done(service):
+    """'Diabetic foot examination not done' is lexically an excellent match
+    for "foot exam" — which is exactly why the funnel cannot make this call.
+    It takes the note's own words to know the answer is wrong."""
+    from hdh.modules.comprehension.contracts import (
+        AttributeKind,
+        Mention,
+        MentionAttribute,
+        MentionType,
+        Span,
+    )
+    from hdh.modules.comprehension.normalize import _contradicts_the_note
+
+    def mention_with(interpretation: str | None):
+        attributes = ()
+        if interpretation is not None:
+            attributes = (
+                MentionAttribute(kind=AttributeKind.INTERPRETATION, span=Span(0, 6), text=interpretation),
+            )
+        return Mention(
+            id=0,
+            mention_type=MentionType.PROCEDURE,
+            span=Span(0, 9),
+            text="foot exam",
+            section_id=0,
+            attributes=attributes,
+        )
+
+    for hit in service.normalize("foot exam", {"semantic_tags": ["procedure", "finding"], "limit": 5}):
+        display = hit.concept.display
+        if "not done" in display.lower():
+            assert _contradicts_the_note(mention_with("normal"), display)
+            # silence is not an assertion — an unqualified exam constrains nothing
+            assert not _contradicts_the_note(mention_with(None), display)
+            return
+    pytest.skip("the loaded edition returned no 'not done' variant to guard against")

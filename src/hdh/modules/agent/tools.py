@@ -6,12 +6,15 @@ these as tool results. All data is synthetic; there is no PHI here.
 """
 
 import json
+import logging
 from collections.abc import Mapping
 from datetime import date
 
 from sqlalchemy import func, text
 
 from hdh.core.models import Base, Condition, Patient
+
+log = logging.getLogger("hdh.agent")
 
 
 def _schema_summary(tables: tuple[str, ...] | None = None) -> str:
@@ -255,20 +258,45 @@ def _chart_tools(session) -> list:
     return build_chart_tools(session)
 
 
+#: Optional toolsets, in the order the agent sees them. Each builder is
+#: responsible for returning [] when its catalog is not loaded.
+_ONTOLOGY_BUILDERS: tuple[tuple[str, str], ...] = (
+    ("hdh.modules.icd10cm.agent_tools", "build_icd_tools"),
+    ("hdh.modules.snomed.agent_tools", "build_snomed_tools"),
+    ("hdh.modules.loinc.agent_tools", "build_loinc_tools"),
+    ("hdh.modules.rxnorm.agent_tools", "build_rxnorm_tools"),
+    ("hdh.modules.comprehension.agent_tools", "build_comprehension_tools"),
+)
+
+
 def _ontology_tools(session) -> list:
     """Coding tools via each ontology module's published API — optional:
-    the agent runs fine without the modules or their catalogs."""
-    tools: list = []
-    for module_path, builder_name in (
-        ("hdh.modules.icd10cm.agent_tools", "build_icd_tools"),
-        ("hdh.modules.snomed.agent_tools", "build_snomed_tools"),
-        ("hdh.modules.rxnorm.agent_tools", "build_rxnorm_tools"),
-        ("hdh.modules.comprehension.agent_tools", "build_comprehension_tools"),
-    ):
-        try:
-            from importlib import import_module
+    the agent runs fine without the modules or their catalogs.
 
-            tools.extend(getattr(import_module(module_path), builder_name)(session))
-        except Exception:  # noqa: BLE001 — absent module/catalog must never break the agent
-            continue
+    Three things used to look identical here, because one ``except
+    Exception: continue`` covered all of them: a module that is not
+    installed (expected), a catalog that is not loaded (expected, and the
+    builders already handle it themselves by returning ``[]``), and a
+    builder that RAISED (a bug). The third is now loud. It has to be —
+    a crashing toolset and an absent one are indistinguishable from the
+    outside, and the agent just answers worse.
+    """
+    from importlib import import_module
+
+    tools: list = []
+    for module_path, builder_name in _ONTOLOGY_BUILDERS:
+        try:
+            module = import_module(module_path)
+        except ImportError:
+            continue  # the module is not installed — the one silent case
+        try:
+            tools.extend(getattr(module, builder_name)(session))
+        except Exception:  # noqa: BLE001 — a broken toolset must not break the agent...
+            log.warning(
+                "%s.%s raised while building the agent's tools — those tools are "
+                "MISSING from this session, not merely unavailable",
+                module_path,
+                builder_name,
+                exc_info=True,  # ...but it must not be silent either
+            )
     return tools

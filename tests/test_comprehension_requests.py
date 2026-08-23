@@ -316,3 +316,86 @@ def test_a_denied_plan_item_is_not_ordered(world):
     for request in list(visit.service_requests):
         session.delete(request)
     session.commit()
+
+
+def test_a_referral_is_one_order_not_two(world):
+    """ "Refer to ophthalmology" reached the chart twice: a PROCEDURE from
+    the mention pass and a REFERRAL from the plan-text regex.
+
+    Two open orders for one act — different things to fulfil, to bill, and
+    to close a care gap against, so one of them is never satisfied.
+    Deduping cannot catch it: `_existing_request` matches within a kind and
+    these are two kinds. The referral pass runs last and knows the verb was
+    "refer", so it converts the row instead of sitting beside it.
+    """
+    session, patient = world
+    visit = Visit(
+        patient_id=patient.id,
+        visit_date=date(2026, 6, 8),
+        visit_type=VisitType.FOLLOW_UP,
+        chief_complaint="Review",
+    )
+    session.add(visit)
+    session.flush()
+
+    note_text = (
+        "SOAP NOTE — 2026-06-08  (Dr. Sarah Mitchell, MD)\n"
+        "S: Review.\n"
+        "O: Nil.\n"
+        "A: Stable.\n"
+        "P: Refer to ophthalmology."
+    )
+    raw = {
+        "mentions": [
+            {"type": "procedure", "text": "ophthalmology", "occurrence": 1, "attributes": []},
+        ],
+        "relations": [],
+        "shared_triggers": [],
+    }
+    note = comprehend_note(session, comprehend_text(note_text, stub_extractor(raw)))
+    result = apply_to_chart(session, patient, note, VisitTarget(visit=visit))
+    session.expire_all()
+
+    by_kind = _requests(visit)
+    assert len(by_kind.get(ServiceKind.REFERRAL, [])) == 1
+    assert not by_kind.get(ServiceKind.PROCEDURE), "the procedure request should have become the referral"
+    assert by_kind[ServiceKind.REFERRAL][0].detail == {"specialty": "ophthalmology"}
+
+    # and the verdicts say one thing happened, not two
+    request_verdicts = [v.detail for v in result.verdicts if v.kind == "request"]
+    assert "referral: ophthalmology" in request_verdicts
+    assert "procedure: ophthalmology" not in request_verdicts
+
+
+def test_a_procedure_that_is_not_a_referral_is_left_alone(world):
+    """The conversion must key on the referral verb, not on the word being
+    a specialty — an ordered procedure is still a procedure."""
+    session, patient = world
+    visit = Visit(
+        patient_id=patient.id,
+        visit_date=date(2026, 6, 9),
+        visit_type=VisitType.FOLLOW_UP,
+        chief_complaint="Review",
+    )
+    session.add(visit)
+    session.flush()
+
+    note_text = (
+        "SOAP NOTE — 2026-06-09  (Dr. Sarah Mitchell, MD)\n"
+        "S: Review.\n"
+        "O: Nil.\n"
+        "A: Stable.\n"
+        "P: Order spirometry."
+    )
+    raw = {
+        "mentions": [{"type": "procedure", "text": "spirometry", "occurrence": 1, "attributes": []}],
+        "relations": [],
+        "shared_triggers": [],
+    }
+    note = comprehend_note(session, comprehend_text(note_text, stub_extractor(raw)))
+    apply_to_chart(session, patient, note, VisitTarget(visit=visit))
+    session.expire_all()
+
+    by_kind = _requests(visit)
+    assert len(by_kind.get(ServiceKind.PROCEDURE, [])) == 1
+    assert not by_kind.get(ServiceKind.REFERRAL)

@@ -83,13 +83,14 @@ SCENARIO_A_RAW = {
             # EXACT spelling occurs once. The verbatim-span invariant
             # notices; a case-insensitive matcher would not have.
             #
-            # No status_word here: ATTRIBUTE_LEGALITY allows it on
-            # MEDICATION and PROCEDURE only, which is the limitation the
-            # xfail at the bottom of this file records.
+            # "asked for repeat HbA1c" — the status word is what marks a
+            # test being ASKED FOR when there is no plan section. Illegal on
+            # a lab until #74; the value two clauses earlier deliberately
+            # carries no status_word, which is the distinction.
             "type": "lab_vital",
             "text": "HbA1c",
             "occurrence": 1,
-            "attributes": [],
+            "attributes": [{"kind": "status_word", "text": "repeat", "occurrence": 1}],
         },
     ],
     "relations": [],
@@ -259,23 +260,44 @@ def test_a_referred_lab_value_becomes_evidence_about_the_condition(extraction):
     assert any(a.kind is AttributeKind.CONTROL for a in diabetes.attributes)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="A LAB order in an unstructured note cannot be recognised. The status "
-    "word is what says 'this was ordered' when there is no plan section, and "
-    "ATTRIBUTE_LEGALITY allows status_word on MEDICATION and PROCEDURE only — so "
-    "'asked for repeat HbA1c' has no way to distinguish itself from the value "
-    "referred to two clauses earlier. Under §10.0 this is now the ONLY lab-shaped "
-    "thing a note can produce, so allowing it cannot blur order with result.",
-)
 def test_a_lab_order_in_an_unstructured_note_is_recognised(extraction):
+    """Closed by #74.
+
+    ATTRIBUTE_LEGALITY allowed status_word on MEDICATION and PROCEDURE
+    only, so "asked for repeat HbA1c" had no way to distinguish itself from
+    the HbA1c value referred to two clauses earlier — and in a note with no
+    plan section, the status word is the ONLY thing that says a test was
+    ordered.
+
+    What makes it safe to allow is §10.0: comprehension never writes a
+    LabResult, so an order is the only lab-shaped thing a note can produce
+    and this cannot blur the two. The proof that the legality table was the
+    real constraint is that this raw extraction did not even VALIDATE
+    before — the attribute was rejected as illegal on its mention type.
+    """
     from hdh.modules.comprehension.applier import _in_plan
+    from hdh.modules.comprehension.contracts import AttributeKind
     from hdh.modules.comprehension.pipeline import ComprehendedMention
 
     ordered_lab = next(m for m in extraction.mentions if m.text == "HbA1c")
+    assert any(a.kind is AttributeKind.STATUS_WORD for a in ordered_lab.attributes)
     assert _in_plan(
         type("N", (), {"extraction": extraction})(),
         ComprehendedMention(mention=ordered_lab, code=None, assertion=None, confidence=0.0),
+    )
+
+
+def test_the_value_the_patient_arrived_with_is_still_not_an_order(extraction):
+    """The other half, and the reason the distinction is worth having: the
+    earlier "Hba1c" carries a value and no status word, so it is a lab
+    being referred to and not one being asked for."""
+    from hdh.modules.comprehension.applier import _in_plan
+    from hdh.modules.comprehension.pipeline import ComprehendedMention
+
+    referred = next(m for m in extraction.mentions if m.text == "Hba1c")
+    assert not _in_plan(
+        type("N", (), {"extraction": extraction})(),
+        ComprehendedMention(mention=referred, code=None, assertion=None, confidence=0.0),
     )
 
 

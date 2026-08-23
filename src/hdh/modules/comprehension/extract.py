@@ -116,13 +116,26 @@ Rules:
    severity attribute).
 3. Every list item is its own mention. Parenthetical codes like "(I48.91)" are
    plain text — never extract or repeat them.
+   When a list SHARES a head word, each item still needs its own complete
+   mention: in "eyesight and foot exam was normal" the exams are two, and
+   "Eyesight" alone names a faculty rather than an examination — prefer the
+   span that carries the head ("foot exam"), and where the head is elided
+   take the nearest span that still reads as the entity. A head-less mention
+   is worse than a slightly longer one: it gets coded as something else.
 4. attributes are typed sub-spans, verbatim, near their mention:
 {legality}
    Keep value and unit SEPARATE whenever the text allows ("98.5F" in the
    note -> value "98.5", unit "F"; never fold the unit into the value).
    control is for disease-control phrasing on problems ("well controlled",
-   "worsening"); status_word is for order verbs on medications/procedures
-   ("Start", "Continue") — never mix them.
+   "worsening"); status_word is for ORDER VERBS — "Start", "Continue",
+   "Added", "Ordered", "Repeat" — on a medication, a procedure or a lab.
+   Never mix them. On a lab, status_word marks a test being ASKED FOR
+   ("asked for repeat HbA1c"); a lab value the note merely refers to
+   ("came with higher than 7 HbA1c") takes interpretation/value, not
+   status_word. The difference is whether the note is requesting the test.
+   On a procedure, interpretation records the OUTCOME ("was normal",
+   "unremarkable") — say it when the note does, because a normal exam and
+   an exam that was never done are different concepts.
    Emit each relation at most once.
 5. relations: ONLY "treats" (medication/procedure -> problem or lab_vital),
    with inferred=true unless the text states the link ("for HTN").
