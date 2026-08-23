@@ -237,3 +237,46 @@ def test_frontier_surfaces(service, surface, expected, why):
     enrichment or dense retrieval lands, these pass and announce it."""
     top = _top(service, surface)
     assert top is not None and top.concept.code == expected, f"{surface!r}: {why}"
+
+
+# ── control refinement (§10.0): where the vocabulary supports it ─────────
+
+
+def test_control_refinement_works_for_diabetes_and_refuses_for_hypertension(service):
+    """The asymmetry that decides the mechanism.
+
+    SNOMED expresses disease control three different ways: diabetes and
+    asthma get control-qualified DISORDERS, hypertension gets separate
+    FINDINGS that are not subtypes at all, and most conditions get
+    nothing — 22 such concepts exist in the whole edition, several of them
+    `Uncontrolled fire in forest`.
+
+    So `Condition.controlled` has to be primary and the code refinement an
+    enrichment. This measures both halves against the real edition.
+    """
+    from hdh.modules.comprehension.applier import _control_refinement
+
+    diabetes = _control_refinement(service.session, "44054006", "Type 2 diabetes mellitus", False)
+    assert diabetes is not None and diabetes.code == "443694000"
+    assert "uncontrolled" in diabetes.display.lower()
+
+    well = _control_refinement(service.session, "44054006", "Type 2 diabetes mellitus", True)
+    assert well is not None and well.code == "444110003"
+
+    # hypertension has no control-qualified subtype: the honest answer is
+    # None, and the flag alone carries the meaning
+    assert _control_refinement(service.session, "59621000", "Essential hypertension", False) is None
+
+
+def test_the_refinement_guards_reject_a_plausible_wrong_answer(service):
+    """Searching "uncontrolled essential hypertension" returns *Benign
+    essential hypertension* — a real subtype, genuinely subsumed by the
+    original, and completely wrong. Subsumption alone would accept it; the
+    confidence and the control-word check are what refuse it."""
+    hits = service.normalize(
+        "Uncontrolled Essential hypertension", {"semantic_tags": ["disorder", "finding"], "limit": 1}
+    )
+    assert hits, "the funnel returned nothing to guard against"
+    tempting = hits[0]
+    assert service.subsumes("59621000", tempting.concept.code), "the subsumption guard alone passes it"
+    assert "control" not in tempting.concept.display.lower(), "the control-word guard is what catches it"

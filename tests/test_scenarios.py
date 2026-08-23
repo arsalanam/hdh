@@ -193,43 +193,160 @@ def test_the_ingredient_stays_one_hop_away(rxnorm):
 # ── what this scenario still cannot do ───────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="'higher than 7 HbA1c' is a RESULT with a comparator, stated in prose. "
-    "The extractor gives the value but nothing carries the '>' — comprehension "
-    "would need a comparator attribute kind (§10 row 3).",
-)
-def test_a_comparator_in_prose_is_captured(extraction):
-    """The column exists (LabResult.comparator, milestone A). Nothing fills
-    it from a note yet, and pretending otherwise would be the corpus
-    quietly not asking."""
-    hba1c = next(m for m in extraction.mentions if m.text == "Hba1c")
-    kinds = {attribute.kind.value for attribute in hba1c.attributes}
-    assert "comparator" in kinds
+def test_a_lab_value_in_prose_never_becomes_a_lab_result(extraction):
+    """§10.0, stated as a guard rather than a paragraph.
 
+    "came with higher than 7 Hba1c" has no specimen, no method, no
+    reference range and no performing lab — it is a value being REFERRED
+    TO as evidence. Charting it as a LabResult would manufacture a
+    measurement record out of a sentence, and the chart would then hold two
+    kinds of row that look identical and are not.
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Condition.controlled is never written from a note. The attribute kind "
-    "exists, ATTRIBUTE_LEGALITY allows it on PROBLEM, and the extractor prompt asks "
-    "for it by name — the APPLIER is what drops it: _apply_conditions builds its "
-    "Condition without ever reading AttributeKind.CONTROL (§10 row 2).",
-)
-def test_a_control_qualifier_reaches_the_problem_list():
-    """The last mile, not the first.
-
-    An earlier version of this test asserted the EXTRACTOR produced no
-    control attribute, which was circular — the stub is ours, so it only
-    proved what we had written into it. The real break is downstream, so
-    this one hands the applier exactly what the prompt asks the model for
-    and checks whether it survives to the chart.
+    This passes today because the applier refuses; the test exists so that
+    it keeps refusing. Results come from a partner, through interchange,
+    with an order to match against.
     """
-    from hdh.core.models import ConditionStatus, Patient, Sex, Visit, VisitType
+    from hdh.core.models import ConditionStatus, LabResult, Patient, Sex, Visit, VisitType
     from hdh.modules.comprehension.applier import VisitTarget, apply_to_chart
     from hdh.modules.comprehension.pipeline import comprehend_note
 
     bootstrap_schema()
-    session = get_session(get_engine(":memory:"))
+    engine = get_engine(":memory:")
+    session = get_session(engine)
+    patient = Patient(
+        mrn="MRN-PROSE-LAB",
+        first_name="Referred",
+        last_name="To",
+        date_of_birth=date(1960, 1, 1),
+        sex=Sex.FEMALE,
+    )
+    session.add(patient)
+    session.flush()
+    visit = Visit(patient_id=patient.id, visit_date=date(2026, 8, 22), visit_type=VisitType.FOLLOW_UP)
+    session.add(visit)
+    session.flush()
+
+    comprehended = comprehend_note(session, extraction)
+    result = apply_to_chart(session, patient, comprehended, VisitTarget(visit=visit))
+
+    assert session.query(LabResult).count() == 0, "a note manufactured a measurement record"
+    # and it says so rather than dropping it without trace
+    assert any(v.kind in ("lab", "vitals") for v in result.verdicts)
+    assert ConditionStatus  # the import is the point of the assertion above
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="A referred-to lab value should land as evidence about the CONDITION "
+    "(§10.0) — 'higher than 7 HbA1c' in a diabetic means uncontrolled diabetes. "
+    "Nothing connects the two today: the value is extracted as a LAB_VITAL and the "
+    "control flag is only written from an explicit control phrase on a PROBLEM, so "
+    "the clinical meaning of the number is lost.",
+)
+def test_a_referred_lab_value_becomes_evidence_about_the_condition(extraction):
+    """The replacement for what used to be 'the comparator is not captured'.
+
+    Under §10.0 the comparator was the wrong thing to ask for: there is no
+    LabResult for it to sit on. What is actually missing is the LINK — the
+    number is about the diabetes, and nothing carries that.
+    """
+    from hdh.modules.comprehension.contracts import AttributeKind, MentionType
+
+    diabetes = next(m for m in extraction.mentions if m.text == "type 2 diabetes")
+    assert diabetes.mention_type is MentionType.PROBLEM
+    assert any(a.kind is AttributeKind.CONTROL for a in diabetes.attributes)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="A LAB order in an unstructured note cannot be recognised. The status "
+    "word is what says 'this was ordered' when there is no plan section, and "
+    "ATTRIBUTE_LEGALITY allows status_word on MEDICATION and PROCEDURE only — so "
+    "'asked for repeat HbA1c' has no way to distinguish itself from the value "
+    "referred to two clauses earlier. Under §10.0 this is now the ONLY lab-shaped "
+    "thing a note can produce, so allowing it cannot blur order with result.",
+)
+def test_a_lab_order_in_an_unstructured_note_is_recognised(extraction):
+    from hdh.modules.comprehension.applier import _in_plan
+    from hdh.modules.comprehension.pipeline import ComprehendedMention
+
+    ordered_lab = next(m for m in extraction.mentions if m.text == "HbA1c")
+    assert _in_plan(
+        type("N", (), {"extraction": extraction})(),
+        ComprehendedMention(mention=ordered_lab, code=None, assertion=None, confidence=0.0),
+    )
+
+
+def test_a_control_qualifier_reaches_the_problem_list(control_world):
+    """The last mile, and it is closed now.
+
+    An earlier version of this test asserted the EXTRACTOR produced no
+    control attribute, which was circular — the stub is ours, so it only
+    proved what we had written into it. The real break was downstream:
+    `_apply_conditions` built its Condition without ever reading
+    AttributeKind.CONTROL, so the flag was never written from a note.
+
+    The fabricated catalog has no control-qualified concept for blorbitis,
+    which is the ORDINARY case (§10.0): the flag carries the meaning and
+    the base code stands.
+    """
+    from hdh.core.models import ConditionStatus
+
+    session, patient, base_code = control_world
+    charted = [c for c in patient.conditions if c.status is ConditionStatus.ACTIVE]
+
+    assert charted, "the condition never reached the chart at all"
+    assert charted[0].controlled is True
+    assert getattr(charted[0], "snomed_code", None) == base_code  # unrefined, honestly
+
+
+@pytest.fixture(scope="module")
+def control_world(tmp_path_factory):
+    """A chart with the fabricated SNOMED catalog, and one controlled problem."""
+    from sqlalchemy import insert
+
+    from hdh.core.models import Base, ConditionStatus, Patient, Sex, Visit, VisitType
+    from hdh.modules.comprehension.applier import VisitTarget, apply_to_chart
+    from hdh.modules.comprehension.pipeline import comprehend_note
+    from hdh.modules.snomed.loader import run_load
+
+    snomed = Path(__file__).parent / "fixtures" / "snomed"
+    sys.path.insert(0, str(snomed))
+    import fixture_ids as snomed_ids
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path_factory.mktemp("control") / "c.db"))
+    session = get_session(engine)
+    run_load(session, snomed)
+
+    tables = Base.metadata.tables
+    session.execute(
+        insert(tables["ontology_concepts"]),
+        [
+            {
+                "id": "icd10cm:B99.8",
+                "ontology": "icd10cm",
+                "code": "B99.8",
+                "kind": "code",
+                "display": "Other infectious disease",
+            }
+        ],
+    )
+    session.execute(
+        insert(tables["ontology_edges"]),
+        [
+            {
+                "source_id": "icd10cm:B99.8",
+                "target_id": f"snomed_ct:{snomed_ids.CHRONIC_BLORBITIS}",
+                "edge_type": "maps_to",
+                "authority": "CURATED_DEMO",
+                "confidence": 1.0,
+                "properties": {},
+            }
+        ],
+    )
     patient = Patient(
         mrn="MRN-CONTROL",
         first_name="Well",
@@ -243,15 +360,15 @@ def test_a_control_qualifier_reaches_the_problem_list():
     session.add(visit)
     session.flush()
 
-    note = "A: well treated hypertension."
+    note = "A: well controlled Chronic blorbitis."
     raw = {
         "mentions": [
             {
                 "type": "problem",
-                "text": "hypertension",
+                "text": "Chronic blorbitis",
                 "occurrence": 1,
                 # exactly what extract.py's rule 4 instructs the model to emit
-                "attributes": [{"kind": "control", "text": "well treated", "occurrence": 1}],
+                "attributes": [{"kind": "control", "text": "well controlled", "occurrence": 1}],
             }
         ],
         "relations": [],
@@ -259,29 +376,7 @@ def test_a_control_qualifier_reaches_the_problem_list():
     }
     comprehended = comprehend_note(session, comprehend_text(note, stub_extractor(raw)))
     apply_to_chart(session, patient, comprehended, VisitTarget(visit=visit))
-
-    charted = [c for c in patient.conditions if c.status is ConditionStatus.ACTIVE]
-    assert charted, "the condition never reached the chart at all"
-    assert charted[0].controlled is True
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="A LAB order in an unstructured note cannot be recognised. The status "
-    "word is what says 'this was ordered' when there is no plan section, and "
-    "ATTRIBUTE_LEGALITY allows status_word on MEDICATION and PROCEDURE only — so "
-    "'asked for repeat HbA1c' has no way to distinguish itself from the result "
-    "mentioned two clauses earlier. Extending the schema is a comprehension "
-    "change, not an RxNorm one (§10).",
-)
-def test_a_lab_order_in_an_unstructured_note_is_recognised(extraction):
-    """The medication half of Scenario A works; this half does not, and
-    saying so is the point of keeping the scenario whole."""
-    from hdh.modules.comprehension.applier import _in_plan
-    from hdh.modules.comprehension.pipeline import ComprehendedMention
-
-    ordered_lab = next(m for m in extraction.mentions if m.text == "HbA1c")
-    assert _in_plan(
-        type("N", (), {"extraction": extraction})(),
-        ComprehendedMention(mention=ordered_lab, code=None, assertion=None, confidence=0.0),
-    )
+    assert ConditionStatus  # imported for the test body
+    yield session, patient, snomed_ids.CHRONIC_BLORBITIS
+    session.close()
+    engine.dispose()

@@ -160,6 +160,76 @@ def _audit_creations(session, result: ApplyResult, provider_id: int | None) -> N
         record_creation(session, actor, entity, row, reason=f"charted from note (visit #{result.visit_id})")
 
 
+#: Control phrasing a note uses → whether the condition is controlled.
+#: Longest key first when matching, so "not well controlled" cannot be read
+#: as "well controlled" with a stray word in front of it.
+_CONTROL_PHRASES: dict[str, bool] = {
+    "not well controlled": False,
+    "poorly controlled": False,
+    "badly controlled": False,
+    "uncontrolled": False,
+    "not controlled": False,
+    "out of control": False,
+    "worsening": False,
+    "deteriorating": False,
+    "well controlled": True,
+    "well-controlled": True,
+    "well treated": True,
+    "well managed": True,
+    "controlled": True,
+    "stable": True,
+    "improving": True,
+}
+
+#: Words a control-qualified SNOMED concept has to actually contain before
+#: we will accept it as a refinement (guard 3 of §10.0).
+_CONTROL_WORDS = ("controlled", "control", "uncontrolled")
+
+
+def _control_state(item: ComprehendedMention) -> bool | None:
+    """Does the note say this condition is controlled? None = it does not say."""
+    text = (_attr(item, AttributeKind.CONTROL) or "").strip().lower()
+    if not text:
+        return None
+    for phrase in sorted(_CONTROL_PHRASES, key=len, reverse=True):
+        if phrase in text:
+            return _CONTROL_PHRASES[phrase]
+    return None
+
+
+def _control_refinement(session, base_code: str, base_display: str, controlled: bool):
+    """A control-qualified SNOMED concept for this condition, or None.
+
+    An ENRICHMENT, never a substitute (design §10.0). SNOMED's coverage is
+    uneven — diabetes and asthma have control-qualified disorders,
+    hypertension has separate findings that are not subtypes at all, and
+    most conditions have nothing — so the flag carries the meaning and
+    this only sharpens the code when the vocabulary allows.
+
+    Three guards, because two are not enough: searching "uncontrolled
+    essential hypertension" returns *Benign essential hypertension*, which
+    is a real subtype, genuinely subsumed, and completely wrong.
+    """
+    from hdh.core.ontology import get_ontology_service
+
+    prefix = "Well controlled" if controlled else "Uncontrolled"
+    service = get_ontology_service("snomed_ct", session)
+    hits = service.normalize(
+        f"{prefix} {base_display}", {"semantic_tags": ["disorder", "finding"], "limit": 1}
+    )
+    if not hits:
+        return None
+    best = hits[0]
+    if best.score < REVIEW_THRESHOLD:
+        return None  # guard 1: not confident
+    display = (best.concept.display or "").lower()
+    if not any(word in display for word in _CONTROL_WORDS):
+        return None  # guard 3: not actually about control
+    if not service.subsumes(base_code, best.concept.code):
+        return None  # guard 2: not a refinement of THIS condition
+    return best.concept
+
+
 def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: ApplyResult) -> None:
     from hdh.core.models import Condition, ConditionStatus
 
@@ -219,9 +289,20 @@ def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: A
             status=ConditionStatus.ACTIVE,
             onset_date=visit.visit_date,
         )
+        # What the note says about CONTROL. The flag is primary — it works
+        # for every condition — and a control-qualified SNOMED concept
+        # sharpens the code only where the vocabulary has one (§10.0).
+        snomed_code, snomed_display = item.code.code, item.code.display
+        controlled = _control_state(item)
+        if controlled is not None:
+            row.controlled = controlled
+            refined = _control_refinement(session, item.code.code, item.code.display, controlled)
+            if refined is not None:
+                snomed_code, snomed_display = refined.code, refined.display
+                row.description = refined.display
         if hasattr(row, "snomed_code") and hasattr(row, "snomed_display"):
-            row.snomed_code = item.code.code
-            row.snomed_display = item.code.display
+            row.snomed_code = snomed_code
+            row.snomed_display = snomed_display
         session.add(row)
         result.created.append(("Condition", row))
         added_this_run.add(item.code.code)

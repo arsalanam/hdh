@@ -344,6 +344,80 @@ note into (a) a **structured encounter record** (FHIR), (b) an
 same encounter, equally usable by humans, AI agents, and non-AI systems.
 The §9 note walked all the way through:
 
+### 10.0 A note asserts; only a partner reports
+
+Before anything else in this section: **there are things a note may write
+to the chart, and things it may not**, and the line is not about
+confidence. It is about what kind of statement prose can be.
+
+A clinician writing *"came with higher than 7 HbA1c"* is not filing a lab
+result. There is no specimen, no method, no reference range and no
+performing lab — the value is being **referred to** as evidence for a
+clinical judgement. Charting it as a `LabResult` would manufacture a
+measurement record out of a sentence, and the chart would then hold two
+kinds of row that look identical and are not: one produced by an
+instrument, one produced by a recollection.
+
+So:
+
+| What the note does | Vocabulary | Where it lands |
+|---|---|---|
+| names a medication | **RxNorm** | `ServiceRequest(kind=medication)`, `Prescription` |
+| **orders** a lab | **LOINC** | `ServiceRequest(kind=lab)` |
+| **refers to** a lab value | **SNOMED** | the `Condition` it is evidence about |
+| asserts a clinical fact | **SNOMED** | `Condition` |
+| **reports** a lab result | **LOINC** | `LabResult` — **only via interchange** |
+
+The last row is the rule stated negatively: **comprehension never writes
+a `LabResult`.** Results arrive from a partner, through
+`hdh.modules.interchange`, with `origin=EXTERNAL` and an order to match
+against. A note can ask for a test and can reason about one; it cannot
+report one.
+
+This is why there is no LabResult reconciliation pass and should not be:
+the pass would have no honest input.
+
+**Where a referred-to value goes instead.** *"Higher than 7 HbA1c"* in a
+diabetic is an assertion about disease control, and the chart already has
+two places for that:
+
+1. **`Condition.controlled`** — the flag care gaps read. It works for
+   every condition, which is why it is the primary mechanism.
+2. **a control-qualified SNOMED concept**, where one exists.
+
+The second is an enrichment and not a substitute, because SNOMED's
+coverage is uneven in a way that would otherwise fail silently. Measured
+on the US Edition:
+
+- diabetes and asthma have control-qualified **disorders** —
+  `443694000 Uncontrolled type 2 diabetes mellitus`,
+  `444110003 Well controlled type 2 diabetes mellitus`
+- hypertension does **not**. Its control lives in separate **findings** —
+  `170578008 Poor hypertension control` — which are not subtypes of
+  hypertension at all
+- most conditions have nothing, and only 22 control-qualified concepts
+  exist in the whole edition, several of which are `Uncontrolled fire in
+  forest`
+
+A rule of "find the control-qualified concept" would therefore work for
+two diseases and quietly do nothing for the rest — including
+*"well treated hypertension"*.
+
+**Three guards on the refinement**, because two are not enough. Building
+the phrase and searching for it returns
+`Benign essential hypertension` for *"uncontrolled essential
+hypertension"*: a real subtype, subsumed by the original, and completely
+wrong. So a refinement is accepted only when
+
+1. the funnel is confident (at or above the review threshold), **and**
+2. the candidate is **subsumed by** the concept it refines, **and**
+3. its display actually contains the control phrasing.
+
+The hypertension case fails the first and third. The diabetes case passes
+all three at 1.00. When any guard fails the base code stands and the flag
+alone carries the meaning — which is the ordinary outcome, not the
+exceptional one.
+
 ### 10.1 After stages 3–5 (normalize, contextualize, disambiguate)
 
 | Mention | Home ontology → code | Assertion (stage 4) |
