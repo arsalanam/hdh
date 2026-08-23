@@ -16,6 +16,7 @@ instead of quietly not asking.
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -209,12 +210,59 @@ def test_a_comparator_in_prose_is_captured(extraction):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="'well treated hypertension' should set Condition.controlled. The "
-    "qualifier is extracted as no attribute at all today (§10 row 2).",
+    reason="Condition.controlled is never written from a note. The attribute kind "
+    "exists, ATTRIBUTE_LEGALITY allows it on PROBLEM, and the extractor prompt asks "
+    "for it by name — the APPLIER is what drops it: _apply_conditions builds its "
+    "Condition without ever reading AttributeKind.CONTROL (§10 row 2).",
 )
-def test_a_control_qualifier_reaches_the_problem_list(extraction):
-    hypertension = next(m for m in extraction.mentions if m.text == "hypertension")
-    assert any(a.kind.value == "control" for a in hypertension.attributes)
+def test_a_control_qualifier_reaches_the_problem_list():
+    """The last mile, not the first.
+
+    An earlier version of this test asserted the EXTRACTOR produced no
+    control attribute, which was circular — the stub is ours, so it only
+    proved what we had written into it. The real break is downstream, so
+    this one hands the applier exactly what the prompt asks the model for
+    and checks whether it survives to the chart.
+    """
+    from hdh.core.models import ConditionStatus, Patient, Sex, Visit, VisitType
+    from hdh.modules.comprehension.applier import VisitTarget, apply_to_chart
+    from hdh.modules.comprehension.pipeline import comprehend_note
+
+    bootstrap_schema()
+    session = get_session(get_engine(":memory:"))
+    patient = Patient(
+        mrn="MRN-CONTROL",
+        first_name="Well",
+        last_name="Treated",
+        date_of_birth=date(1960, 1, 1),
+        sex=Sex.FEMALE,
+    )
+    session.add(patient)
+    session.flush()
+    visit = Visit(patient_id=patient.id, visit_date=date(2026, 8, 22), visit_type=VisitType.FOLLOW_UP)
+    session.add(visit)
+    session.flush()
+
+    note = "A: well treated hypertension."
+    raw = {
+        "mentions": [
+            {
+                "type": "problem",
+                "text": "hypertension",
+                "occurrence": 1,
+                # exactly what extract.py's rule 4 instructs the model to emit
+                "attributes": [{"kind": "control", "text": "well treated", "occurrence": 1}],
+            }
+        ],
+        "relations": [],
+        "shared_triggers": [],
+    }
+    comprehended = comprehend_note(session, comprehend_text(note, stub_extractor(raw)))
+    apply_to_chart(session, patient, comprehended, VisitTarget(visit=visit))
+
+    charted = [c for c in patient.conditions if c.status is ConditionStatus.ACTIVE]
+    assert charted, "the condition never reached the chart at all"
+    assert charted[0].controlled is True
 
 
 @pytest.mark.xfail(
