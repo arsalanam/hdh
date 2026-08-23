@@ -7,6 +7,8 @@
 **A working mini-EHR you drive by talking to it — and the synthetic practice
 it runs on.**
 
+![hdh — an agent-first EHR: a note goes in, coded chart entries come out, and what cannot be coded is sent to a human](docs/assets/hdh-card-wide.png)
+
 Chart a dictated note. Place the orders it implies. Receive results back from
 a lab. Correct what's wrong, with an audit trail. Ask who's overdue. All of it
 against 10,000 synthetic patients, so you can break things freely: no PHI,

@@ -1,0 +1,669 @@
+<title>The Agent-First EHR</title>
+<style>
+  :root {
+    --ground: #0a0e14;
+    --panel: #111720;
+    --panel-2: #0e141c;
+    --edge: #1e2836;
+    --ink: #e8eef5;
+    --muted: #8091a5;
+    --dim: #5c6a7a;
+    --teal: #38c7ad;
+    --amber: #f0af48;
+    --blue: #60a5fa;
+
+    --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    --mono: "Cascadia Mono", ui-monospace, "SF Mono", Consolas, "Liberation Mono", monospace;
+
+    --sheet: 78rem;
+    --rail: 9rem;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: var(--sheet);
+    margin: 0 auto;
+    padding: 4rem 2.75rem 5rem;
+  }
+
+  /* ── the ledger: mono label in a rail, content beside it ───────── */
+  .band {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    gap: 0 3rem;
+    padding: 2.9rem 0;
+    border-top: 1px solid var(--edge);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding-top: 0.5rem;
+    white-space: nowrap;
+  }
+  .eyebrow.is-out { color: var(--amber); }
+
+  .band > .body > *:first-child { margin-top: 0; }
+  .band > .body > *:last-child { margin-bottom: 0; }
+
+  h1, h2, h3 { text-wrap: balance; }
+
+  h1 {
+    font-size: clamp(2.2rem, 4.4vw, 3.2rem);
+    line-height: 1.06;
+    letter-spacing: -0.028em;
+    font-weight: 700;
+    margin: 0 0 1.15rem;
+    max-width: 24ch;
+  }
+  h2 {
+    font-size: clamp(1.4rem, 2.2vw, 1.8rem);
+    line-height: 1.18;
+    letter-spacing: -0.018em;
+    font-weight: 700;
+    margin: 0 0 0.9rem;
+    max-width: 30ch;
+  }
+  h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.004em;
+    margin: 0 0 0.35rem;
+  }
+  p { margin: 0 0 1rem; max-width: 84ch; }
+  .lede { font-size: 1.14rem; color: var(--muted); max-width: 72ch; }
+  .muted { color: var(--muted); }
+  strong { color: var(--ink); font-weight: 650; }
+  em { color: var(--muted); }
+
+  .teal { color: var(--teal); }
+  .amber { color: var(--amber); }
+
+  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+
+  a { color: var(--blue); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; border-radius: 2px; }
+
+  /* ── masthead ───────────────────────────────────────────────────── */
+  .masthead { padding-bottom: 3.2rem; }
+
+  .hero-figure { margin: 0 0 2.9rem; }
+  .hero-figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 16px;
+    border: 1px solid var(--edge);
+  }
+
+  .hero-text {
+    display: grid;
+    grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+    gap: 0 4rem;
+    align-items: start;
+  }
+  .hero-text .lede { margin-bottom: 0; }
+  .hero-text .lede + .lede { margin-top: 1rem; }
+
+  /* ── the transcript block ───────────────────────────────────────── */
+  .transcript {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 14px;
+    padding: 1.55rem 1.75rem;
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    line-height: 1.9;
+    overflow-x: auto;
+    margin: 0 0 1.2rem;
+  }
+  .transcript .said {
+    color: var(--muted);
+    font-family: var(--sans);
+    font-style: italic;
+    font-size: 1rem;
+    display: block;
+    margin-bottom: 1.15rem;
+    line-height: 1.5;
+    max-width: 78ch;
+  }
+  .transcript .row { display: flex; gap: 1.2rem; white-space: nowrap; }
+  .transcript .verdict { width: 5.6rem; flex: none; }
+  .transcript .subject { color: var(--ink); }
+  .transcript .detail { color: var(--muted); }
+
+  /* ── parallel content uses the width, rather than long lines ────── */
+  .cols-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2rem 2.75rem;
+    margin: 1.9rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .cols-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.9rem 3.25rem;
+    margin: 1.7rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .cols-3 p, .cols-2 p { margin: 0; font-size: 0.95rem; color: var(--muted); max-width: none; }
+
+  .refusal { border-top: 2px solid var(--amber); padding-top: 0.85rem; }
+  .refusal h3 { color: var(--ink); }
+
+  .cap { display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); gap: 0 0.8rem; }
+  .cap .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); margin-top: 0.58rem; }
+  .cap.is-out .dot { background: none; border: 1.5px dashed var(--amber); width: 9px; height: 9px; margin-top: 0.54rem; }
+  .cap.is-out h3 { color: var(--amber); }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--amber);
+    border: 1px solid rgba(240, 175, 72, 0.4);
+    border-radius: 3px;
+    padding: 0.08rem 0.38rem;
+    margin-left: 0.5rem;
+    vertical-align: 0.14em;
+    white-space: nowrap;
+    font-weight: 400;
+  }
+
+  /* ── the comparison ─────────────────────────────────────────────── */
+  .compare-wrap { overflow-x: auto; margin: 1.6rem 0 0; }
+  table { width: 100%; min-width: 40rem; border-collapse: collapse; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 0.78rem 1.4rem 0.78rem 0; vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-weight: 400;
+    border-bottom: 1px solid var(--edge);
+    padding-bottom: 0.6rem;
+  }
+  thead th:last-child { color: var(--teal); }
+  tbody tr { border-bottom: 1px solid var(--panel-2); }
+  tbody tr:last-child { border-bottom: 0; }
+  tbody th {
+    font-weight: 400;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    width: 9rem;
+    padding-right: 1.5rem;
+  }
+  td.them { color: var(--muted); width: 40%; }
+  td.us { color: var(--ink); }
+
+  /* ── measurement callout ────────────────────────────────────────── */
+  .measure-box {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0 1.75rem;
+    align-items: center;
+    border-left: 2px solid var(--amber);
+    padding: 0.2rem 0 0.2rem 1.5rem;
+    margin: 2rem 0 0;
+  }
+  .measure-box .figure {
+    font-family: var(--mono);
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .measure-box .figure .was { color: var(--dim); }
+  .measure-box .caption { color: var(--muted); font-size: 0.95rem; margin: 0; max-width: 68ch; }
+
+  /* ── the scope band ─────────────────────────────────────────────── */
+  .scope-note {
+    border: 1px dashed rgba(240, 175, 72, 0.35);
+    border-radius: 12px;
+    padding: 1.2rem 1.5rem;
+    margin: 1.9rem 0 0;
+    color: var(--muted);
+    font-size: 0.96rem;
+    max-width: 84ch;
+  }
+  .scope-note p { margin: 0; max-width: none; }
+
+  /* ── colophon ───────────────────────────────────────────────────── */
+  .colophon {
+    border-top: 1px solid var(--edge);
+    margin-top: 0.5rem;
+    padding-top: 2.4rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+    gap: 1.5rem 4rem;
+    align-items: start;
+  }
+  .colophon .repo { font-family: var(--mono); font-size: 1.05rem; }
+  .colophon .terms { color: var(--dim); font-size: 0.87rem; }
+  .colophon .terms .vocab { color: var(--blue); }
+
+  @media (max-width: 58rem) {
+    .cols-3 { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
+    .cols-2, .hero-text, .colophon { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
+  }
+  @media (max-width: 42rem) {
+    .sheet { padding: 2.5rem 1.25rem 3rem; }
+    .band { grid-template-columns: minmax(0, 1fr); gap: 0.9rem; padding: 2.1rem 0; }
+    .eyebrow { padding-top: 0; }
+    .transcript .row { white-space: normal; }
+    .transcript .verdict { width: 4.6rem; }
+    .measure-box { grid-template-columns: minmax(0, 1fr); gap: 0.5rem; }
+  }
+
+  /* Landscape, because the layout is 78rem wide. A4 portrait leaves ~695px
+     of content, which trips this page's own 58rem breakpoint and collapses
+     every grid to a single column — the same brochure over seven pages. */
+  @page { size: A4 landscape; margin: 11mm 12mm; }
+
+  @media print {
+    /* Stay dark. Flipping only the body to white left every panel on its
+       dark ground and the hero image darker still — a half-inverted page.
+       This is a brochure that gets shared as a file, so the identity holds
+       and Chrome is told to actually paint the backgrounds. */
+    html, body {
+      background: var(--ground);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    /* On the ROOT, not on body: every margin, gap and padding in this
+       sheet is expressed in rem, so sizing body alone shrank the text and
+       left the whitespace at screen scale — eight pages of air. */
+    html { font-size: 8.6pt; }
+    body { font-size: 1rem; line-height: 1.5; }
+    .sheet { padding: 0; max-width: none; }
+    h1 { font-size: 25pt; }
+    h2 { font-size: 14.5pt; }
+    .lede { font-size: 11pt; }
+    .band { padding: 1.15rem 0; gap: 0 2rem; }
+    .masthead { padding-bottom: 1.2rem; }
+    /* The card is a banner, and at full width it claimed three quarters of
+       the cover on its own. Half width leaves room for the thesis to sit on
+       page one with it, which is what a cover is for. */
+    .hero-figure { margin-bottom: 1.4rem; }
+    .hero-figure img { max-width: 56%; }
+    .transcript, table, .cols-3, .cols-2, .measure-box, .scope-note,
+    .cap, .refusal, .colophon { break-inside: avoid; }
+    /* NOT break-inside on .band: a band taller than the sheet gets pushed
+       to a fresh page and overflows it anyway, so every band claimed its
+       own page. Only the atomic pieces above must stay whole. */
+    .page-break { break-before: page; }
+    a { color: var(--blue); text-decoration: none; }
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <figure class="hero-figure">
+      <img src="__CARD__" alt="hdh — an agent-first EHR. A clinical note goes in; four verdicts come out: three charted in teal, and one in amber reading NOT charted, sent to a human." />
+    </figure>
+
+    <h1>Domain performance is an orchestration problem now, not a training one.</h1>
+
+    <div class="hero-text">
+      <p class="lede">
+        The assumption was that clinical AI meant fine-tuning a small model on clinical text.
+        Frontier reasoning models already carry the domain knowledge. What they lack is
+        <strong>this patient's chart</strong>, <strong>your terminologies</strong>, and
+        <strong>somewhere legitimate to put the answer</strong>.
+      </p>
+      <p class="lede">
+        Supply those three through tools and orchestration and you get domain-grade behaviour
+        without training anything — and the behaviour holds when you swap the model, because
+        the parts that must not be wrong were never in the weights.
+      </p>
+    </div>
+  </header>
+
+  <section class="band">
+    <div class="eyebrow">The shift</div>
+    <div class="body">
+      <h2>The hard part moved out of the weights</h2>
+      <p>
+        hdh is model-agnostic on purpose. The same orchestration runs on a frontier reasoning
+        model or a considerably smaller one, because grounding, coding, reconciliation and
+        refusal live in <strong>deterministic code</strong> rather than in a checkpoint. The
+        model's job is narrow and it never widens: <em>this span is a problem, this span is its
+        dose.</em> It never picks a code.
+      </p>
+      <p>
+        That split is what makes the claim testable rather than rhetorical. Swapping the model
+        changes how well spans are <em>found</em>; it cannot change what gets <em>charted</em>.
+        A weaker model finds fewer mentions and sends more of them to a human — it does not
+        quietly invent a diagnosis, because nothing in the path lets it.
+      </p>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="eyebrow">Free text in</div>
+    <div class="body">
+      <h2>A clinician talks. The chart updates.</h2>
+      <p>
+        No forms, no template, no structured entry. A dictated sentence — or, once speech
+        capture lands, the same sentence spoken at the bedside — becomes reconciled, coded
+        chart entries. Seven passes run between the text and the verdicts below.
+      </p>
+
+      <div class="transcript">
+        <span class="said">
+          "Patient with h/o type 2 diabetes came in with an HbA1c over 7. Continued metformin,
+          added Januvia, repeat HbA1c in 90 days."
+        </span>
+        <div class="row"><span class="verdict teal">confirmed</span><span class="subject">type 2 diabetes</span><span class="detail">already on the problem list</span></div>
+        <div class="row"><span class="verdict teal">updated</span><span class="subject">controlled</span><span class="detail">HbA1c &gt; 7 → flag cleared</span></div>
+        <div class="row"><span class="verdict teal">new</span><span class="subject">Januvia 25 mg</span><span class="detail">prescription, coded to RxNorm</span></div>
+        <div class="row"><span class="verdict teal">new</span><span class="subject">HbA1c</span><span class="detail">lab order, due in 90 days</span></div>
+        <div class="row"><span class="verdict amber">review</span><span class="subject">unmapped term</span><span class="detail amber">NOT charted — sent to a human</span></div>
+      </div>
+
+      <p class="muted">
+        The problem list is reconciled rather than duplicated. Orders and prescriptions are
+        coded at the moment of writing, not by a coder three days later.
+      </p>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="eyebrow">Grounding</div>
+    <div class="body">
+      <h2>The interesting part is where it refuses</h2>
+      <p>
+        Hallucination in a chart is not a bad sentence — it is a row that looks exactly like a
+        real one. Orchestration is what makes refusal possible at all, because a deterministic
+        layer can decline where a model will oblige. These three took longer to build than
+        everything around them.
+      </p>
+
+      <ul class="cols-3">
+        <li class="refusal">
+          <h3>It never invents a lab result</h3>
+          <p>
+            <em>"HbA1c over 7"</em> does not become a lab result. No specimen, no method, no
+            reference range, no performing lab — the value is being <em>referred to</em>, not
+            reported. File it and the chart holds two kinds of row that look identical: one
+            from an instrument, one from a recollection. Results arrive from a lab, matched to
+            the order that asked for them.
+          </p>
+        </li>
+        <li class="refusal">
+          <h3>It never guesses a drug strength</h3>
+          <p>
+            <em>"Start metformin"</em> codes to the ingredient, not to a 500&nbsp;mg tablet.
+            The note said what it said. A drug is where a confident guess does the most harm,
+            so the coding stops at the deepest level the evidence actually supports.
+          </p>
+        </li>
+        <li class="refusal">
+          <h3>It never charts what it cannot code</h3>
+          <p>
+            Unresolvable mentions go to a review queue for a human, with the sentence they came
+            from. The alternative is a chart full of confident approximations that nobody
+            notices — and unlike a wrong sentence, a wrong coded row is acted upon.
+          </p>
+        </li>
+      </ul>
+
+      <div class="measure-box">
+        <div class="figure"><span class="was">6</span> → 1</div>
+        <p class="caption">
+          Confident <em>wrong</em> answers on a stress corpus of real clinical phrasings, and
+          the fixes came from measurement rather than intuition. <em>"Type 2 diabetes"</em> was
+          returning <em>"Cataract due to diabetes mellitus type 2"</em> at 100% confidence,
+          because nothing in the ranking penalised a term for saying <strong>more</strong> than
+          the note did.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band page-break">
+    <div class="eyebrow">The difference</div>
+    <div class="body">
+      <h2>Most clinical AI writes <em>into</em> the chart. This works <em>from</em> it.</h2>
+      <p>
+        Ambient scribes and assistant side-panels are genuinely useful, and they stop in the
+        same place: they produce prose for a human to file, or they answer questions about the
+        schedule. They hold a transcript rather than a chart, so they cannot reconcile against
+        a problem list they do not have — and what they emit is text, so nothing downstream can
+        act on it.
+      </p>
+
+      <div class="compare-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col"></th>
+              <th scope="col">Typical EHR AI assistant</th>
+              <th scope="col">Agent-first EHR</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Sees</th>
+              <td class="them">This encounter, or a transcript of it</td>
+              <td class="us">The whole chart, its history, and the panel around it</td>
+            </tr>
+            <tr>
+              <th scope="row">Produces</th>
+              <td class="them">Prose a human then files</td>
+              <td class="us">Reconciled chart rows, coded orders, an audit entry</td>
+            </tr>
+            <tr>
+              <th scope="row">Coding</th>
+              <td class="them">A coder, afterwards</td>
+              <td class="us">SNOMED CT, ICD-10-CM, RxNorm, LOINC at write time</td>
+            </tr>
+            <tr>
+              <th scope="row">When unsure</th>
+              <td class="them">Produces plausible text anyway</td>
+              <td class="us">Refuses, and queues it for a human with its source sentence</td>
+            </tr>
+            <tr>
+              <th scope="row">Reach</th>
+              <td class="them">Documentation, or scheduling</td>
+              <td class="us">Documentation → orders → results → care gaps → care plan</td>
+            </tr>
+            <tr>
+              <th scope="row">Corrections</th>
+              <td class="them">Edit the text</td>
+              <td class="us">Amend or void, reason required, never deleted</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="eyebrow">The loop</div>
+    <div class="body">
+      <h2>One agent, the whole clinical day</h2>
+      <p>
+        Because the agent holds the chart rather than a transcript, documentation stops being
+        the end of the interaction and becomes the start of it. Everything below reads the same
+        chart the note just changed.
+      </p>
+
+      <ul class="cols-2">
+        <li class="cap">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Orders, and the results that answer them</h3>
+            <p>
+              A note proposes drafts; releasing is a human act. Results return from a lab and
+              are matched to the order that asked — a result nobody ordered is never filed.
+            </p>
+          </div>
+        </li>
+        <li class="cap">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Care gaps that move when the note does</h3>
+            <p>
+              <em>"Well treated hypertension"</em> clears a flag; <em>"h/o type 2 diabetes"</em>
+              puts a problem on the chronic list. The morning's dictation changes the
+              afternoon's outreach list, because they are one system.
+            </p>
+          </div>
+        </li>
+        <li class="cap">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Predictive risk across the panel</h3>
+            <p>
+              Probability of an urgent visit or a critical result within 180 days, learned from
+              chart patterns and surfaced to the agent as one more tool it can cite.
+            </p>
+          </div>
+        </li>
+        <li class="cap is-out">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Care plan generation<span class="tag">Next</span></h3>
+            <p>
+              Goals, interventions and review dates grounded in the problem list and the
+              guidelines behind it — a proposal a clinician approves, refusing on the same
+              terms as everything else.
+            </p>
+          </div>
+        </li>
+        <li class="cap is-out">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Speech capture<span class="tag">Next</span></h3>
+            <p>
+              The pipeline already takes free text, so audio is a front door rather than a
+              rebuild: the same sentence spoken at the bedside reaches the same seven passes.
+            </p>
+          </div>
+        </li>
+        <li class="cap is-out">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Type, talk, or upload<span class="tag">Next</span></h3>
+            <p>
+              A React&nbsp;/&nbsp;Next.js front end that takes whatever the clinician has: typed
+              text, dictation, an outside note as a PDF, a lab report, an image carrying a
+              radiologist's findings. Each new input is a new <em>front door</em> — never a new
+              set of rules. Everything meets the same gate, is coded where the evidence
+              supports it, and goes to a human where it does not.
+            </p>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="eyebrow is-out">Out of scope</div>
+    <div class="body">
+      <h2>What is deliberately missing</h2>
+      <p>
+        A real EHR is mostly the things below, and hdh has almost none of them. That is a
+        choice, not a gap in the roadmap — none of it is difficult in the interesting sense,
+        and all of it is <strong>compliance-shaped</strong> rather than research-shaped.
+      </p>
+
+      <ul class="cols-3">
+        <li class="cap is-out">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Scheduling</h3>
+            <p>
+              Appointments, slots, templates, waitlists, recalls. Thoroughly solved elsewhere,
+              and it teaches nothing about agentic AI.
+            </p>
+          </div>
+        </li>
+        <li class="cap is-out">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Clinician identity</h3>
+            <p>
+              Profiles, roles, credentials, licensure, supervising relationships. hdh carries a
+              thin provider record and stops there.
+            </p>
+          </div>
+        </li>
+        <li class="cap is-out">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h3>Access control</h3>
+            <p>
+              Authentication, RBAC, break-glass, consent, tenancy, encryption at rest and in
+              transit, retention.
+            </p>
+          </div>
+        </li>
+      </ul>
+
+      <div class="scope-note">
+        <p>
+          These belong to a separate workstream — one that goes through HITRUST and HIPAA
+          review, at that discipline's pace and under that scrutiny. Bolting a half-version
+          onto a learning repository would teach exactly the wrong lesson: that a control
+          environment is a feature list. It is not, and pretending otherwise is how systems
+          that handle real patient data go wrong.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="eyebrow">What this is</div>
+    <div class="body">
+      <h2>An MIT-licensed way to learn agentic AI in healthcare</h2>
+      <p>
+        Not a product, not a validated clinical tool, and not seeking to be either. It is a
+        complete, readable worked example of applying agentic AI to clinical work — with the
+        design arguments written down beside the code, including the ones that turned out
+        wrong and what the measurement said instead.
+      </p>
+      <p>
+        Every patient in it is synthetic, which is the point: you can run it, break it, chart
+        nonsense into it and read exactly why it refused, without anyone's data being anywhere
+        near it. Clone it, point it at PostgreSQL, and talk to it.
+      </p>
+    </div>
+  </section>
+
+  <footer class="colophon">
+    <div>
+      <div class="repo"><a href="https://github.com/arsalanam/hdh">github.com/arsalanam/hdh</a></div>
+      <div class="terms" style="margin-top:0.45rem">MIT licensed · open source · Python</div>
+    </div>
+    <div class="terms">
+      10,000 synthetic patients · 165,000+ visits · 777,000+ lab results · zero PHI by
+      construction. A proof of concept, not a product, and not a validated clinical tool.<br />
+      <span class="vocab">SNOMED CT · ICD-10-CM · LOINC · RxNorm</span>
+    </div>
+  </footer>
+
+</div>
