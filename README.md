@@ -4,19 +4,210 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
-**Medically realistic synthetic family-medicine EHR data — plus modular AI care-program tooling on top.**
+**A working mini-EHR you drive by talking to it — and the synthetic practice
+it runs on.**
 
-10,000 patients · 165,000+ visits · 777,000+ lab results · no PHI, ever.
+Chart a dictated note. Place the orders it implies. Receive results back from
+a lab. Correct what's wrong, with an audit trail. Ask who's overdue. All of it
+against 10,000 synthetic patients, so you can break things freely: no PHI,
+ever.
 
-`hdh` generates outpatient (OPD) records driven by age, sex, and seasonal disease
-probabilities — as **households**: family structure, hereditary risk derived from
-relatives' actual generated conditions, structured allergies, medication lists,
-immunizations, procedures, and a stored SOAP note for every visit. Optional
-feature modules layer on top: care-gap detection, ML risk stratification, an
-agentic AI care assistant with an ICD-10-CM knowledge graph, narratives, and a
-FHIR R4 REST API.
+`hdh` is two things that need each other. Underneath is a medically realistic
+**synthetic family-medicine practice** — households with hereditary risk,
+seasonal disease incidence, comorbidity webs, four years of visits, labs and
+prescriptions. On top is an **agent-fronted EHR**: the clinical surface is a
+conversation, and every write goes through the same reconciliation, coding and
+audit machinery the CLI uses.
 
-📖 **[Feature Guide](docs/FEATURE_GUIDE.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[User Guides (per module)](docs/guides/README.md)** · **[Practitioner Guide (start here if you're not a developer)](docs/guides/practitioner-guide.md)**
+It is a **proof of concept**, not a product, and not a validated clinical
+tool. What it is good for is showing what an EHR looks like when the primary
+interface is a model that reads notes and calls tools, and where the honest
+answer to an ambiguous mention is a review queue rather than a guess.
+
+📖 **[Clinician's Guide](docs/guides/practitioner-guide.md)** (start here if
+you're not a developer) · **[Feature Guide](docs/FEATURE_GUIDE.md)** ·
+**[Architecture](docs/ARCHITECTURE.md)** ·
+**[Module guides](docs/guides/README.md)**
+
+---
+
+## The clinical loop
+
+This is the part worth looking at first. Every step below is a real command
+against a real chart, and each one is also reachable by asking the agent in
+plain language.
+
+### 1 · A note becomes a chart
+
+Paste what a clinician dictated. Prose, SOAP, or something in between:
+
+```bash
+hdh comprehend --file note.txt --mrn MRN67606524 --apply --dry-run
+```
+
+```
+  confirmed  condition   'type 2 diabetes' ≡ chart E11.9 — referenced, not duplicated
+  updated    condition   'type 2 diabetes': controlled True → False
+  new        medication  Metformin ER 2 x 500mg
+  new        request     medication: Metformin ER
+  new        request     lab: HbA1c
+  new        request     Follow-up visit in 90 days
+  review     condition   'blorbitis' — no billing mapping; NOT written
+```
+
+Seven passes run between the text and those verdicts: deterministic
+segmentation → LLM extraction (which **finds and types, never codes or
+asserts**) → validation against a closed schema with verbatim-span grounding →
+SNOMED / LOINC / RxNorm normalization → rules-first assertion (so *"denies
+chest pain"* is skipped) → contextual disambiguation → a reconciled write.
+
+Two rules do most of the work:
+
+- **The LLM classifies; deterministic code decides.** The model never picks a
+  code. It says *"this span is a problem, and this span is its dose"*, and the
+  terminology modules resolve the rest.
+- **Refuse, don't guess.** An entity that can't be resolved confidently goes
+  to a review queue and is never charted silently. `hdh comprehend --review`
+  is where a human settles it.
+
+Drop `--dry-run` to write it. Same-day notes reconcile into the existing
+encounter rather than duplicating it, and the text is stored as the visit's
+note, so the chart can always answer *"where did this come from?"*
+
+### 2 · Orders leave the building
+
+A note that says *"repeat HbA1c in 3 months"* creates a **draft** order, not
+an active one. Drafts are what a comprehended note is allowed to produce;
+releasing is a human act:
+
+```bash
+hdh orders list --mrn MRN67606524           # what's outstanding
+hdh orders add --mrn MRN67606524 --kind lab --display "Basic metabolic panel"
+hdh orders release --mrn MRN67606524 --outbox ./outbox
+```
+
+`--outbox` writes a FHIR order bundle for a partner to collect.
+
+### 3 · Results come back
+
+A note can *ask for* a test. It can never *report* one — there's no specimen,
+no method, no reference range and no performing lab behind a sentence. Results
+arrive from outside, matched against the order that asked for them:
+
+```bash
+hdh interchange run --partner mock-lab --outbox ./outbox --inbox ./inbox
+hdh interchange import --inbox ./inbox
+hdh interchange review                      # results that were refused
+```
+
+A result that matches no order isn't filed — it's queued for a human. That
+single rule is what keeps a chart's lab table meaning one thing.
+
+### 4 · The chart gets corrected
+
+Charts get things wrong: a mis-transcribed vital, a duplicate encounter, a
+diagnosis that turned out to be something else.
+
+```bash
+hdh chart history --mrn MRN67606524
+hdh chart amend --entity Condition --id 42 --set status=resolved \
+                --reason "resolved at follow-up" --dry-run
+hdh chart void --visit 2064 --reason "duplicate encounter"
+```
+
+Clinical rows are **voided, never deleted** — the row stops appearing in
+charts, exports and cohort queries while the audit event keeps its referent.
+Every change needs a reason. The agent holds the same three tools and **no
+delete tool at all**.
+
+### 5 · The panel gets watched
+
+```bash
+hdh care-gaps --limit 20                    # overdue preventive care, missed follow-ups
+hdh risk train && hdh risk score --top 20   # ML risk stratification
+```
+
+The uncontrolled-chronic gap fires on `chronic AND NOT controlled` — the two
+columns a note writes when it says *"well treated hypertension"* or *"h/o type
+2 diabetes"*. So charting a note changes what the panel view says the next
+morning, which is the point of these being one system rather than two.
+
+---
+
+## The same loop, by talking
+
+```
+you> Chart this for MRN67606524, dated today: "68yo returns for chronic
+     disease review. BP 128/78. Well treated hypertension, uncontrolled
+     type 2 diabetes. Continue lisinopril 10 mg daily. Repeat HbA1c in
+     3 months. Refer to ophthalmology."
+
+agent> Charted to visit #2073.
+       ✅ Hypertension (I10) — referenced, not duplicated; now flagged controlled
+       ✅ Type 2 diabetes — refined to SNOMED 443694000 "Uncontrolled type 2
+          diabetes mellitus"; problem list updated
+       ✅ Lisinopril 10 mg daily — prescription recorded
+       📋 3 draft orders: lab HbA1c (due 2026-11-22), referral to
+          ophthalmology, follow-up visit in 90 days
+       ✅ Vitals BP 128/78 recorded
+
+you> Anything overdue on this patient?
+```
+
+The agent runs through a **LangGraph pipeline** — gateway → topic guard and
+token quota → intent classification → tool executor → response assembler →
+response validator. A response is only streamed after the validator confirms
+every specific claim is grounded in tool evidence; ungrounded claims send the
+executor back with feedback (up to 3 tries).
+
+Its tools are the same code paths the CLI uses. That's deliberate: **an agent
+tool may not contain a decision a non-agent caller would also need**, so the
+agent and the terminal can never disagree about what a chart says.
+
+```bash
+hdh agent                                   # interactive chat
+hdh agent "Which patients need outreach?"   # one-shot
+hdh agent --compact-after 8                 # demo context compaction
+```
+
+---
+
+## Run it on PostgreSQL
+
+**Use PostgreSQL.** SQLite works and the test suite runs on it, but the
+clinical surface is meaningfully weaker there, and the difference is
+mechanical rather than a matter of taste.
+
+Terminology lookup — the step that turns *"SOB"* into a code — is a funnel
+with several rungs:
+
+| | PostgreSQL | SQLite |
+|---|---|---|
+| exact term | ✅ | ✅ |
+| abbreviation alias (`SOB - Shortness of breath`) | ✅ | ❌ |
+| full-text search (`ts_rank`, stemming, word order) | ✅ | ❌ |
+| trigram similarity (typo recovery) | ✅ | ❌ |
+| | | substring `LIKE` only |
+
+On SQLite, *"SOB"* never reaches **Dyspnea**, a misspelt drug name never
+recovers, and *"diabetes mellitus type 2"* misses *"Type 2 diabetes mellitus"*
+because substring matching can't reorder words. SNOMED CT, LOINC and RxNorm
+are also large enough that you want a real server holding them.
+
+```bash
+just deps                                   # PostgreSQL 16 on port 5433
+export HDH_DB_URL="postgresql+psycopg://hdh:hdh@localhost:5433/hdh"
+just db-upgrade                             # apply migrations
+hdh generate --patients 100 --years 2       # or migrate an existing SQLite file
+```
+
+Every command accepts `--db` if you'd rather be explicit:
+
+```bash
+hdh --db postgresql+psycopg://hdh:hdh@localhost:5433/hdh care-gaps
+```
+
+---
 
 ## Install
 
@@ -33,189 +224,84 @@ Or with pip:
 ```bash
 pip install -e .              # core: generation, exports, CLI
 pip install -e ".[risk]"      # + ML risk stratification (scikit-learn)
-pip install -e ".[agent]"     # + agentic AI assistant (Anthropic SDK)
+pip install -e ".[agent]"     # + the agent, comprehension, chart maintenance
 pip install -e ".[api]"       # + FHIR REST API (FastAPI)
-pip install -e ".[all]"       # everything (dev tools need uv or pip install pytest ruff mypy)
+pip install -e ".[all]"       # everything
 ```
 
-## Quick Start
+The agent needs an Anthropic API key: copy `.env.example` to `.env` and fill
+it in (`just` loads it automatically; `just check-env` verifies).
+
+---
+
+## The terminologies
+
+The clinical surface is only as good as its vocabularies, and each one has a
+job the others can't do:
+
+| Vocabulary | Answers | Loaded with |
+|---|---|---|
+| **SNOMED CT** | what the clinician asserted | `hdh snomed load --download` |
+| **ICD-10-CM** | what it bills as | `hdh icd load --download` |
+| **LOINC** | what test was ordered | `hdh loinc load --source <dir>` |
+| **RxNorm** | what drug was prescribed | `hdh rxnorm load --source <dir>` |
+
+The line between them is a design rule, not a preference: **a note asserts;
+only a partner reports.** A note names a medication (RxNorm), orders a lab
+(LOINC), and asserts clinical facts (SNOMED). A lab *value* mentioned in prose
+is evidence about a condition — it never becomes a lab result.
 
 ```bash
-# Generate a quick 100-patient panel (full charts make big runs slow —
-# download the pre-built 10k database from Releases instead of generating it)
-hdh generate --patients 100 --years 2
-
-# Inspect
-hdh stats
-hdh show --mrn MRN12345678
-hdh list-conditions
-
-# Export to JSON / FHIR R4 / plain text
-hdh export --format all --limit 500 --output-dir exports/
-
-# Simulate: inject a January flu spike, advance the clock 6 months
-hdh add-spike --condition influenza --month 1 --n 300
-hdh advance --months 6
+hdh snomed search "heart attack"            # synonym-aware concept search
+hdh snomed subsumes 64572001 73211009       # is diabetes a kind of disease? True
+hdh icd codify "broke her left ankle, first visit"
+hdh rxnorm code "Metformin ER 500mg"        # deepest level the evidence supports
+hdh loinc search "hba1c"
 ```
 
-Feature modules add their own subcommands:
+All four are licensed or large; **loaders ship, data never does.** ICD-10-CM
+and SNOMED CT download themselves (SNOMED needs a free
+[UMLS key](https://uts.nlm.nih.gov/uts/signup-login) in `.env`). LOINC and
+RxNorm releases are fetched by hand from their own sites and pointed at with
+`--source`. Release builds are gated by `just release-check`, so a licensed
+catalog can't leave the building.
 
-```bash
-hdh care-gaps --limit 20                  # overdue preventive care, missed follow-ups
-hdh risk train && hdh risk score --top 20 # ML risk stratification
-hdh agent                                 # interactive AI chat over the dataset
-hdh agent "Which patients need outreach?" # ...or one-shot
-hdh narrative --mrn MRN12345678           # SOAP-note narratives
-hdh serve --port 8000                     # FHIR R4 REST API
-hdh icd load --download && hdh icd codify "broke her left ankle, first visit"
-                                          # ICD-10-CM knowledge graph + coding
-hdh snomed load --download                # SNOMED CT US Edition (needs a free
-                                          # UMLS key — see .env.example; data is
-                                          # licensed and never ships with hdh)
-hdh snomed search "heart attack"          # synonym-aware concept search
-hdh snomed subsumes 64572001 73211009     # is diabetes a kind of disease? True
-hdh comprehend --file note.txt            # doctor-note comprehension: free text →
-                                          # coded, span-grounded structured record
-```
-
-### Ask the agent ontology-grounded questions
-
-With the ICD-10-CM and SNOMED CT catalogs loaded, the agent holds coding
-tools from both ontology modules alongside its chart/SQL tools — so
-population questions can be answered by **graph semantics instead of
-string-matching**, and every cited code is grounded in tool evidence:
+With catalogs loaded, the agent answers population questions by **graph
+semantics instead of string-matching**:
 
 ```bash
 hdh agent "Which patients have a disorder under cerebrovascular disease?"
-#   → snomed_descendants sweeps the SNOMED subtree (transitive closure),
-#     maps to ICD-10 prefixes, then search_patients finds the cohort
-
+#   → snomed_descendants sweeps the subtree, maps to ICD-10, finds the cohort
 hdh agent "Is atrial fibrillation a kind of heart disease?"
-#   → snomed_subsumes answers authoritatively — one closure hit, no guessing
-
-hdh agent "Normalize the mention 'stomach flu' and code it for billing"
-#   → snomed_normalize (synonym funnel: FTS → trigram → semantic-tag fit),
-#     then icd_codify for the billing view
-
-hdh agent "What are the defining attributes of a mechanical thrombectomy?"
-#   → snomed_lookup returns method / procedure-site attribute edges
+#   → snomed_subsumes answers from the closure table — no guessing
 ```
 
-The toolsets are discovered through each module's published API and are
-offered only when the catalog is actually loaded — the agent runs fine
-without them.
+---
 
-### Chart free-text notes through the agent
+## Where the patients come from
 
-With the comprehension module active (SNOMED loaded + `[agent]` extra), a
-provider can maintain the chart **by talking to the agent** — paste a
-note, get a reconciled chart update back:
-
-```
-you> Can you add the following note to the patient chart for patient
-     MRN67606524, provided yesterday by Dr. Priya Sharma:
-     Patient seen in clinic for evaluation of elevated blood pressure...
-     Start Lisinopril 10mg once daily for hypertension. ...
-
-agent> ✅ Essential hypertension (I10) — already on the problem list,
-          referenced, not duplicated
-       ✅ Lisinopril 10mg once daily — new medication added
-       ✅ Vitals BP 152/94, HR 88, Weight 82.5kg — recorded
-       ⚠️ "headaches" (SNOMED 25064002) — no billing mapping;
-          NOT written, queued for human review
-```
-
-Under the hood that is one `apply_note` tool call running the full
-pipeline: deterministic segmentation → LLM extraction (finds and types,
-**never** codes or asserts) → validation against a closed schema with
-verbatim-span grounding → SNOMED/LOINC/drug-catalog normalization →
-rules-first assertion (negations like "denies chest pain" are skipped) →
-a reconciled chart write with a verdict per entity: `new`, `confirmed`,
-`review`, or `skipped`. Review items are **never written silently** — the
-agent reports them for human resolution (`hdh comprehend --review`).
-Addenda for the same date reconcile into the existing visit instead of
-duplicating it, and the pasted text is stored as the visit's note for
-full provenance. The same pipeline is scriptable without the agent:
+The substrate: `hdh` generates outpatient records driven by age, sex and
+seasonal disease probability — as **households**, so hereditary risk is
+derived from relatives' actual generated conditions rather than sampled
+independently.
 
 ```bash
-hdh comprehend --file note.txt                          # print the coded record
-hdh comprehend --mrn MRN... --visit-date 2026-08-14 --store   # persist it
-hdh comprehend --mrn MRN... --visit-date 2026-08-14 --apply --dry-run
-hdh comprehend --review                                 # the human review queue
-hdh comprehend --review --resolve 12 --decision accept --icd10 R51.9
-                                                        # approve → charts it, audited
-hdh comprehend --file note.txt --fhir bundle.json       # FHIR document export
+hdh generate --patients 100 --years 2       # a small practice to explore
+hdh stats
+hdh show --mrn MRN12345678
+hdh export --format all --limit 500 --output-dir exports/
+hdh add-spike --condition influenza --month 1 --n 300   # inject a flu outbreak
+hdh advance --months 6                      # move the clock; chronic patients accrue visits
+hdh serve --port 8000                       # FHIR R4 REST API
 ```
 
-Design docs: [notes-comprehension-service.md](docs/design/notes-comprehension-service.md)
-(the service) and [comprehension-extraction-schema.md](docs/design/comprehension-extraction-schema.md)
-(the extraction contract, milestones, eval baseline, and testing plan).
-For the bigger picture — why the agent tier is the new EHR UI — read the
-[note-comprehension introduction](docs/articles/note-comprehension-agent-ui.md).
+10,000 patients · 165,000+ visits · 777,000+ lab results. Full charts make
+big runs slow — download the pre-built 10k database from the
+[latest release](https://github.com/arsalanam/hdh/releases/latest) instead of
+generating it. `--seed N` makes any run byte-for-byte reproducible.
 
-### Correct the chart — with an audit trail
 
-Charts get things wrong: a mis-transcribed vital, a duplicate encounter,
-a diagnosis that turned out to be something else. `hdh.core.chartedit` is
-the **one sanctioned way** to change a chart row, and it records who
-changed what, when, and why:
-
-```bash
-hdh chart history --mrn MRN12345678              # who changed what, and why
-hdh chart amend --entity Condition --id 42 --set status=resolved \
-                --reason "resolved at follow-up" --dry-run
-hdh chart void --visit 2064 --reason "duplicate encounter"
-hdh chart purge-visit --id 2064 --yes            # ADMIN: really delete (not clinical)
-```
-
-The agent holds the same capability through `amend_chart_entry`,
-`void_chart_entry` and `chart_history` — one row per call, a reason
-required, `dry_run` for previews, and **no delete tool at all**. Both
-surfaces are thin clients of one core, so a correction made by talking to
-the agent and one made at the terminal land in the same trail with the
-same shape.
-
-Clinical rows are **voided, never deleted**: the row stops appearing in
-the chart (exports, cohort queries and comprehension's reconciliation all
-respect it) while the audit event keeps its referent. Comprehension's own
-writes are recorded too, so history answers "where did this diagnosis
-come from?" with "the note, via the pipeline". Design:
-[chart-maintenance.md](docs/design/chart-maintenance.md).
-
-### The agent pipeline
-
-One-shot questions run through a production-style **LangGraph pipeline**:
-gateway → guardrails (topic guard + daily token quota) → intent analysis →
-tool executor → response assembler → response validator. A response is only
-streamed after the validator confirms every claim is grounded in tool
-evidence; hallucinations send the executor back with feedback (max 3 tries).
-`--simple` uses the plain tool-runner loop instead. See
-[docs/guides/agent.md](docs/guides/agent.md).
-
-### The agent chat UI
-
-`hdh agent` (no arguments) opens an interactive chat with the care-program
-agent. It needs an Anthropic API key: copy `.env.example` to `.env` and fill
-it in (`just` loads it automatically; `just check-env` verifies), or set
-`ANTHROPIC_API_KEY` machine-wide — see
-[docs/guides/agent.md](docs/guides/agent.md) for all options. The
-conversation is remembered across questions, answers render as markdown, tool
-calls are traced live, and previous questions are recallable with the arrow
-keys. Slash commands: `/history` (full chat so far), `/context` (messages +
-real token count), `/compact`, `/save`, `/clear`, `/exit`.
-
-**Context management:** once the conversation exceeds 100 messages (tool
-round-trips included), the agent automatically summarizes the older turns
-into a compact `<conversation_summary>` briefing — preserving MRNs, findings,
-and decisions — and keeps the 20 most recent messages verbatim, so context
-stays bounded in long sessions. Demo it without waiting 100 messages:
-
-```bash
-hdh agent --compact-after 8    # compaction kicks in after ~4 exchanges
-```
-
-The compaction logic itself is exercised offline in
-`tests/test_agent_chat.py`, which collapses a 120-message conversation to 21.
+---
 
 ## Project Structure
 
@@ -274,11 +360,16 @@ pluggable (`ConditionSource` protocol — see
 
 ## The Database
 
-The generator writes `family_medicine.db` (SQLite; 10k patients with full
-charts). **v0.4.0 is a breaking schema change** — the chart expansion unified
-the problem list and added family/medication/note entities; datasets from
-earlier versions must be regenerated (or re-download the release asset).
-It is **not** checked into git. Either build one (`hdh generate`) or download
+PostgreSQL is the recommended backend (see above — the terminology funnel
+loses three of its four rungs on SQLite). The generator's default is
+`family_medicine.db`, a SQLite file, which is convenient for a first look and
+for the test suite; `hdh migrate` copies one into PostgreSQL when you outgrow
+it.
+
+**v0.4.0 is a breaking schema change** — the chart expansion unified the
+problem list and added family/medication/note entities; datasets from earlier
+versions must be regenerated (or re-download the release asset). The database
+is **not** checked into git. Either build one (`hdh generate`) or download
 the pre-built 10,000-patient database from the
 [latest release](https://github.com/arsalanam/hdh/releases/latest)
 (`family_medicine-10k.zip`, ~28 MB — unzip into the project folder). The
