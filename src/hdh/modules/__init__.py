@@ -17,6 +17,7 @@ CLI_MODULES = {
     "hdh.modules.icd10cm.cli": None,
     "hdh.modules.snomed.cli": None,
     "hdh.modules.loinc.cli": None,
+    "hdh.modules.rxnorm.cli": None,
     "hdh.modules.narrative.cli": None,
     "hdh.modules.comprehension.cli": "agent",
     "hdh.modules.interchange.cli": None,
@@ -34,6 +35,7 @@ ONTOLOGY_MODULES = {
     "icd10cm": "hdh.modules.icd10cm.ontology",
     "snomed_ct": "hdh.modules.snomed.ontology",
     "loinc": "hdh.modules.loinc.ontology",
+    "rxnorm": "hdh.modules.rxnorm.ontology",
 }
 
 # Modules contributing condition packs to the generator (each exposes

@@ -1,0 +1,20 @@
+100001|ENG||||||||||RXNORM|IN|100001|Blorbizide||N||
+100002|ENG||||||||||RXNORM|PIN|100002|Blorbizide hydrochloride||N||
+100010|ENG||||||||||RXNORM|SCDC|100010|Blorbizide 10 MG||N||
+100011|ENG||||||||||RXNORM|SCD|100011|Blorbizide 10 MG Oral Tablet||N||
+100012|ENG||||||||||RXNORM|SCD|100012|Blorbizide 10 MG Oral Tablet Extended Release||N||
+100020|ENG||||||||||RXNORM|BN|100020|Zorbex||N||
+100021|ENG||||||||||RXNORM|SBD|100021|Zorbex 10 MG Oral Tablet||N||
+100030|ENG||||||||||RXNORM|DF|100030|Oral Tablet||N||
+100031|ENG||||||||||RXNORM|DF|100031|Oral Tablet Extended Release||N||
+200001|ENG||||||||||RXNORM|IN|200001|Quixamet||N||
+200010|ENG||||||||||RXNORM|SCDC|200010|Quixamet 500 MG||N||
+300001|ENG||||||||||RXNORM|MIN|300001|Blorbizide / Quixamet||N||
+300011|ENG||||||||||RXNORM|SCD|300011|Blorbizide 10 MG / Quixamet 500 MG Oral Tablet||N||
+300020|ENG||||||||||RXNORM|BN|300020|Zorbamet||N||
+300021|ENG||||||||||RXNORM|SBD|300021|Zorbamet 10-500 MG Oral Tablet||N||
+100001|ENG||||||||||MSH|SY|100001|Blorbizid||N||
+100011|ENG||||||||||MSH|SY|100011|Blorbizide 10mg tablet||N||
+100020|ENG||||||||||MSH|SY|100020|Zorbex brand of blorbizide||N||
+300021|ENG||||||||||MSH|SY|300021|Zorbamet 10/500||N||
+100011|ENG||||||||||RXNORM|SY|100011|Blorbizide OLD NAME||O||
