@@ -93,7 +93,11 @@ def test_the_module_hook_can_move_a_candidate(two_vocabularies):
     SNOMED's semantic tag and subtree, LOINC's specimen axis."""
 
     def prefer_disorders(concept, context):
-        return [(0.5, "tag: disorder")] if concept.properties.get("tag") == "disorder" else []
+        # Big enough to clear ELABORATION_PENALTY: A2's term elaborates the
+        # mention by two words of three, so a hook that could not outweigh
+        # that could never move a candidate whose extra words are the very
+        # thing the module recognises.
+        return [(0.9, "tag: disorder")] if concept.properties.get("tag") == "disorder" else []
 
     plain = search(two_vocabularies, SearchProfile(ontology=VOCAB_A), "Wobbling")
     boosted = search(
@@ -153,3 +157,52 @@ def test_a_vocabulary_without_abbreviation_terms_skips_that_rung():
     it has no "ABBR - Expansion" shape to look for. The default is None so
     a module has to opt IN rather than inherit SNOMED's convention."""
     assert SearchProfile(ontology="x").abbreviation_separator is None
+
+
+# ── the elaboration penalty ──────────────────────────────────────────────
+
+
+def test_the_plainest_concept_wins_when_both_cover_the_mention(two_vocabularies):
+    """The half of the question coverage never asked.
+
+    "Wobbling" is fully covered by both A1 and A2 — coverage only ever asked
+    what a term FAILED to explain, so an elaboration of a concept scored the
+    same as the concept itself and the winner fell out of raw-score noise. On
+    the real edition that is how "type 2 diabetes" answered with 'Cataract due
+    to diabetes mellitus type 2': five candidates tied at 1.000.
+    """
+    hits = search(two_vocabularies, SearchProfile(ontology=VOCAB_A), "Wobbling")
+    assert hits[0].concept.code == "A1"
+    assert "elaboration" in hits[1].reason
+    assert hits[0].score > hits[1].score
+
+
+def test_asking_for_the_longer_concept_gets_it(two_vocabularies):
+    """The penalty must not make elaborated concepts unreachable — it ranks
+    them below a plainer match for a plainer mention, nothing more."""
+    hits = search(two_vocabularies, SearchProfile(ontology=VOCAB_A), "Wobbling gait disorder")
+    assert hits[0].concept.code == "A2"
+    assert "elaboration" not in hits[0].reason
+
+
+def test_an_abbreviation_alias_is_not_an_elaboration():
+    """`ABBR - Expansion` spells out what the mention already means, so the
+    expansion is a definition and not an unasked-for claim.
+
+    Without the exemption "SOB" cost 'SOB - Shortness of breath' two thirds of
+    its words and the funnel answered a question about breathlessness with
+    'Sobbing respiration'. The behaviour is asserted by MUST_RESOLVE["SOB"] in
+    the full-edition suite, because the abbreviation rung is PostgreSQL-only;
+    this pins the rule that rung depends on.
+    """
+    from hdh.core.termsearch import _is_abbreviation_alias
+
+    profile = SearchProfile(ontology="v", abbreviation_separator=" - ")
+    assert _is_abbreviation_alias(profile, "SOB", "SOB - Shortness of breath")
+    assert _is_abbreviation_alias(profile, "sob", "SOB - Shortness of breath"), "case must not matter"
+    # not the abbreviation being asked about — the expansion is genuinely extra
+    assert not _is_abbreviation_alias(profile, "breath", "SOB - Shortness of breath")
+    # a plain term is never exempt, however it is punctuated
+    assert not _is_abbreviation_alias(profile, "Dyspnea", "Dyspnea on exertion")
+    # a vocabulary that does not write aliases opts out entirely
+    assert not _is_abbreviation_alias(SearchProfile(ontology="v"), "SOB", "SOB - Shortness of breath")

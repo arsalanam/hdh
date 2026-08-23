@@ -126,9 +126,20 @@ FRONTIER: tuple[tuple[str, str, str], ...] = (
 #:
 #: 6 -> 3 when the ABBR-alias rung and the per-word coverage rule landed:
 #: "SOB" resolves outright, and "sugar diabetes" / "smoker's lung" dropped
-#: below the review line. The three that remain need vocabulary or
-#: semantics, not ranking.
-MAX_CONFIDENT_WRONG = 3
+#: below the review line.
+#:
+#: 3 -> 1 with the elaboration penalty (termsearch.ELABORATION_PENALTY).
+#: Coverage had asked only what a term failed to explain; nothing asked what
+#: it invented, so every elaboration of a concept tied the concept itself and
+#: the winner fell out of raw-score noise. Penalising unasked-for words fixed
+#: the whole class at once — and, unprompted, dropped "foot exam" ->
+#: 'Diabetic foot examination not done' below the review line, which had been
+#: charting the OPPOSITE of what the note said.
+#:
+#: The one that remains is not a ranking bug: "can't catch my breath" really
+#: does contain the words of 'Catching breath', and no lexical rule
+#: distinguishes them. That one needs semantics.
+MAX_CONFIDENT_WRONG = 1
 
 #: Below this, the pipeline routes a mention to human review rather than
 #: charting it (pipeline.REVIEW_THRESHOLD).
@@ -269,14 +280,25 @@ def test_control_refinement_works_for_diabetes_and_refuses_for_hypertension(serv
 
 
 def test_the_refinement_guards_reject_a_plausible_wrong_answer(service):
-    """Searching "uncontrolled essential hypertension" returns *Benign
-    essential hypertension* — a real subtype, genuinely subsumed by the
-    original, and completely wrong. Subsumption alone would accept it; the
-    confidence and the control-word check are what refuse it."""
+    """Subsumption alone is not enough to accept a refinement.
+
+    Building the phrase and searching for it puts four real subtypes of
+    essential hypertension in the results — *Benign*, *Labile*, *Systolic*,
+    *Malignant*. Every one is genuinely subsumed by the concept being
+    refined and every one is a different disease from "uncontrolled". Only
+    the control-word guard separates them from a true refinement, and only
+    the confidence guard keeps the whole search from mattering.
+    """
+    from hdh.modules.comprehension.applier import _CONTROL_WORDS
+
     hits = service.normalize(
-        "Uncontrolled Essential hypertension", {"semantic_tags": ["disorder", "finding"], "limit": 1}
+        "Uncontrolled Essential hypertension", {"semantic_tags": ["disorder", "finding"], "limit": 8}
     )
-    assert hits, "the funnel returned nothing to guard against"
-    tempting = hits[0]
-    assert service.subsumes("59621000", tempting.concept.code), "the subsumption guard alone passes it"
-    assert "control" not in tempting.concept.display.lower(), "the control-word guard is what catches it"
+    subsumed = [h for h in hits if service.subsumes("59621000", h.concept.code)]
+    assert subsumed, "no subsumed candidate to guard against"
+    for hit in subsumed:
+        display = (hit.concept.display or "").lower()
+        assert not any(word in display for word in _CONTROL_WORDS), (
+            f"{hit.concept.display!r} passes BOTH the subsumption and control-word guards — "
+            "if this is genuinely a control qualifier the refinement should accept it"
+        )
