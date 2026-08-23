@@ -64,47 +64,54 @@ def mark(d, x, y, scale, ui, ui_b, ui_s):
     return y + int(126 * scale)
 
 
-def verdicts(d, x0, x1, y, mono, mono_b, step, pad_in):
-    """The verdict panel. Returns bottom y."""
-    height = pad_in * 2 + 40 + step * len(ROWS)
+def verdicts(d, x0, x1, y, mono, mono_b, step, pad_in, k=1.0):
+    """The verdict panel. Returns bottom y. ``k`` scales the internals so a
+    print-resolution render is drawn, not upscaled."""
+    height = pad_in * 2 + int(40 * k) + step * len(ROWS)
     d.rounded_rectangle([x0, y, x1, y + height], radius=14, fill=PANEL, outline=EDGE, width=1)
-    x, ty = x0 + 32, y + pad_in
+    x, ty = x0 + int(32 * k), y + pad_in
     d.text((x, ty), "$ hdh comprehend --file note.txt --apply", font=mono, fill=DIM)
-    ty += 42
-    label_w = max(d.textlength(r[0], font=mono_b) for r in ROWS) + 26
+    ty += int(42 * k)
+    label_w = max(d.textlength(r[0], font=mono_b) for r in ROWS) + int(26 * k)
     for verdict, colour, subject, detail in ROWS:
         d.text((x, ty), verdict, font=mono_b, fill=colour)
         d.text((x + label_w, ty), subject, font=mono_b, fill=INK)
-        sx = x + label_w + d.textlength(subject, font=mono_b) + 18
+        sx = x + label_w + d.textlength(subject, font=mono_b) + int(18 * k)
         d.text((sx, ty + 1), detail, font=mono, fill=MUTED if colour is TEAL else AMBER)
         ty += step
     return y + height
 
 
-def footer(d, x0, x1, y, ui_s):
+def footer(d, x0, x1, y, ui_s, k=1.0):
     d.text((x0, y), "SNOMED CT", font=ui_s, fill=BLUE)
     dx = x0 + d.textlength("SNOMED CT", font=ui_s)
     for label in ("ICD-10-CM", "LOINC", "RxNorm"):
-        d.text((dx + 12, y), "·", font=ui_s, fill=EDGE)
-        dx += 12 + d.textlength("·  ", font=ui_s)
+        d.text((dx + int(12 * k), y), "·", font=ui_s, fill=EDGE)
+        dx += int(12 * k) + d.textlength("·  ", font=ui_s)
         d.text((dx, y), label, font=ui_s, fill=BLUE)
         dx += d.textlength(label, font=ui_s)
     tail = "10,000 synthetic patients · zero PHI · MIT"
     d.text((x1 - d.textlength(tail, font=ui_s), y), tail, font=ui_s, fill=DIM)
 
 
-def wide(path):
-    W, H, pad = 1200, 627, 58
+def wide(path, k=1.0):
+    """The banner card. ``k=2`` renders at print resolution for an A4 page —
+    drawn at size rather than upscaled, so the mono stays crisp."""
+    W, H, pad = int(1200 * k), int(627 * k), int(58 * k)
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
-    ui_b, ui, ui_s = font("segoeuib.ttf", 25), font("segoeui.ttf", 23), font("segoeui.ttf", 19)
-    mono, mono_b = font("CascadiaMono.ttf", 20), font("CascadiaMono.ttf", 21)
+    ui_b = font("segoeuib.ttf", int(25 * k))
+    ui = font("segoeui.ttf", int(23 * k))
+    ui_s = font("segoeui.ttf", int(19 * k))
+    mono = font("CascadiaMono.ttf", int(20 * k))
+    mono_b = font("CascadiaMono.ttf", int(21 * k))
 
-    block = 126 + (26 * 2 + 40 + 44 * 4) + 34 + 24
+    step, pad_in = int(44 * k), int(26 * k)
+    block = int(126 * k) + (pad_in * 2 + int(40 * k) + step * len(ROWS)) + int(58 * k)
     y = (H - block) // 2
-    y = mark(d, pad, y, 1.0, ui, ui_b, ui_s)
-    y = verdicts(d, pad, W - pad, y + 8, mono, mono_b, 44, 26)
-    footer(d, pad, W - pad, y + 30, ui_s)
+    y = mark(d, pad, y, k, ui, ui_b, ui_s)
+    y = verdicts(d, pad, W - pad, y + int(8 * k), mono, mono_b, step, pad_in, k)
+    footer(d, pad, W - pad, y + int(30 * k), ui_s, k)
     img.save(path)
     print("wrote", path, img.size)
 
@@ -141,8 +148,8 @@ def square(path):
     d.polygon([(cx - 9, y + 48), (cx + 9, y + 48), (cx, y + 64)], fill=TEAL)
     y += 78
 
-    y = verdicts(d, pad, W - pad, y, mono, mono_b, 50, 28)
-    footer(d, pad, W - pad, y + 40, ui_s)
+    y = verdicts(d, pad, W - pad, y, mono, mono_b, 50, 28, 1.15)
+    footer(d, pad, W - pad, y + 40, ui_s, 1.15)
     img.save(path)
     print("wrote", path, img.size)
 
@@ -150,4 +157,5 @@ def square(path):
 OUT = pathlib.Path(__file__).resolve().parent.parent / "docs" / "assets"
 OUT.mkdir(parents=True, exist_ok=True)
 wide(str(OUT / "hdh-card-wide.png"))
+wide(str(OUT / "hdh-card-wide@2x.png"), k=2)
 square(str(OUT / "hdh-card-square.png"))
