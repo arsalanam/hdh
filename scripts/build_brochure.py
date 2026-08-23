@@ -66,22 +66,48 @@ def build_html() -> str:
 
 
 def build_pdf() -> None:
+    """Render the PDF, and refuse to pretend when it did not render.
+
+    Chrome exits 0 even when it could not write the file — and on Windows it
+    cannot, if a PDF viewer has the old one open. The stale PDF then stays on
+    disk looking freshly built, which is how a layout fix reached the HTML
+    and never reached the PDF. So: render beside the target, check it, and
+    only then move it into place.
+    """
+    import os
+    import tempfile
+
     chrome = find_chrome()
     if chrome is None:
         print("pdf   skipped — no Chrome found (set CHROME=/path/to/chrome)")
         return
-    subprocess.run(
-        [
-            chrome,
-            "--headless",
-            "--disable-gpu",
-            "--no-pdf-header-footer",
-            f"--print-to-pdf={PDF}",
-            HTML.as_uri(),
-        ],
-        check=True,
-        capture_output=True,
-    )
+
+    with tempfile.TemporaryDirectory() as scratch:
+        staged = pathlib.Path(scratch) / "brochure.pdf"
+        profile = pathlib.Path(scratch) / "profile"  # never reuse a cached render
+        subprocess.run(
+            [
+                chrome,
+                "--headless",
+                "--disable-gpu",
+                "--no-pdf-header-footer",
+                f"--user-data-dir={profile}",
+                f"--print-to-pdf={staged}",
+                HTML.as_uri(),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        if not staged.exists() or staged.stat().st_size < 1024:
+            sys.exit("pdf   FAILED — Chrome wrote nothing (it still exits 0 when it doesn't)")
+        try:
+            os.replace(staged, PDF)
+        except PermissionError:
+            sys.exit(
+                f"pdf   FAILED — {PDF.relative_to(ROOT)} is open in another program.\n"
+                "      Close it and run again; the PDF on disk is STALE until you do."
+            )
+
     print(f"pdf   {PDF.relative_to(ROOT)}  ({PDF.stat().st_size / 1024:.0f} KB)")
 
 
