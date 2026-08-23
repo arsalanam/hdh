@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date as date_type
 from datetime import timedelta
+from functools import lru_cache
 from typing import Any
 
 from hdh.modules.comprehension.contracts import Assertion, AttributeKind, MentionType
@@ -157,6 +158,41 @@ def _audit_creations(session, result: ApplyResult, provider_id: int | None) -> N
     actor = Actor(name=name, source=EditSource.PIPELINE, provider_id=provider_id)
     for entity, row in result.created:
         record_creation(session, actor, entity, row, reason=f"charted from note (visit #{result.visit_id})")
+
+
+@lru_cache(maxsize=1)
+def _chronic_icd_codes() -> frozenset[str]:
+    """ICD-10 codes the condition catalog marks chronic.
+
+    Derived from the packs, so a new pack extends this for free — the same
+    argument as the lab-alias table in ``normalize``.
+
+    The obvious alternative was the ontology, and it does not work.
+    SNOMED has a `Chronic disease` (27624003) concept, but measured on the
+    US Edition it subsumes COPD and NOT type 2 diabetes, hypertension or
+    asthma — the same uneven coverage that made control-qualified concepts
+    an enrichment rather than a mechanism (§10.0). A rule built on it would
+    have worked for one disease in five and looked principled doing it.
+    """
+    from hdh.core.conditions import default_catalog
+
+    catalog = default_catalog()
+    return frozenset(catalog.get(name).icd10_code for name in catalog.names() if catalog.get(name).chronic)
+
+
+def _is_chronic(icd10: str, display: str) -> bool:
+    """Is this an ongoing problem or this encounter's diagnosis?
+
+    Two signals, both narrow on purpose. The catalog is authoritative for
+    what it knows; "chronic" in the concept's own display carries the rest.
+    Anything else stays an encounter diagnosis, because a note that does not
+    say is not evidence that it is.
+
+    HISTORICAL is deliberately NOT a signal: "h/o pneumonia" is history and
+    is not a chronic condition. Duration and chronicity are different
+    questions and only one of them is asked here.
+    """
+    return icd10 in _chronic_icd_codes() or "chronic" in display.lower()
 
 
 #: Assertions that keep a problem off the chart altogether: the note named
@@ -351,9 +387,14 @@ def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: A
             visit_id=visit.id,
             icd10_code=icd10,
             description=item.code.display,
-            chronic=False,
+            chronic=_is_chronic(icd10, item.code.display),
             status=ConditionStatus.ACTIVE,
-            onset_date=visit.visit_date,
+            # A problem the patient ARRIVED with did not start today. An
+            # onset stamped with the visit date reads to any rule that
+            # measures duration as though the disease began at this
+            # encounter; None is the honest answer to a question the note
+            # did not answer.
+            onset_date=None if assertion is Assertion.HISTORICAL else visit.visit_date,
         )
         # What the note says about CONTROL. The flag is primary — it works
         # for every condition — and a control-qualified SNOMED concept
