@@ -137,6 +137,21 @@ def test_shared_trigger_distributes_negation(catalog):
     assert by_text["Blorbitis"].assertion.assertion is Assertion.HISTORICAL
 
 
+def test_the_history_abbreviations_are_recognised(catalog):
+    """ "h/o" and "hx of" are how notes actually write it — spelling out
+    "history of" is the exception. Without them the commonest form of "this
+    is background, not today" was read as a present-tense complaint, which
+    also made it eligible to become the visit's chief complaint (#71)."""
+    for phrase in ("h/o", "hx of", "history of"):
+        note = f"S: Patient with {phrase} Blorbitis, doing well."
+        result = comprehend_note(
+            catalog, comprehend_text(note, stub_extractor({"mentions": [_m("problem", "Blorbitis")]}))
+        )
+        assertion = result.mentions[0].assertion
+        assert assertion.assertion is Assertion.HISTORICAL, f"{phrase!r} → {assertion.assertion}"
+        assert phrase in assertion.evidence
+
+
 # ── stage 5: ancestor-context disambiguation ─────────────────────────────────
 
 

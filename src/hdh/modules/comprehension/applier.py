@@ -108,12 +108,11 @@ def apply_to_chart(
     visit, visit_date, provider_id = target.visit, target.visit_date, target.provider_id
     created = False
     if visit is None:
-        problem = next((m for m in note.mentions if m.mention.mention_type is MentionType.PROBLEM), None)
         visit = Visit(
             patient_id=patient.id,
             visit_date=visit_date or date_type.today(),
             visit_type=VisitType.FOLLOW_UP,
-            chief_complaint=problem.mention.text if problem else "Note-derived encounter",
+            chief_complaint=_chief_complaint(note),
             provider_id=provider_id,
         )
         session.add(visit)
@@ -158,6 +157,33 @@ def _audit_creations(session, result: ApplyResult, provider_id: int | None) -> N
     actor = Actor(name=name, source=EditSource.PIPELINE, provider_id=provider_id)
     for entity, row in result.created:
         record_creation(session, actor, entity, row, reason=f"charted from note (visit #{result.visit_id})")
+
+
+#: Assertions that keep a problem off the chart altogether: the note named
+#: the condition in order to rule it out, to attribute it to a relative, or
+#: to consider it — none of which is the patient having it.
+_NOT_THE_PATIENTS = (Assertion.NEGATED, Assertion.FAMILY_HISTORY, Assertion.HYPOTHETICAL)
+
+
+def _chief_complaint(note: ComprehendedNote) -> str:
+    """What the encounter was FOR, in the note's own words.
+
+    Only a PRESENT problem qualifies, and that is a stricter rule than
+    :data:`_NOT_THE_PATIENTS` deliberately — the two questions are related
+    and not the same. A note routinely opens by ruling things out ("no chest
+    pain or shortness of breath"), so taking the first problem mention
+    regardless of assertion puts a DENIED symptom in the chief complaint,
+    where every downstream reader takes it for the reason the patient came.
+
+    HISTORICAL and UNCERTAIN are excluded here although they do reach the
+    problem list: "h/o type 2 diabetes" is background the patient arrived
+    with, not what today's visit is about. When nothing qualifies, saying the
+    note does not name one beats naming the wrong one.
+    """
+    for item in note.mentions:
+        if item.mention.mention_type is MentionType.PROBLEM and item.assertion.assertion is Assertion.PRESENT:
+            return item.mention.text
+    return "Note-derived encounter"
 
 
 #: Control phrasing a note uses → whether the condition is controlled.
@@ -272,7 +298,7 @@ def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: A
         if item.mention.mention_type is not MentionType.PROBLEM:
             continue
         assertion = item.assertion.assertion
-        if assertion in (Assertion.NEGATED, Assertion.FAMILY_HISTORY, Assertion.HYPOTHETICAL):
+        if assertion in _NOT_THE_PATIENTS:
             result.verdicts.append(
                 Verdict("skipped", "condition", f"{item.mention.text!r}: assertion {assertion.value}")
             )
