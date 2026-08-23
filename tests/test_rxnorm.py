@@ -300,3 +300,132 @@ def test_the_coding_tool_reports_a_refusal_rather_than_a_guess(service):
     tools = {tool.name: tool for tool in build_rxnorm_tools(service.session)}
     answer = tools["rxnorm_code_drug"].call({"mention": "whole-body vibe tincture"})
     assert "uncoded" in answer.lower()
+
+
+# ── comprehension reaches RxNorm (#73) ───────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def charting_world(tmp_path_factory):
+    """A chart with the fabricated RxNorm release loaded, ready to apply a
+    note against — the arrangement the normalizer's medication path needs
+    and that no other suite provides."""
+    from datetime import date
+
+    from hdh.core.models import Patient, Sex, Visit, VisitType, get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path_factory.mktemp("rxchart") / "rx.db"))
+    session = get_session(engine)
+    run_load(session, FIXTURE)
+    patient = Patient(
+        mrn="MRN-RXNORM",
+        first_name="Coded",
+        last_name="Drug",
+        date_of_birth=date(1962, 4, 4),
+        sex=Sex.MALE,
+    )
+    session.add(patient)
+    session.flush()
+    visit = Visit(patient_id=patient.id, visit_date=date(2026, 8, 23), visit_type=VisitType.FOLLOW_UP)
+    session.add(visit)
+    session.commit()
+    yield session, patient, visit
+    session.close()
+    engine.dispose()
+
+
+def _chart(session, patient, visit, text, raw):
+    from hdh.modules.comprehension.applier import VisitTarget, apply_to_chart
+    from hdh.modules.comprehension.comprehend import comprehend_text
+    from hdh.modules.comprehension.extract import stub_extractor
+    from hdh.modules.comprehension.pipeline import comprehend_note
+
+    note = comprehend_note(session, comprehend_text(text, stub_extractor(raw)))
+    return apply_to_chart(session, patient, note, VisitTarget(visit=visit))
+
+
+def test_a_charted_prescription_carries_an_rxcui(charting_world):
+    """The defect: RxNorm shipped M1–M5 and comprehension never called it.
+
+    Medications resolved against the GENERATOR's drug-name table — not a
+    terminology, no RXCUI, no ingredient, and a drug it does not list
+    resolved to nothing at all. Prescriptions charted with
+    `code_system=None, code=None` in columns migration 0009 added for this.
+    """
+    from hdh.core.models import Prescription
+
+    session, patient, visit = charting_world
+    text = "P: Continue Blorbizide 10 MG daily."
+    raw = {
+        "mentions": [
+            {
+                "type": "medication",
+                "text": "Blorbizide",
+                "occurrence": 1,
+                "attributes": [
+                    {"kind": "dose", "text": "10 MG", "occurrence": 1},
+                    {"kind": "status_word", "text": "Continue", "occurrence": 1},
+                ],
+            }
+        ]
+    }
+    _chart(session, patient, visit, text, raw)
+    rx = session.query(Prescription).filter(Prescription.drug_name.ilike("%Blorbizide%")).one()
+    assert rx.code_system == "rxnorm"
+    assert rx.code == fx.BLORBIZIDE_10_TAB, "the strength in the note should reach the clinical drug"
+
+
+def test_the_drug_name_stays_what_the_clinician_wrote(charting_world):
+    """An RxNorm display is a full product string. Putting it in drug_name
+    would duplicate the dose column into the name and break matching against
+    every earlier visit — the code carries the precision instead."""
+    from hdh.core.models import Prescription
+
+    session, patient, visit = charting_world
+    rx = session.query(Prescription).filter(Prescription.drug_name.ilike("%Blorbizide%")).one()
+    assert rx.drug_name == "Blorbizide"
+    assert rx.dose == "10 MG"
+
+
+def test_a_drug_the_note_underspecifies_is_not_coded_deeper_than_the_evidence(charting_world):
+    """resolve's judgement has to survive the trip through comprehension: a
+    bare name must not descend to a product by inventing a strength."""
+    from hdh.core.models import Prescription
+
+    session, patient, visit = charting_world
+    raw = {"mentions": [{"type": "medication", "text": "Quixamet", "occurrence": 1, "attributes": []}]}
+    _chart(session, patient, visit, "P: Start Quixamet.", raw)
+    rx = session.query(Prescription).filter(Prescription.drug_name == "Quixamet").one()
+    assert rx.code == fx.QUIXAMET_IN, "a bare name is an ingredient, not a product"
+
+
+def test_without_a_catalog_nothing_changes(tmp_path):
+    """RxNorm is licensed, so most installations will not have it. The
+    generator's name table stays as the offline fallback and a chart built
+    without a catalog must look exactly as it did before."""
+    from hdh.core.models import Base, get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.comprehension.contracts import Mention, MentionType, Span
+    from hdh.modules.comprehension.normalize import MentionNormalizer
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path / "nocat.db"))
+    Base.metadata.create_all(engine)
+    session = get_session(engine)
+
+    normalizer = MentionNormalizer(session)
+    assert normalizer._rxnorm is None
+    mention = Mention(
+        id=0,
+        mention_type=MentionType.MEDICATION,
+        span=Span(0, 10),
+        text="Lisinopril",
+        section_id=0,
+        attributes=(),
+    )
+    codes = normalizer.candidates(mention)
+    assert not codes or codes[0].system == "drug-catalog"
+    session.close()
+    engine.dispose()

@@ -239,3 +239,96 @@ def test_comprehension_falls_back_to_the_funnel_for_unaliased_tests(loaded):
     found = code_for("Zonk count")
     assert found and found[0].code == fx.ZONKOCYTES
     assert found[0].in_shared_tables is True  # LOINC IS in the shared tables
+
+
+# ── the agent's toolset (#77) ────────────────────────────────────────────
+
+
+def _tool(tools, name):
+    return next(t for t in tools if t.name == name)
+
+
+def test_the_toolset_is_offered_only_with_a_catalog(loaded, tmp_path):
+    """The rule every optional toolset follows: no catalog, no tools. An
+    agent offered a tool that can only fail is worse off than one that was
+    never offered it."""
+    from hdh.core.models import Base
+    from hdh.modules.loinc.agent_tools import build_loinc_tools
+
+    session, _report = loaded
+    assert {t.name for t in build_loinc_tools(session)} == {
+        "loinc_search",
+        "loinc_lookup",
+        "loinc_specimen_variants",
+    }
+
+    empty_engine = get_engine(str(tmp_path / "empty.db"))
+    Base.metadata.create_all(empty_engine)
+    empty = get_session(empty_engine)
+    assert build_loinc_tools(empty) == []
+    empty.close()
+    empty_engine.dispose()
+
+
+def test_the_agent_reaches_loinc_through_build_tools(loaded):
+    """#77 proper: LOINC was the only ontology module `_ontology_tools` did
+    not import, so the agent could not ask a LOINC question with a catalog
+    sitting right there."""
+    from hdh.modules.agent.tools import build_tools
+
+    session, _report = loaded
+    assert "loinc_search" in {t.name for t in build_tools(session)}
+
+
+def test_search_carries_the_specimen_the_caller_meant(loaded):
+    """The tool must not re-decide the specimen rule — it passes `system`
+    through to the service, which is the same path `hdh loinc` takes."""
+    import json
+
+    from hdh.modules.loinc.agent_tools import build_loinc_tools
+
+    session, _report = loaded
+    search = _tool(build_loinc_tools(session), "loinc_search")
+
+    default = json.loads(search.call({"mention": "Blorbium", "limit": 2}))
+    assert default[0]["loinc"] == fx.BLORBIUM_SERUM, "unqualified should mean blood"
+
+    urine = json.loads(search.call({"mention": "Blorbium", "specimen": "urine", "limit": 2}))
+    assert urine[0]["loinc"] == fx.BLORBIUM_URINE
+
+
+def test_search_says_so_rather_than_returning_a_guess(loaded):
+    from hdh.modules.loinc.agent_tools import build_loinc_tools
+
+    session, _report = loaded
+    search = _tool(build_loinc_tools(session), "loinc_search")
+    assert "No matches" in search.call({"mention": "zzzznotathing"})
+
+
+def test_lookup_returns_the_axes_that_separate_identical_names(loaded):
+    """Two codes can share a display and be different tests; the axes are
+    what say so, which is why an agent about to place an order needs them."""
+    import json
+
+    from hdh.modules.loinc.agent_tools import build_loinc_tools
+
+    session, _report = loaded
+    lookup = _tool(build_loinc_tools(session), "loinc_lookup")
+    payload = json.loads(lookup.call({"code": fx.BLORBIUM_URINE}))
+    assert payload["axes"]["system"].lower().startswith("urine")
+    assert payload["axes"]["component"]
+    assert "No LOINC concept" in lookup.call({"code": "0000-0"})
+
+
+def test_specimen_variants_answers_the_serum_or_urine_question(loaded):
+    """The question a note raises constantly — "sodium" with no specimen —
+    answered from the catalog instead of guessed."""
+    import json
+
+    from hdh.modules.loinc.agent_tools import build_loinc_tools
+
+    session, _report = loaded
+    variants = _tool(build_loinc_tools(session), "loinc_specimen_variants")
+    payload = json.loads(variants.call({"code": fx.BLORBIUM_SERUM}))
+    assert fx.BLORBIUM_URINE in {v["loinc"] for v in payload["variants"]}
+    assert payload["component"]

@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date as date_type
 from datetime import timedelta
+from functools import lru_cache
 from typing import Any
 
 from hdh.modules.comprehension.contracts import Assertion, AttributeKind, MentionType
@@ -157,6 +158,41 @@ def _audit_creations(session, result: ApplyResult, provider_id: int | None) -> N
     actor = Actor(name=name, source=EditSource.PIPELINE, provider_id=provider_id)
     for entity, row in result.created:
         record_creation(session, actor, entity, row, reason=f"charted from note (visit #{result.visit_id})")
+
+
+@lru_cache(maxsize=1)
+def _chronic_icd_codes() -> frozenset[str]:
+    """ICD-10 codes the condition catalog marks chronic.
+
+    Derived from the packs, so a new pack extends this for free — the same
+    argument as the lab-alias table in ``normalize``.
+
+    The obvious alternative was the ontology, and it does not work.
+    SNOMED has a `Chronic disease` (27624003) concept, but measured on the
+    US Edition it subsumes COPD and NOT type 2 diabetes, hypertension or
+    asthma — the same uneven coverage that made control-qualified concepts
+    an enrichment rather than a mechanism (§10.0). A rule built on it would
+    have worked for one disease in five and looked principled doing it.
+    """
+    from hdh.core.conditions import default_catalog
+
+    catalog = default_catalog()
+    return frozenset(catalog.get(name).icd10_code for name in catalog.names() if catalog.get(name).chronic)
+
+
+def _is_chronic(icd10: str, display: str) -> bool:
+    """Is this an ongoing problem or this encounter's diagnosis?
+
+    Two signals, both narrow on purpose. The catalog is authoritative for
+    what it knows; "chronic" in the concept's own display carries the rest.
+    Anything else stays an encounter diagnosis, because a note that does not
+    say is not evidence that it is.
+
+    HISTORICAL is deliberately NOT a signal: "h/o pneumonia" is history and
+    is not a chronic condition. Duration and chronicity are different
+    questions and only one of them is asked here.
+    """
+    return icd10 in _chronic_icd_codes() or "chronic" in display.lower()
 
 
 #: Assertions that keep a problem off the chart altogether: the note named
@@ -351,9 +387,14 @@ def _apply_conditions(session, patient, visit, note: ComprehendedNote, result: A
             visit_id=visit.id,
             icd10_code=icd10,
             description=item.code.display,
-            chronic=False,
+            chronic=_is_chronic(icd10, item.code.display),
             status=ConditionStatus.ACTIVE,
-            onset_date=visit.visit_date,
+            # A problem the patient ARRIVED with did not start today. An
+            # onset stamped with the visit date reads to any rule that
+            # measures duration as though the disease began at this
+            # encounter; None is the honest answer to a question the note
+            # did not answer.
+            onset_date=None if assertion is Assertion.HISTORICAL else visit.visit_date,
         )
         # What the note says about CONTROL. The flag is primary — it works
         # for every condition — and a control-qualified SNOMED concept
@@ -384,7 +425,16 @@ def _apply_medications(session, visit, note: ComprehendedNote, result: ApplyResu
     for item in note.mentions:
         if item.mention.mention_type is not MentionType.MEDICATION:
             continue
-        drug = item.code.display if item.code else item.mention.text
+        # The chart's drug_name is what the clinician wrote; the RXCUI is
+        # what carries the precision. An RxNorm display is a full product
+        # string — "metformin hydrochloride 500 MG Extended Release Oral
+        # Tablet" — and putting that here would duplicate the dose column
+        # into the name and break matching against every earlier visit.
+        drug = (
+            item.code.display
+            if item.code is not None and item.code.system == "drug-catalog"
+            else item.mention.text
+        )
         existing = [rx for rx in visit.prescriptions if rx.drug_name.lower().startswith(drug.lower())]
         if drug.lower() in added_this_run:
             result.verdicts.append(
@@ -403,6 +453,13 @@ def _apply_medications(session, visit, note: ComprehendedNote, result: ApplyResu
             frequency=_attr(item, AttributeKind.FREQUENCY) or "",
             is_new="start" in status_word,
         )
+        if item.code is not None and item.code.in_shared_tables and item.confidence >= REVIEW_THRESHOLD:
+            # Migration 0009 added these columns for exactly this. Only a
+            # code from a real terminology goes in — the generator's name
+            # table is not one, and a code system nobody can dereference is
+            # worse than an honestly uncoded row.
+            prescription.code_system = item.code.system
+            prescription.code = item.code.code
         session.add(prescription)
         result.created.append(("Prescription", prescription))
         added_this_run.add(drug.lower())
@@ -779,13 +836,52 @@ def _parse_follow_up(plan: str) -> int | None:
     return int(match.group(1)) * _INTERVAL_DAYS[match.group(2).lower()]
 
 
+def _supersede_procedure(result: ApplyResult, target: str):
+    """The PROCEDURE request this run already made for the same thing.
+
+    "Refer to ophthalmology" reaches the chart twice: the mention pass sees
+    a PROCEDURE and makes a request, then this pass matches "refer to" and
+    makes a REFERRAL. Two open orders for one act — different things to
+    fulfil, to bill, and to close a care gap against, so one of them is
+    never satisfied.
+
+    Deduping cannot fix it: `_existing_request` matches within a kind, and
+    these are two kinds. This pass has strictly more information — it knows
+    the verb was "refer" — so it converts the row rather than sitting beside
+    it. Only rows created in THIS run are eligible: rewriting a request an
+    earlier note committed would be a silent chart mutation.
+    """
+    from hdh.core.models import ServiceKind
+
+    wanted = target.strip().lower()
+    for entity, row in result.created:
+        if (
+            entity == "ServiceRequest"
+            and row.kind is ServiceKind.PROCEDURE
+            and (row.display or "").strip().lower() == wanted
+        ):
+            return row
+    return None
+
+
 def _apply_referrals(session, patient, visit, plan: str, result: ApplyResult) -> None:
+    from hdh.core.models import ServiceKind
+
     for match in _REFERRAL_RE.finditer(plan):
         target = match.group(1).strip().rstrip(".").strip()
         if not target:
             continue
         if _existing_request(visit, "REFERRAL", target):
             result.verdicts.append(Verdict("confirmed", "request", f"referral to {target}: already ordered"))
+            continue
+        superseded = _supersede_procedure(result, target)
+        if superseded is not None:
+            superseded.kind = ServiceKind.REFERRAL
+            superseded.detail = {**(superseded.detail or {}), "specialty": target}
+            result.verdicts = [
+                v for v in result.verdicts if not (v.kind == "request" and v.detail == f"procedure: {target}")
+            ]
+            result.verdicts.append(Verdict("new", "request", f"referral: {target}"))
             continue
         request = _new_request(patient, visit, "REFERRAL", target, detail={"specialty": target})
         session.add(request)
