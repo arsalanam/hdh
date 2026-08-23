@@ -874,7 +874,7 @@ labeled `authority=CMS_GEMS_2019, confidence<1.0`.
 
 | Phase | Delivers | Proves |
 |---|---|---|
-| **1. `just deps` + exit from SQLite** | compose file, `HDH_DB_URL` engine path, `hdh migrate`, `just db-restore`, Alembic baseline (closes issue #7), CI on service containers, practitioner-guide Docker section | hdh runs — and stays — on PostgreSQL |
+| **1. `just deps` + exit from SQLite** | compose file, `HDH_DB_URL` engine path, `hdh migrate`, `just db-restore`, Alembic baseline (closes issue #7), CI on service containers, clinician-guide database section | hdh runs — and stays — on PostgreSQL |
 | **2. Registry v2 + schema** | JSON type, indexes, server defaults, DDL hooks; the three entities + Diagnosis link | multi-table schema modules work |
 | **3. Loader + CLI** | all nine stages incl. COPY + accelerator DDL; fixture tests; `hdh icd load/lookup/search/lateral/link/status` | full catalog loads and queries |
 | **4. Bench + demo** | `hdh icd bench` latency harness; measured §7 table in README | targets are met without a cache tier — or we learn where they are not |

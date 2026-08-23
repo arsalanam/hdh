@@ -1,15 +1,15 @@
-# hdh for Health Practitioners — Complete Walkthrough (Windows)
+# hdh for Clinicians — Running a Mini-EHR on Your Own Machine (Windows)
 
-A step-by-step guide for clinicians, care managers, quality/population-health
-staff, and educators who want to run hdh on their own Windows machine. You
-need basic PowerShell comfort (opening a terminal, typing commands) — no
-programming experience.
+A step-by-step guide for clinicians, care managers, quality and
+population-health staff, and educators. You need basic PowerShell comfort
+(opening a terminal, typing commands) — no programming experience.
 
-**What you get:** a fully synthetic family-medicine practice — 10,000
-patients with four years of visits, diagnoses, prescriptions, and labs — plus
-tools you can point at it: care-gap detection, an ML risk model, an AI
-assistant that answers questions about the panel, auto-generated SOAP notes,
-and a FHIR interface.
+**What you get:** a small but complete electronic health record running on
+your laptop, stocked with a fully synthetic family-medicine practice. You can
+dictate a note and watch it become coded chart entries, place lab and
+medication orders, receive results back from a simulated lab, correct
+mistakes with an audit trail, and ask an AI assistant who on your panel is
+overdue — and you can do most of it by typing English rather than commands.
 
 > ⚠️ **Read this first**
 > - Every patient in hdh is **synthetic**. No real person's data is involved,
@@ -17,33 +17,51 @@ and a FHIR interface.
 > - **Never type real patient information into the AI assistant.** Questions
 >   you ask it are sent to a cloud AI service (Anthropic). Synthetic MRNs and
 >   names from this dataset are fine; real PHI is not.
-> - Nothing here is medical advice or a validated clinical tool. hdh is an
->   educational sandbox for learning how these systems work.
+> - Nothing here is medical advice or a validated clinical tool, and hdh is a
+>   **proof of concept**, not a product. It is an educational sandbox for
+>   learning how these systems work — and for seeing where they should refuse
+>   to guess.
 
 ---
 
 ## Contents
 
+**Setting up**
+
 - [Part 1 — Install the prerequisites](#part-1--install-the-prerequisites)
-- [Part 2 — Get hdh and set it up](#part-2--get-hdh-and-set-it-up)
-- [Part 3 — Generate your synthetic practice](#part-3--generate-your-synthetic-practice)
-- [Part 4 — Explore patients and charts](#part-4--explore-patients-and-charts)
-- [Part 5 — Find care gaps](#part-5--find-care-gaps)
-- [Part 6 — Risk stratification](#part-6--risk-stratification)
-- [Part 7 — The AI assistant](#part-7--the-ai-assistant)
-- [Part 8 — SOAP-note narratives](#part-8--soap-note-narratives)
-- [Part 9 — Export data and the FHIR interface](#part-9--export-data-and-the-fhir-interface)
-- [Part 10 — Simulate scenarios](#part-10--simulate-scenarios)
-- [Part 11 — See what the AI did (traces & spending)](#part-11--see-what-the-ai-did-traces--spending)
-- [Part 12 — Optional: a real database server (PostgreSQL)](#part-12--optional-a-real-database-server-postgresql)
+- [Part 2 — Get hdh](#part-2--get-hdh)
+- [Part 3 — Start the database](#part-3--start-the-database)
+- [Part 4 — Create your practice](#part-4--create-your-practice)
+- [Part 5 — Load the clinical vocabularies](#part-5--load-the-clinical-vocabularies)
+
+**The clinical day**
+
+- [Part 6 — Open a chart](#part-6--open-a-chart)
+- [Part 7 — Chart a note](#part-7--chart-a-note)
+- [Part 8 — Orders: labs, drugs, referrals](#part-8--orders-labs-drugs-referrals)
+- [Part 9 — Results come back](#part-9--results-come-back)
+- [Part 10 — The review queue](#part-10--the-review-queue)
+- [Part 11 — Correcting the chart](#part-11--correcting-the-chart)
+
+**Doing it all by talking**
+
+- [Part 12 — The AI assistant](#part-12--the-ai-assistant)
+
+**Looking at the whole panel**
+
+- [Part 13 — Care gaps](#part-13--care-gaps)
+- [Part 14 — Risk stratification](#part-14--risk-stratification)
+- [Part 15 — Narratives, exports and FHIR](#part-15--narratives-exports-and-fhir)
+- [Part 16 — Simulate scenarios](#part-16--simulate-scenarios)
+- [Part 17 — See what the AI did](#part-17--see-what-the-ai-did)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Part 1 — Install the prerequisites
 
-Open **PowerShell** (Start menu → type "PowerShell" → Enter) and install two
-small tools. `winget` comes with Windows 10/11.
+Open **PowerShell** (Start menu → type "PowerShell" → Enter) and install
+three tools. `winget` comes with Windows 10/11.
 
 ```powershell
 winget install --id Git.Git -e
@@ -54,17 +72,24 @@ winget install --id astral-sh.uv -e
 - **uv** manages Python for you — you do *not* need to install Python
   yourself; uv fetches the right version automatically.
 
+Then install **Docker Desktop** (free) from
+<https://www.docker.com/products/docker-desktop/>. On Windows, accept its
+suggestion to use WSL 2. Docker runs the database — see
+[Part 3](#part-3--start-the-database) for why that matters.
+
 **Close PowerShell and open a new window** so the tools are on your PATH.
 Verify:
 
 ```powershell
 git --version
 uv --version
+docker --version
 ```
 
-Both should print version numbers. If not, see [Troubleshooting](#troubleshooting).
+All three should print version numbers. If not, see
+[Troubleshooting](#troubleshooting).
 
-## Part 2 — Get hdh and set it up
+## Part 2 — Get hdh
 
 ```powershell
 cd $HOME\Documents
@@ -74,357 +99,508 @@ uv sync --all-extras
 ```
 
 `uv sync` creates a private environment inside the project folder and
-installs everything (a few minutes the first time). Then check the install:
+installs everything (a few minutes the first time). Check it:
 
 ```powershell
 uv run hdh --help
 ```
 
-You should see the command list: `generate, stats, export, show,
-care-gaps, risk, agent, narrative, serve, trace`, and more.
+You should see the command list: `generate, stats, show, chart, orders,
+comprehend, interchange, care-gaps, risk, agent`, and more.
 
 > **The `uv run hdh ...` pattern:** every hdh command in this guide is
 > prefixed with `uv run`. That runs it inside the project's own environment —
 > nothing is installed system-wide, and nothing else on your machine is
 > affected. Always run these commands from the `hdh` folder.
 
-## Part 3 — Generate your synthetic practice
+## Part 3 — Start the database
+
+hdh can keep everything in a single file, and for a first look that is fine.
+**For the clinical features, use PostgreSQL.** This is not a preference about
+tidiness — the difference shows up directly in what the system can understand.
+
+When a note says **"SOB"**, hdh has to turn that into a code. It tries a
+ladder of increasingly forgiving strategies:
+
+| How it looks | PostgreSQL | Single file |
+|---|---|---|
+| the exact term | ✅ | ✅ |
+| an abbreviation the terminology spells out (`SOB - Shortness of breath`) | ✅ | ❌ |
+| full-text search — word order, plurals, stemming | ✅ | ❌ |
+| fuzzy match, for typos | ✅ | ❌ |
+
+Only the first rung survives without PostgreSQL. In practice that means
+**"SOB" never reaches *Dyspnea***, a misspelt drug name is simply lost, and
+*"diabetes mellitus type 2"* fails to match *"Type 2 diabetes mellitus"*
+because it can only look for one string inside another and cannot reorder
+words. The clinical vocabularies are also large enough that a real database
+server handles them far better.
+
+Start it (the first run downloads PostgreSQL, roughly 30 seconds):
+
+```powershell
+just deps
+```
+
+Open the `.env` file in the project folder and remove the `#` in front of the
+`HDH_DB_URL=` line. Then apply the database structure:
+
+```powershell
+just db-upgrade
+```
+
+`just deps-down` stops the database later without losing anything.
+
+> **Already have data in a file?** `uv run hdh migrate` copies an existing
+> `family_medicine.db` into PostgreSQL. Your file is not modified.
+
+## Part 4 — Create your practice
 
 ```powershell
 uv run hdh generate --patients 100 --years 2
-# (100 patients is plenty to explore; the full 10,000-patient practice takes a
-#  long time to generate — download it ready-made from the project's Releases page)
 ```
 
-(Prefer not to wait? Download `family_medicine-10k.zip` from
-[the latest release](https://github.com/arsalanam/hdh/releases/latest) and
-unzip it into the `hdh` folder instead — same 10,000 patients, ready to use.)
+100 patients is plenty to explore. The full 10,000-patient practice takes a
+long time to build — download it ready-made from the project's
+[Releases page](https://github.com/arsalanam/hdh/releases/latest) instead.
 
-This builds `family_medicine.db` (~95 MB) — your practice. It takes a few
-minutes; you'll see progress every 500 patients. For a quicker first play,
-`--patients 2000` finishes in well under a minute (the AI and risk features
-work fine on the smaller panel too).
-
-What the generator actually does, clinically: each patient gets demographics,
-insurance, allergies, and family history; visit frequency follows age and
-chronic burden (infants and seniors ~5 visits/year); conditions follow
-age/sex/seasonal epidemiology (RSV in winter infants, UTIs peaking in summer,
-flu in January); chronic disease is seeded from age, family history, smoking,
-and BMI so comorbidities cluster the way you'd expect; and every visit
-carries vitals, an ICD-10 diagnosis, formulary-plausible prescriptions, and
-LOINC-coded labs whose values shift with the condition.
-
-Check the result:
+What you get is not a spreadsheet of random rows. Patients arrive in
+**households**, so a patient's family history is derived from conditions
+their relatives actually have. Disease incidence is seasonal — influenza
+peaks in winter, sports injuries in summer. Chronic disease accumulates
+through comorbidity webs, so hypertension and diabetes drive chronic kidney
+disease, and onset dates read in clinical order rather than at random.
 
 ```powershell
 uv run hdh stats
 ```
 
-Expect ~165,000 visits, hypertension/T2DM/hyperlipidemia leading the
-diagnosis table, and a age pyramid weighted toward seniors and young
-children — like a real family practice.
+## Part 5 — Load the clinical vocabularies
 
-## Part 4 — Explore patients and charts
+hdh understands a note by mapping what it says onto standard clinical
+terminologies. Each one answers a different question:
+
+| Vocabulary | Answers | Needed for |
+|---|---|---|
+| **SNOMED CT** | what the clinician asserted | charting notes — **the important one** |
+| **ICD-10-CM** | what it bills as | putting a diagnosis on the problem list |
+| **LOINC** | what test was ordered | coded lab orders |
+| **RxNorm** | what drug was prescribed | coded prescriptions |
+
+**Without SNOMED CT loaded, note charting will not do anything useful** —
+every clinical mention will fail to resolve and land in the review queue. Load
+it and ICD-10-CM at minimum:
 
 ```powershell
-uv run hdh list-conditions          # the 30+ conditions the engine models
-uv run hdh stats                    # panel overview
+uv run hdh icd load --download
+uv run hdh snomed load --download
 ```
 
-To read one patient's chart, you need an MRN. Grab a few from the care-gap
-list (next section) or risk list, then:
+SNOMED CT is licensed and free for most countries, but you need an account.
+Register for a free [UMLS key](https://uts.nlm.nih.gov/uts/signup-login), then
+put it in `.env` as `UMLS_API_KEY=...`. The download is about 1.6 GB and is
+cached, so reloading never re-downloads.
+
+LOINC and RxNorm are optional and are fetched by hand from their own sites,
+then pointed at:
+
+```powershell
+uv run hdh loinc load --source C:\path\to\loinc-release
+uv run hdh rxnorm load --source C:\path\to\rxnorm-release
+```
+
+> **The data never ships with hdh.** Only the loaders do. That is a licensing
+> requirement, and release builds are automatically checked to make sure no
+> licensed catalog escapes.
+
+---
+
+## Part 6 — Open a chart
 
 ```powershell
 uv run hdh show --mrn MRN12345678
 ```
 
-You get a full chart: demographics, family history, active problem list with
-control status, and every visit with vitals, assessment, prescriptions, labs
-(flagged when out of range), and the follow-up plan.
-
-## Part 5 — Find care gaps
-
-This is the population-health workhorse — your outreach list:
+Pick an MRN from `uv run hdh list-conditions` or search:
 
 ```powershell
-uv run hdh care-gaps --limit 25
+uv run hdh agent "find me a patient with type 2 diabetes and hypertension"
 ```
 
-Four rules run against the panel, ranked most severe first:
+The chart prints as plain text: demographics, the problem list, medications,
+allergies, immunizations, and every visit with its vitals, diagnoses,
+prescriptions, labs and note.
 
-| Gap type | Meaning | Severity |
-|---|---|---|
-| `uncontrolled_chronic` | An uncontrolled condition (e.g. HTN flagged uncontrolled) with **no visit in 90+ days** | high |
-| `missed_follow_up` | Provider asked for a follow-up in N days; N×1.5 has passed with no return | medium |
-| `polypharmacy_review` | 65+, on 5+ medications, not seen in 6 months | medium |
-| `overdue_preventive` | No annual physical / well-child visit within the age-appropriate interval | low |
+## Part 7 — Chart a note
 
-Useful variations:
+This is the centre of the system. Put a note in a text file — prose, SOAP, or
+anything in between:
 
 ```powershell
-uv run hdh care-gaps --mrn MRN12345678       # one patient's gaps
-uv run hdh care-gaps --limit 100 --json > gaps.json   # export for a spreadsheet
+notepad note.txt
 ```
 
-Dates are judged against the dataset's own timeline (its most recent visit),
-so the results stay meaningful no matter when you generated the data.
+```
+68yo returns for chronic disease review. Reports good adherence, no chest
+pain or shortness of breath. BP 128/78. Well treated hypertension.
+Uncontrolled type 2 diabetes mellitus. Continue lisinopril 10 mg daily.
+Repeat HbA1c in 3 months. Refer to ophthalmology.
+```
 
-**AI chart review (optional).** Once your API key is set up (Part 7), a
-second finder reviews charts the way a quality reviewer would — catching
-things the fixed rules can't, like a diabetic overdue for an HbA1c or two
-overlapping statins on the med list:
+**Always look before you write.** `--dry-run` computes everything and changes
+nothing:
 
 ```powershell
-uv run hdh care-gaps --finder ai --mrn MRN12345678    # one patient (~a few cents)
-uv run hdh care-gaps --finder ai --sample 5           # your 5 most complex patients
+uv run hdh comprehend --file note.txt --mrn MRN12345678 --apply --dry-run
 ```
 
-Rules are free, instant, and reproducible; the AI finder is slower, costs a
-little, and varies between runs — but reasons clinically. Comparing the two
-on the same patient is one of the most instructive exercises in this toolkit.
+```
+  confirmed  condition   'hypertension' ≡ chart I10 — referenced, not duplicated
+  updated    condition   'hypertension': controlled False → True
+  new        condition   'type 2 diabetes mellitus' → E11.9 / snomed 443694000
+  new        medication  Lisinopril 10 mg
+  new        vitals      bp_diastolic, bp_systolic
+  new        request     medication: lisinopril
+  new        request     lab: HbA1c
+  new        request     referral: ophthalmology
+  new        request     Follow-up visit in 90 days
+```
 
-## Part 6 — Risk stratification
+Read that list as a set of decisions the system is asking you to approve:
 
-Train a machine-learning model on *your* generated panel, then rank patients
-by predicted risk of deterioration (an urgent visit or critical lab within
-180 days):
+- **`confirmed`** — the patient already has this problem. It is referenced,
+  not duplicated. Charting the same note twice will not give them
+  hypertension twice.
+- **`updated`** — something changed about a problem already on the list. Here
+  the note said *"well treated"*, so hypertension is now flagged controlled,
+  which is what care-gap rules read.
+- **`new`** — a chart row will be created. Notice type 2 diabetes was coded to
+  SNOMED **443694000, *Uncontrolled* type 2 diabetes mellitus** — the note
+  said "uncontrolled", and the terminology has a concept for exactly that.
+- **`review`** — something could not be resolved confidently. It is **not**
+  written. See [Part 10](#part-10--the-review-queue).
+- **`skipped`** — deliberately not charted. Negated findings land here: *"no
+  chest pain"* means the patient does not have chest pain, so nothing goes on
+  the problem list.
+
+Happy with it? Run it again without `--dry-run`:
+
+```powershell
+uv run hdh comprehend --file note.txt --mrn MRN12345678 --apply
+```
+
+### What it will not do
+
+Three refusals are worth knowing, because they are deliberate and you will
+meet them:
+
+**It never invents a lab result.** *"Came in with an HbA1c over 7"* does not
+create a lab result, no matter how clearly it is written. There is no
+specimen, no method, no reference range and no performing lab behind a
+sentence — filing it would put two kinds of row in the lab table that look
+identical and are not, one produced by an instrument and one by a
+recollection. A value mentioned in prose is evidence about the patient's
+*condition*. Results arrive the way [Part 9](#part-9--results-come-back)
+describes.
+
+**It never guesses a drug strength.** *"Start metformin"* codes to the
+ingredient, not to a 500 mg tablet. A drug is exactly where a confident guess
+does the most harm.
+
+**It never charts what it cannot code.** An unresolvable problem goes to the
+review queue rather than onto the chart with an approximate code.
+
+### Where entries came from
+
+Every row a note creates is recorded as having arrived that way, and the
+note's text is stored on the visit:
+
+```powershell
+uv run hdh chart history --mrn MRN12345678
+```
+
+## Part 8 — Orders: labs, drugs, referrals
+
+Notice that the note in Part 7 produced **requests** as well as chart rows.
+*"Repeat HbA1c in 3 months"* became a lab order with a due date; *"refer to
+ophthalmology"* became a referral.
+
+Those arrive as **drafts**. A comprehended note can propose an order; it
+cannot send one. Releasing is a human act.
+
+```powershell
+uv run hdh orders list --mrn MRN12345678
+```
+
+Add one directly:
+
+```powershell
+uv run hdh orders add --mrn MRN12345678 --kind lab --display "Basic metabolic panel"
+uv run hdh orders add --mrn MRN12345678 --kind medication --display "Amlodipine" `
+                      --sig "Amlodipine 5 mg once daily" --route PO
+```
+
+`--kind` is one of `medication`, `lab`, `referral`, `procedure`,
+`follow_up`. Then release them, writing an order bundle for a lab to collect:
+
+```powershell
+uv run hdh orders release --mrn MRN12345678 --outbox .\outbox
+```
+
+## Part 9 — Results come back
+
+hdh ships a simulated lab partner so you can see the full round trip. It
+reads the outbox, produces results appropriate to the patient's conditions,
+and writes them to an inbox:
+
+```powershell
+uv run hdh interchange run --partner mock-lab --outbox .\outbox --inbox .\inbox
+uv run hdh interchange import --inbox .\inbox
+```
+
+Now look at the chart again — the results are on the visit, attached to the
+order that asked for them.
+
+**A result that matches no order is not filed.** It goes to a separate queue
+instead:
+
+```powershell
+uv run hdh interchange review
+```
+
+That single rule is what keeps the lab table meaning one thing. A result
+nobody ordered is either a mis-routed message or a patient mix-up, and both
+deserve a human rather than a silent insert.
+
+## Part 10 — The review queue
+
+Everything the system refused to chart is waiting here:
+
+```powershell
+uv run hdh comprehend --review
+```
+
+Each entry shows the note, the mention, and why it stopped. Usually it is one
+of: the term did not resolve confidently, or it resolved but has no ICD-10
+billing mapping.
+
+You resolve it by supplying what was missing:
+
+```powershell
+uv run hdh comprehend --review --resolve 12 --decision accept --icd10 R51.9
+uv run hdh comprehend --review --resolve 13 --decision reject
+```
+
+An accepted item is charted and recorded as having been approved by a human.
+
+> This queue is the system working, not failing. The alternative to a review
+> queue is a chart full of confident approximations, which is worse and much
+> harder to notice.
+
+## Part 11 — Correcting the chart
+
+A vital typed wrong, a duplicated encounter, a diagnosis that turned out to be
+something else:
+
+```powershell
+uv run hdh chart history --mrn MRN12345678
+
+uv run hdh chart amend --entity Condition --id 42 --set status=resolved `
+                       --reason "resolved at follow-up" --dry-run
+
+uv run hdh chart void --visit 2064 --reason "duplicate encounter"
+```
+
+Two rules:
+
+- **A reason is required.** There is no way to change a chart row without
+  saying why.
+- **Clinical rows are voided, never deleted.** A voided row stops appearing in
+  the chart, in exports and in cohort queries — but the audit trail keeps
+  pointing at it, so the record of the correction survives the correction.
+
+---
+
+## Part 12 — The AI assistant
+
+Everything above can be done by asking.
+
+### One-time setup: an API key
+
+The assistant uses Anthropic's Claude. Get a key at
+<https://console.anthropic.com> (paid, but questions cost fractions of a
+cent), then put it in `.env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Check it without printing the key:
+
+```powershell
+just check-env
+```
+
+### Charting by talking
+
+```powershell
+uv run hdh agent
+```
+
+```
+you> Chart this note for MRN12345678, dated today: 68yo returns for chronic
+     disease review. BP 128/78. Well treated hypertension, uncontrolled type
+     2 diabetes. Continue lisinopril 10 mg daily. Repeat HbA1c in 3 months.
+
+agent> Charted to visit #2073.
+       ✅ Hypertension (I10) — referenced, not duplicated; now flagged controlled
+       ✅ Type 2 diabetes — coded to SNOMED 443694000 "Uncontrolled type 2
+          diabetes mellitus"
+       ✅ Lisinopril 10 mg daily — prescription recorded
+       📋 2 draft orders: lab HbA1c (due 2026-11-22), follow-up in 90 days
+
+you> What's overdue for this patient?
+you> Amend that BP — it was 138/78, I mistyped it
+you> Which of my diabetics haven't had an HbA1c in a year?
+```
+
+The assistant holds the same tools the commands above use, so a correction
+made by talking and one made at the terminal land in the same audit trail
+with the same shape. It has amend and void tools and **no delete tool at
+all**.
+
+### Questions about the panel
+
+```powershell
+uv run hdh agent "Which patients need outreach?"
+uv run hdh agent "How many patients have uncontrolled diabetes and no follow-up?"
+uv run hdh agent "Is atrial fibrillation a kind of heart disease?"
+```
+
+With the vocabularies loaded, that last kind of question is answered from the
+terminology's own hierarchy rather than by matching words — so *"disorders
+under cerebrovascular disease"* finds the whole subtree, including conditions
+whose names share nothing.
+
+### What keeps it honest
+
+Answers go through a validator before you see them. Every specific claim —
+MRNs, counts, values, dates — must be traceable to something a tool actually
+returned; unsupported claims send the assistant back to look again. That is
+also why it sometimes says it does not know: it would rather stop than
+produce a number that reads well.
+
+### Conversation handling
+
+The chat remembers context across questions. Arrow keys recall previous
+questions. Slash commands: `/history`, `/context`, `/compact`, `/save`,
+`/clear`, `/exit`. Long conversations are summarized automatically so they
+stay affordable.
+
+---
+
+## Part 13 — Care gaps
+
+```powershell
+uv run hdh care-gaps --limit 20
+uv run hdh care-gaps --mrn MRN12345678
+```
+
+Care gaps look for overdue preventive visits, chronic conditions that are
+uncontrolled with no follow-up booked, missed follow-ups, and senior
+polypharmacy — ranked by severity.
+
+This connects back to Part 7. The uncontrolled-chronic gap looks for problems
+that are **both** on the chronic problem list **and** flagged not-controlled —
+and both of those columns are written by charting a note. Saying *"well
+treated hypertension"* clears the flag; saying *"h/o type 2 diabetes"* puts
+the problem on the chronic list in the first place.
+
+So the note you dictate in the morning changes who appears on this list in the
+afternoon. That is the point of them being one system rather than two.
+
+## Part 14 — Risk stratification
 
 ```powershell
 uv run hdh risk train
+uv run hdh risk score --top 20
+uv run hdh risk score --mrn MRN12345678
 ```
 
-Expect output like: `Patients: 10,000 | Positive rate: 6.4% | Held-out ROC
-AUC: 0.714`. In plain terms: the model was tested on patients it never saw
-during training, and an AUC of ~0.71 means it ranks a truly-deteriorating
-patient above a stable one about 71% of the time — a realistic figure for
-utilization models on this kind of data.
+A machine-learning model estimates each patient's probability of an urgent
+visit or a critical lab within 180 days, from patterns in the chart. Training
+takes a minute or two and only needs doing once per dataset.
+
+Treat the output as a worked example of how such models are built and
+evaluated — it is trained on synthetic data and means nothing clinically.
+
+## Part 15 — Narratives, exports and FHIR
 
 ```powershell
-uv run hdh risk score --top 20               # your highest-risk patients
-uv run hdh risk score --mrn MRN12345678      # one patient
+uv run hdh narrative --mrn MRN12345678         # SOAP narratives from the chart
+uv run hdh export --format all --limit 500 --output-dir exports\
+uv run hdh serve --port 8000                   # FHIR R4 REST API
 ```
 
-The output shows each patient's probability, tier (high/moderate/low), and
-the drivers: age, chronic-condition count, uncontrolled conditions, recent
-urgent visits, critical labs. Sanity-check it clinically — the high tier
-should be dominated by multimorbid seniors with uncontrolled disease, and it
-is. Note what the model does *not* weight heavily (e.g. a single very high BP
-in an otherwise low-utilizing patient) — a good discussion point about the
-difference between utilization risk and clinical severity.
+With the API running, open <http://localhost:8000/docs> for an interactive
+browser. FHIR is the standard other health systems speak, so this is how hdh
+data would reach one.
 
-## Part 7 — The AI assistant
-
-The assistant answers questions about your panel in plain language, by
-querying the database itself — every claim it makes is checked against the
-data before you see it.
-
-### 7a. One-time setup: an Anthropic API key
-
-The AI runs on Anthropic's Claude models, which requires an account and API
-key (usage is pay-per-use; typical questions cost a few cents):
-
-1. Create an account at **platform.claude.com** and add a small credit balance.
-2. Create an API key (starts with `sk-ant-`).
-3. In PowerShell, store it permanently:
+## Part 16 — Simulate scenarios
 
 ```powershell
-setx ANTHROPIC_API_KEY "sk-ant-your-key-here"
-```
-
-4. **Close and reopen PowerShell** (setx only affects new windows), return to
-   the hdh folder, and verify:
-
-```powershell
-cd $HOME\Documents\hdh
-uv run python scripts/check_env.py
-```
-
-It should say the key is set (showing only the last 4 characters).
-
-### 7b. Ask questions
-
-```powershell
-uv run hdh agent "Which patients have uncontrolled hypertension AND a high risk score? Who should we call first?"
-```
-
-Watch the stage trace as it works:
-
-```
-┌─ pipeline · model claude-sonnet-4-6 · guard claude-haiku-4-5
-  ├─ gateway        run 3f9c21ab · quota today: 500,000 input / 100,000 output tokens left
-  ├─ guardrails     topic allowed ✓ (clinical cohort query)
-  ├─ intent         cohort_search · entities: uncontrolled HTN, risk score
-  ├─ tool-executor  attempt 1/3 · 2 tool call(s) recorded
-  ├─ assembler      drafted 180-word response
-  ├─ validator      VALID ✓ — response is grounded in tool evidence
-  └─ streaming validated response
-```
-
-What those stages mean for you:
-
-- **guardrails** — off-topic questions (sports, recipes...) are refused, and
-  a built-in daily token budget caps spending.
-- **tool executor** — the AI queries the database (charts, care gaps, risk
-  scores, SQL) rather than guessing.
-- **validator** — before you see anything, a second check confirms every
-  MRN, value, and count in the answer actually appears in the query results.
-  If not, the AI is sent back to gather better evidence (up to 3 tries). If
-  it still can't verify, the answer arrives clearly labeled *"treat with
-  caution."* This is the hallucination defense — and why answers take
-  a little longer than a chatbot.
-
-Good questions to try:
-
-```powershell
-uv run hdh agent "How many seniors are overdue for their annual wellness visit? Name the two most overdue."
-uv run hdh agent "Which diabetic patients had an HbA1c above 9 in their most recent test?"
-uv run hdh agent "Summarize the care gaps for MRN12345678 and suggest an outreach plan."
-```
-
-### 7c. Conversations
-
-For follow-up questions in context, use the chat:
-
-```powershell
-uv run hdh agent                # rich chat UI: history, /commands, arrow-key recall
-uv run hdh agent --pipeline     # chat through the validated pipeline (fully traced)
-```
-
-In the chat UI, type `/help` for commands — `/history` replays the
-conversation, `/context` shows how much context you're using, `/save`
-exports a transcript. Long conversations automatically summarize their older
-turns so they never grow unbounded.
-
-## Part 8 — SOAP-note narratives
-
-Render any patient's visits as SOAP notes — useful for documentation
-teaching, scribe training data, or just a more familiar read of the chart:
-
-```powershell
-uv run hdh narrative --mrn MRN12345678 --last 3
-```
-
-Add `--llm` to have the AI rewrite the templated notes as natural clinical
-prose (requires the API key; values, codes, and dates are preserved):
-
-```powershell
-uv run hdh narrative --mrn MRN12345678 --last 3 --llm
-```
-
-## Part 9 — Export data and the FHIR interface
-
-Export charts for use in other tools:
-
-```powershell
-uv run hdh export --format text --limit 100 --output-dir exports   # readable chart files
-uv run hdh export --format json --limit 100 --output-dir exports   # structured data
-uv run hdh export --format fhir --limit 100 --output-dir exports   # FHIR R4 bundles
-```
-
-Or serve the panel as a live FHIR R4 API — the standard hospital-integration
-interface:
-
-```powershell
-uv run hdh serve --port 8000
-```
-
-Then open **http://127.0.0.1:8000/docs** in your browser for an interactive
-console, or try these URLs directly:
-
-- `http://127.0.0.1:8000/Patient/MRN12345678` — one Patient resource
-- `http://127.0.0.1:8000/Patient?name=smith` — search
-- `http://127.0.0.1:8000/Patient/MRN12345678/$everything` — the full bundle:
-  Encounters, Observations (vitals + labs with LOINC codes), Conditions
-  (ICD-10), MedicationRequests
-
-Press `Ctrl+C` in PowerShell to stop the server.
-
-## Part 10 — Simulate scenarios
-
-Two commands make the dataset dynamic — useful for teaching surveillance and
-longitudinal care:
-
-```powershell
-# Inject a January influenza outbreak (300 extra cases)
 uv run hdh add-spike --condition influenza --month 1 --n 300
-
-# Advance the clock 6 months: chronic patients accrue follow-up visits
 uv run hdh advance --months 6
 ```
 
-Re-run `uv run hdh stats` or the care-gap report afterward and watch the
-numbers move. To start over from scratch, delete `family_medicine.db` and
-generate again — it's synthetic, nothing is ever lost.
+The first injects a January influenza outbreak. The second moves the clock
+forward, so chronic patients accrue follow-up visits and labs. Re-run care
+gaps afterwards and watch what changes.
 
-## Part 11 — See what the AI did (traces & spending)
-
-Every AI question is recorded — which stages ran, what each one did, how
-long it took, and exactly how many tokens (money) it used:
+## Part 17 — See what the AI did
 
 ```powershell
-uv run hdh trace runs                 # your sessions, with token totals
-uv run hdh trace show 3f9c21ab        # one session, step by step (use the id from `runs`)
-uv run hdh trace usage --days 7       # daily spending in tokens
+uv run hdh trace runs
+uv run hdh trace show <id>
+uv run hdh trace usage
 ```
 
-The step view is worth studying once: you'll see the guardrail check cost a
-few hundred tokens, the tool executor cost the most, and the validator's
-verdict — the anatomy of a trustworthy AI answer. The daily quota
-(500k input / 100k output tokens by default) is enforced from these same
-records; when it's exhausted, the assistant politely declines until tomorrow.
+Every assistant run is recorded: which tools it called, what they returned,
+how many tokens it used and what that cost. `trace usage` reports daily token spend. `trace show` is the honest answer
+to *"why did it say that?"* — you can read the evidence it actually had.
 
 ---
-
-## Part 12 — Optional: a real database server (PostgreSQL)
-
-hdh normally keeps everything in one `family_medicine.db` file — fine for
-learning. If you want the same setup professional systems use (and the
-direction hdh is heading), you can run PostgreSQL in a container:
-
-1. Install **Docker Desktop** (free): <https://www.docker.com/products/docker-desktop/>
-   — on Windows, accept its suggestion to use WSL 2.
-2. Start the database (first run downloads it, ~30 seconds):
-
-   ```powershell
-   just deps
-   ```
-
-3. Open your `.env` file and remove the `#` in front of the `HDH_DB_URL=`
-   line.
-4. Copy your existing data across (your `.db` file is not modified):
-
-   ```powershell
-   uv run hdh migrate
-   ```
-
-From then on every command — stats, care gaps, the AI assistant — uses the
-server automatically. `just deps-down` stops it (your data is kept);
-`just check-env` tells you whether the connection works.
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `git` or `uv` "not recognized" after install | Close and reopen PowerShell (PATH updates only apply to new windows). If still failing, log out/in of Windows. |
-| `winget` not found | Install "App Installer" from the Microsoft Store, or download Git/uv installers from their websites. |
-| `uv sync` is slow the first time | Normal — it downloads Python and ~70 packages once. Subsequent runs take seconds. |
-| `No valid Anthropic API key` | Run `setx ANTHROPIC_API_KEY "sk-ant-..."`, then **open a new PowerShell window**. Verify with `uv run python scripts/check_env.py`. |
-| AI answers seem slow | That's the validation pipeline working (guard → tools → assemble → validate). Use `uv run hdh agent --simple "..."` for a faster, unvalidated answer. |
-| `daily ... quota exhausted` | The built-in spending cap. It resets at midnight, or raise it: `setx HDH_QUOTA_INPUT_TOKENS 1000000` (new window afterward). |
-| `hdh risk train` refuses (too few positives) | Your panel is too small — generate at least a few thousand patients. |
-| Weird characters (`â”€`) in output | Use Windows Terminal or modern PowerShell; the CLI already forces UTF-8, but very old consoles may still struggle. |
-| Want a clean slate | Delete `family_medicine.db` (and `artifacts\risk_model.joblib`), then generate + train again. |
+**`git`, `uv` or `docker` is not recognized** — close PowerShell and open a
+new window after installing. The PATH only updates for new terminals.
 
-**Updating hdh later:**
+**`just` is not recognized** — install it with `winget install --id Casey.Just -e`,
+or use the underlying `uv run ...` commands directly.
 
-```powershell
-cd $HOME\Documents\hdh
-git pull
-uv sync --all-extras
-```
+**Docker won't start** — Docker Desktop must be running (whale icon in the
+system tray) before `just deps`. On Windows it needs WSL 2, which its
+installer offers to set up.
 
----
+**`just deps` fails on a port** — something else is using PostgreSQL's port.
+hdh uses 5433 specifically to avoid the usual 5432 conflict; if 5433 is also
+taken, change it in `docker-compose.yml` and in `.env`.
 
-*hdh is an educational project (MIT license, © 2026 Ajmal Mahmood). All data
-is synthetic; the AI assistant is a demonstration of validated agentic
-architecture, not a clinical decision-support device.*
+**Charting a note produces only review items** — SNOMED CT is not loaded. See
+[Part 5](#part-5--load-the-clinical-vocabularies).
+
+**"SOB" or a misspelling doesn't resolve** — you are on the single-file
+database. See [Part 3](#part-3--start-the-database).
+
+**The assistant says the API key is missing** — check `.env` is in the `hdh`
+folder itself, the line reads `ANTHROPIC_API_KEY=sk-ant-...` with no quotes
+and no spaces around `=`, then run `just check-env`.
+
+**A command says no patients exist** — you are pointed at an empty database.
+If you switched to PostgreSQL after generating, run `uv run hdh migrate` to
+copy your data across.
+
+**Something else** — open an issue at
+<https://github.com/arsalanam/hdh/issues> with the command you ran and what
+it printed.

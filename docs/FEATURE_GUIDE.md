@@ -1,15 +1,17 @@
 # hdh — Feature Guide
 
-**Health Data Hub: a medically realistic synthetic family-medicine EHR, plus a
-modular AI care-program toolkit built on top of it.**
+**Health Data Hub: an agent-fronted mini-EHR — chart notes, place orders,
+receive results, correct the record — running on a medically realistic
+synthetic family-medicine practice.**
 
 10,000 patients · 165,000+ visits · 777,000+ lab results · no PHI, ever.
 
 | | |
 |---|---|
-| Stack | Python · SQLAlchemy · SQLite · Faker · scikit-learn · Anthropic SDK · FastAPI |
+| Stack | Python · SQLAlchemy · **PostgreSQL** (SQLite for a first look) · Faker · scikit-learn · Anthropic SDK · FastAPI |
 | Install | `pip install -e ".[all]"` (core alone: `pip install -e .`) |
-| Docs | [Architecture](ARCHITECTURE.md) · [Per-module guides](guides/) |
+| Database | PostgreSQL is recommended: the terminology funnel keeps only its exact-match rung on SQLite — see the [Clinician's Guide, Part 3](guides/practitioner-guide.md#part-3--start-the-database) |
+| Docs | [Clinician's Guide](guides/practitioner-guide.md) · [Architecture](ARCHITECTURE.md) · [Per-module guides](guides/README.md) |
 
 > The original (v0.1) feature guide for the flat, generator-only project is
 > preserved as `Feature_Guide.docx`; this document covers the current modular
