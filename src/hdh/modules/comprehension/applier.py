@@ -384,7 +384,16 @@ def _apply_medications(session, visit, note: ComprehendedNote, result: ApplyResu
     for item in note.mentions:
         if item.mention.mention_type is not MentionType.MEDICATION:
             continue
-        drug = item.code.display if item.code else item.mention.text
+        # The chart's drug_name is what the clinician wrote; the RXCUI is
+        # what carries the precision. An RxNorm display is a full product
+        # string — "metformin hydrochloride 500 MG Extended Release Oral
+        # Tablet" — and putting that here would duplicate the dose column
+        # into the name and break matching against every earlier visit.
+        drug = (
+            item.code.display
+            if item.code is not None and item.code.system == "drug-catalog"
+            else item.mention.text
+        )
         existing = [rx for rx in visit.prescriptions if rx.drug_name.lower().startswith(drug.lower())]
         if drug.lower() in added_this_run:
             result.verdicts.append(
@@ -403,6 +412,13 @@ def _apply_medications(session, visit, note: ComprehendedNote, result: ApplyResu
             frequency=_attr(item, AttributeKind.FREQUENCY) or "",
             is_new="start" in status_word,
         )
+        if item.code is not None and item.code.in_shared_tables and item.confidence >= REVIEW_THRESHOLD:
+            # Migration 0009 added these columns for exactly this. Only a
+            # code from a real terminology goes in — the generator's name
+            # table is not one, and a code system nobody can dereference is
+            # worse than an honestly uncoded row.
+            prescription.code_system = item.code.system
+            prescription.code = item.code.code
         session.add(prescription)
         result.created.append(("Prescription", prescription))
         added_this_run.add(drug.lower())
