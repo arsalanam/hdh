@@ -836,13 +836,52 @@ def _parse_follow_up(plan: str) -> int | None:
     return int(match.group(1)) * _INTERVAL_DAYS[match.group(2).lower()]
 
 
+def _supersede_procedure(result: ApplyResult, target: str):
+    """The PROCEDURE request this run already made for the same thing.
+
+    "Refer to ophthalmology" reaches the chart twice: the mention pass sees
+    a PROCEDURE and makes a request, then this pass matches "refer to" and
+    makes a REFERRAL. Two open orders for one act — different things to
+    fulfil, to bill, and to close a care gap against, so one of them is
+    never satisfied.
+
+    Deduping cannot fix it: `_existing_request` matches within a kind, and
+    these are two kinds. This pass has strictly more information — it knows
+    the verb was "refer" — so it converts the row rather than sitting beside
+    it. Only rows created in THIS run are eligible: rewriting a request an
+    earlier note committed would be a silent chart mutation.
+    """
+    from hdh.core.models import ServiceKind
+
+    wanted = target.strip().lower()
+    for entity, row in result.created:
+        if (
+            entity == "ServiceRequest"
+            and row.kind is ServiceKind.PROCEDURE
+            and (row.display or "").strip().lower() == wanted
+        ):
+            return row
+    return None
+
+
 def _apply_referrals(session, patient, visit, plan: str, result: ApplyResult) -> None:
+    from hdh.core.models import ServiceKind
+
     for match in _REFERRAL_RE.finditer(plan):
         target = match.group(1).strip().rstrip(".").strip()
         if not target:
             continue
         if _existing_request(visit, "REFERRAL", target):
             result.verdicts.append(Verdict("confirmed", "request", f"referral to {target}: already ordered"))
+            continue
+        superseded = _supersede_procedure(result, target)
+        if superseded is not None:
+            superseded.kind = ServiceKind.REFERRAL
+            superseded.detail = {**(superseded.detail or {}), "specialty": target}
+            result.verdicts = [
+                v for v in result.verdicts if not (v.kind == "request" and v.detail == f"procedure: {target}")
+            ]
+            result.verdicts.append(Verdict("new", "request", f"referral: {target}"))
             continue
         request = _new_request(patient, visit, "REFERRAL", target, detail={"specialty": target})
         session.add(request)
