@@ -276,43 +276,46 @@
     .measure-box { grid-template-columns: minmax(0, 1fr); gap: 0.5rem; }
   }
 
-  /* Landscape, because the layout is 78rem wide. A4 portrait leaves ~695px
-     of content, which trips this page's own 58rem breakpoint and collapses
-     every grid to a single column — the same brochure over seven pages. */
   @page { size: A4 landscape; margin: 11mm 12mm; }
 
   @media print {
-    /* Stay dark. Flipping only the body to white left every panel on its
-       dark ground and the hero image darker still — a half-inverted page.
-       This is a brochure that gets shared as a file, so the identity holds
-       and Chrome is told to actually paint the backgrounds. */
-    html, body {
+    /* Reproduce the SCREEN design, scaled to the sheet — do not author a
+       second, tighter layout. Every dimension in this stylesheet is in rem,
+       so one root font-size maps the whole 78rem composition onto the 273mm
+       content width and every proportion survives intact.
+       10.7pt is that ratio, not a taste: screen content is 1160px wide
+       (78rem sheet less its padding) and the landscape sheet gives 1032px,
+       so 16px x (1032/1160) = 14.2px = 10.7pt.
+       Overriding individual sizes here is what made the PDF look cramped
+       while the page itself looked right. */
+    html {
+      font-size: 10.7pt;
       background: var(--ground);
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
-    /* On the ROOT, not on body: every margin, gap and padding in this
-       sheet is expressed in rem, so sizing body alone shrank the text and
-       left the whitespace at screen scale — eight pages of air. */
-    html { font-size: 8.6pt; }
-    body { font-size: 1rem; line-height: 1.5; }
-    .sheet { padding: 0; max-width: none; }
-    h1 { font-size: 25pt; }
-    h2 { font-size: 14.5pt; }
-    .lede { font-size: 11pt; }
-    .band { padding: 1.15rem 0; gap: 0 2rem; }
-    .masthead { padding-bottom: 1.2rem; }
-    /* The card is a banner, and at full width it claimed three quarters of
-       the cover on its own. Half width leaves room for the thesis to sit on
-       page one with it, which is what a cover is for. */
-    .hero-figure { margin-bottom: 1.4rem; }
-    .hero-figure img { max-width: 56%; }
+    body { font-size: 1rem; background: var(--ground); }
+    .sheet { max-width: none; padding: 0; }
+
+    /* Only atomic pieces must stay whole. NOT .band: one taller than the
+       sheet gets pushed to a fresh page and overflows it anyway, so every
+       band would claim a page of its own. */
     .transcript, table, .cols-3, .cols-2, .measure-box, .scope-note,
     .cap, .refusal, .colophon { break-inside: avoid; }
-    /* NOT break-inside on .band: a band taller than the sheet gets pushed
-       to a fresh page and overflows it anyway, so every band claimed its
-       own page. Only the atomic pieces above must stay whole. */
     .page-break { break-before: page; }
+
+    /* A heading must never split, and must never be the last thing on a
+       sheet with its paragraph overleaf. */
+    h1, h2, h3 { break-inside: avoid; break-after: avoid; }
+    p { orphans: 2; widows: 2; }
+
+    /* The cover has to hold together on one sheet, which a full-width
+       banner makes impossible — a scrolling page has no such constraint,
+       so this is the one place print composes differently rather than
+       merely scaling. */
+    .masthead { break-inside: avoid; }
+    .hero-figure { margin-bottom: 2rem; }
+    .hero-figure img { max-width: 62%; }
     a { color: var(--blue); text-decoration: none; }
   }
 </style>
