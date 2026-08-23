@@ -241,3 +241,74 @@ def test_scorer_produces_honest_numbers(catalog, comprehended):
     report = Scorecard()
     report.add(card)
     assert "mention recall" in report.report()
+
+
+# ── a code must not contradict the note (#72) ────────────────────────────
+
+
+def _procedure(text: str, interpretation: str | None):
+    from hdh.modules.comprehension.contracts import (
+        AttributeKind,
+        Mention,
+        MentionAttribute,
+        MentionType,
+        Span,
+    )
+
+    attributes = ()
+    if interpretation is not None:
+        attributes = (
+            MentionAttribute(kind=AttributeKind.INTERPRETATION, span=Span(0, 6), text=interpretation),
+        )
+    return Mention(
+        id=0,
+        mention_type=MentionType.PROCEDURE,
+        span=Span(0, len(text)),
+        text=text,
+        section_id=0,
+        attributes=attributes,
+    )
+
+
+def test_a_normal_exam_rejects_a_did_not_happen_code():
+    """ "Eyesight and foot exam was normal" charted 'Diabetic foot
+    examination NOT DONE' and 'Sight deteriorating', both above the review
+    line. Neither is a near-miss; both assert the opposite of the note."""
+    from hdh.modules.comprehension.normalize import _contradicts_the_note
+
+    normal = _procedure("foot exam", "normal")
+    for display in (
+        "Diabetic foot examination not done",
+        "Diabetic retinal eye exam not done",
+        "Diabetic foot examination declined",
+        "Sight deteriorating",
+    ):
+        assert _contradicts_the_note(normal, display), display
+
+
+def test_the_matching_outcome_survives():
+    """The guard only ever removes, and only what the note contradicts."""
+    from hdh.modules.comprehension.normalize import _contradicts_the_note
+
+    normal = _procedure("foot exam", "normal")
+    for display in ("Diabetic foot examination normal", "Diabetic foot examination"):
+        assert not _contradicts_the_note(normal, display), display
+
+
+def test_silence_constrains_nothing():
+    """A note that does not say how the exam went has made no assertion to
+    contradict — the guard must not invent one."""
+    from hdh.modules.comprehension.normalize import _contradicts_the_note
+
+    unqualified = _procedure("foot exam", None)
+    assert not _contradicts_the_note(unqualified, "Diabetic foot examination not done")
+
+
+def test_an_abnormal_exam_is_not_forced_to_be_normal():
+    """The rule is "do not contradict", not "prefer good news": a note
+    reporting an abnormal exam must still reach an abnormal concept."""
+    from hdh.modules.comprehension.normalize import _contradicts_the_note
+
+    abnormal = _procedure("foot exam", "abnormal")
+    assert not _contradicts_the_note(abnormal, "Diabetic foot examination abnormal")
+    assert not _contradicts_the_note(abnormal, "Diabetic foot examination not done")
