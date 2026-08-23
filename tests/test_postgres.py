@@ -177,3 +177,50 @@ def test_snomed_funnel_ranking_is_postgres_specific(pg_engine):
     finally:
         session.close()
         engine.dispose()
+
+
+def test_a_misspelt_brand_is_found_but_not_charted(pg_engine):
+    """§10 Scenario A's "Junovia" — one edit from a brand name.
+
+    Two things have to be true, and they pull in opposite directions.
+
+    The name must be RECOVERABLE, which needs the trigram rung and so is
+    PostgreSQL-only: the SQLite fallback does exact/prefix/substring and a
+    misspelling matches none of them.
+
+    But it must not be CHARTED automatically. A one-character typo scores
+    0.567 through the fuzzy rung — below the review threshold — and a drug
+    is exactly where a confident guess does harm. So the right outcome is
+    the one issue #54 argued for: surface the correct answer for a human to
+    click, rather than quietly charting it or quietly losing it.
+    """
+    from pathlib import Path
+
+    from hdh.core.ontology import get_ontology_service
+    from hdh.modules.rxnorm.coding import resolve
+    from hdh.modules.rxnorm.loader import run_load
+
+    fixtures = Path(__file__).parent / "fixtures" / "rxnorm"
+    engine = get_engine(db_url=PG_URL)
+    session = get_session(engine)
+    try:
+        run_load(session, fixtures)
+        service = get_ontology_service("rxnorm", session)
+
+        # recall: the typo finds the brand, and finds it FIRST
+        hits = service.normalize("Zorbexx", {"limit": 3})
+        assert hits, "the trigram rung recovered nothing"
+        assert hits[0].concept.display == "Zorbex"
+        assert hits[0].score < 0.6, "a typo must not reach chartable confidence"
+
+        # safety: the coder refuses at the default threshold
+        assert resolve(service, "Zorbexx", strength="10 MG", raw="Zorbexx 10 mg OD") is None
+
+        # and a caller who decides to accept it gets the right drug
+        accepted = resolve(service, "Zorbexx", strength="10 MG", raw="Zorbexx 10 mg OD", minimum_score=0.5)
+        assert accepted is not None and accepted.tty == "SBD"
+    finally:
+        # the fixture drops every table on teardown; a session still holding
+        # a lock turns that into a hang rather than a failure
+        session.close()
+        engine.dispose()

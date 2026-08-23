@@ -304,7 +304,7 @@ has the fixture), and only then RxNorm — which is written against
 | **M2** | ✅ LOINC delegates too; a quality-gate check for module **privacy** — using another module's public API is fine (it is the agent's whole job), reaching past it is not | no module reaches into another's internals |
 | **M3** | ✅ `hdh.modules.rxnorm`: loader (RRF), graph edges, `SearchProfile`, `OntologyService` #4, fabricated fixture | a drug vocabulary lands with no funnel of its own |
 | **M4** | ✅ Compositional coding: ingredient → strength → form, at the deepest supported level and **branded when the note names a brand** (§11 Q3, Q5); `Prescription`/`MedicationStatement` gain code columns; `RxSpec` carries an RXCUI (§11 Q4); `hdh rxnorm code` | **Scenario A's medication rows** (§10): an ER dose form, a quantity-times-strength, a verbatim sig, and a misspelt brand |
-| **M5** | Agent tools; the comprehensive test plan over the §10 scenarios | the interface holds under a conversation, and against notes we did not write |
+| **M5** | ✅ Agent tools; the comprehensive test plan over the §10 scenarios | the interface holds under a conversation, and against notes we did not write |
 
 Each milestone is human-tested before the next begins.
 
@@ -405,6 +405,32 @@ resolve through the graph rather than by string similarity.
    satisfied yet are recorded as expected failures with the reason, the
    way the #53 frontier list is — so the corpus says what is not working
    instead of quietly not asking.
+
+**What Scenario A says today** (`tests/test_scenarios.py`). The
+unstructured-note gap is closed: with no plan section the STATUS WORD
+carries the ordering signal, so "continued" and "added" produce
+medication orders where the note used to produce nothing at all. A
+structured note still keys on its plan, so nothing changed for notes that
+have one.
+
+Three rows remain expected failures, each with its reason recorded rather
+than its assertion softened:
+
+- **a LAB order in an unstructured note.** `ATTRIBUTE_LEGALITY` allows
+  `status_word` on MEDICATION and PROCEDURE only, so "asked for repeat
+  HbA1c" cannot distinguish itself from the result mentioned two clauses
+  earlier. Extending the schema is a comprehension change.
+- **the comparator.** `LabResult.comparator` exists (milestone A) and
+  nothing fills it from a note, so "higher than 7" loses its ">".
+- **the control qualifier.** "well treated hypertension" should set
+  `Condition.controlled`; the qualifier is extracted as no attribute at
+  all.
+
+And the misspelt brand is asserted where it can be: recovery needs the
+trigram rung, so it lives in the PostgreSQL suite. What it pins is that a
+typo is **found but not charted** — 0.567, below the review threshold —
+which is issue #54's conclusion arriving at a drug name, where a confident
+guess does the most harm.
 
 ## 11. Open questions — answered<a name="11-questions"></a>
 
