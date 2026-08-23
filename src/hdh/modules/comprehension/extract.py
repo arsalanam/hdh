@@ -121,8 +121,12 @@ Rules:
    Keep value and unit SEPARATE whenever the text allows ("98.5F" in the
    note -> value "98.5", unit "F"; never fold the unit into the value).
    control is for disease-control phrasing on problems ("well controlled",
-   "worsening"); status_word is for order verbs on medications/procedures
-   ("Start", "Continue") — never mix them.
+   "worsening"); status_word is for ORDER VERBS — "Start", "Continue",
+   "Added", "Ordered", "Repeat" — on a medication, a procedure or a lab.
+   Never mix them. On a lab, status_word marks a test being ASKED FOR
+   ("asked for repeat HbA1c"); a lab value the note merely refers to
+   ("came with higher than 7 HbA1c") takes interpretation/value, not
+   status_word. The difference is whether the note is requesting the test.
    Emit each relation at most once.
 5. relations: ONLY "treats" (medication/procedure -> problem or lab_vital),
    with inferred=true unless the text states the link ("for HTN").

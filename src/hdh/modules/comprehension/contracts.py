@@ -65,7 +65,15 @@ ATTRIBUTE_LEGALITY: dict[AttributeKind, frozenset[MentionType]] = {
     AttributeKind.BODY_SITE: frozenset({MentionType.PROBLEM, MentionType.PROCEDURE}),
     AttributeKind.SEVERITY: frozenset({MentionType.PROBLEM, MentionType.ALLERGY}),
     AttributeKind.STAGE: frozenset({MentionType.PROBLEM}),
-    AttributeKind.STATUS_WORD: frozenset({MentionType.MEDICATION, MentionType.PROCEDURE}),
+    # LAB_VITAL is here because of §10.0. A status word is what says "this
+    # was ORDERED" when a note has no plan section, and without it "asked
+    # for repeat HbA1c" had no way to distinguish itself from the HbA1c
+    # value referred to two clauses earlier. The reason that is now safe is
+    # that comprehension never writes a LabResult — an order is the only
+    # lab-shaped thing a note can produce, so this cannot blur the two.
+    AttributeKind.STATUS_WORD: frozenset(
+        {MentionType.MEDICATION, MentionType.PROCEDURE, MentionType.LAB_VITAL}
+    ),
     AttributeKind.REACTION: frozenset({MentionType.ALLERGY}),
     # disease-control status ('well controlled', 'worsening') — maps onto
     # the chart's Condition.controlled flag in the stage-6 applier
