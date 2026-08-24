@@ -40,20 +40,25 @@
   /* ── the ledger: mono label in a rail, content beside it ───────── */
   .band {
     display: grid;
-    grid-template-columns: var(--rail) minmax(0, 1fr);
-    gap: 0 3rem;
+    /* 6 / 94. The rail carries a label, not a column of text, so it gets
+       only what a label needs and the body gets the rest. */
+    grid-template-columns: minmax(0, 6fr) minmax(0, 94fr);
+    gap: 0 1.75rem;
     padding: 2.9rem 0;
     border-top: 1px solid var(--edge);
   }
 
   .eyebrow {
     font-family: var(--mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.16em;
+    /* Small enough that most labels hold one line in a 6% rail; the two
+       that don't break at a space, which reads as a stacked label rather
+       than a broken one. */
+    font-size: 0.62rem;
+    letter-spacing: 0.11em;
     text-transform: uppercase;
     color: var(--dim);
-    padding-top: 0.5rem;
-    white-space: nowrap;
+    padding-top: 0.62rem;
+    line-height: 1.45;
   }
   .eyebrow.is-out { color: var(--amber); }
 
@@ -63,12 +68,14 @@
   h1, h2, h3 { text-wrap: balance; }
 
   h1 {
-    font-size: clamp(2.2rem, 4.4vw, 3.2rem);
-    line-height: 1.06;
-    letter-spacing: -0.028em;
+    /* Sized to set on ONE line at the sheet's measure — the sentence is the
+       thesis, and breaking it across three lines made it read as a stack of
+       fragments rather than a claim. */
+    font-size: clamp(1.3rem, 2.45vw, 1.9rem);
+    line-height: 1.22;
+    letter-spacing: -0.02em;
     font-weight: 700;
-    margin: 0 0 1.15rem;
-    max-width: 24ch;
+    margin: 0 0 1.1rem;
   }
   h2 {
     font-size: clamp(1.4rem, 2.2vw, 1.8rem);
@@ -76,7 +83,6 @@
     letter-spacing: -0.018em;
     font-weight: 700;
     margin: 0 0 0.9rem;
-    max-width: 30ch;
   }
   h3 {
     font-size: 1rem;
@@ -110,14 +116,9 @@
     border: 1px solid var(--edge);
   }
 
-  .hero-text {
-    display: grid;
-    grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
-    gap: 0 4rem;
-    align-items: start;
-  }
-  .hero-text .lede { margin-bottom: 0; }
-  .hero-text .lede + .lede { margin-top: 1rem; }
+  /* One column, one paragraph. Split across two columns the thesis read as
+     two disconnected halves; it is a single argument and now runs as one. */
+  .hero-text .lede { margin-bottom: 0; max-width: 100ch; }
 
   /* ── the transcript block ───────────────────────────────────────── */
   .transcript {
@@ -265,7 +266,7 @@
 
   @media (max-width: 58rem) {
     .cols-3 { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
-    .cols-2, .hero-text, .colophon { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
+    .cols-2, .colophon { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
   }
   @media (max-width: 42rem) {
     .sheet { padding: 2.5rem 1.25rem 3rem; }
@@ -283,19 +284,24 @@
        second, tighter layout. Every dimension in this stylesheet is in rem,
        so one root font-size maps the whole 78rem composition onto the 273mm
        content width and every proportion survives intact.
-       10.7pt is that ratio, not a taste: screen content is 1160px wide
-       (78rem sheet less its padding) and the landscape sheet gives 1032px,
-       so 16px x (1032/1160) = 14.2px = 10.7pt.
+       10.1pt is that ratio, not a taste: screen content is 1160px wide
+       (78rem sheet less its padding); the landscape sheet gives 1032px and
+       the inset below spends 62px of it, so 16px x (970/1160) = 13.4px.
        Overriding individual sizes here is what made the PDF look cramped
        while the page itself looked right. */
     html {
-      font-size: 10.7pt;
+      font-size: 10.1pt;
       background: var(--ground);
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
     body { font-size: 1rem; background: var(--ground); }
-    .sheet { max-width: none; padding: 0; }
+    /* Text needs an inset of its own. With padding:0 the page margin was
+       the only one, so every line sat hard against the trim — and against
+       the banner's edge, which reads as a mistake rather than a full-bleed.
+       The banner still spans the sheet by stepping back out of it. */
+    .sheet { max-width: none; padding: 0 2.2rem; }
+    .hero-figure { margin-left: -2.2rem; margin-right: -2.2rem; }
 
     /* Only atomic pieces must stay whole. NOT .band: one taller than the
        sheet gets pushed to a fresh page and overflows it anyway, so every
@@ -313,9 +319,10 @@
        banner makes impossible — a scrolling page has no such constraint,
        so this is the one place print composes differently rather than
        merely scaling. */
-    .masthead { break-inside: avoid; }
+    /* The banner spans the sheet. Holding the cover to one page meant
+       shrinking it, and this reads better as a document that flows than as
+       a cover that fits. */
     .hero-figure { margin-bottom: 2rem; }
-    .hero-figure img { max-width: 62%; }
     a { color: var(--blue); text-decoration: none; }
   }
 </style>
@@ -327,19 +334,17 @@
       <img src="__CARD__" alt="hdh — an agent-first EHR. A clinical note goes in; four verdicts come out: three charted in teal, and one in amber reading NOT charted, sent to a human." />
     </figure>
 
-    <h1>Domain performance is an orchestration problem now, not a training one.</h1>
+    <h1>Domain performance is an orchestration problem now, not a training one</h1>
 
     <div class="hero-text">
       <p class="lede">
         The assumption was that clinical AI meant fine-tuning a small model on clinical text.
         Frontier reasoning models already carry the domain knowledge. What they lack is
         <strong>this patient's chart</strong>, <strong>your terminologies</strong>, and
-        <strong>somewhere legitimate to put the answer</strong>.
-      </p>
-      <p class="lede">
-        Supply those three through tools and orchestration and you get domain-grade behaviour
-        without training anything — and the behaviour holds when you swap the model, because
-        the parts that must not be wrong were never in the weights.
+        <strong>somewhere legitimate to put the answer</strong>. Supply those three through
+        tools and orchestration and you get domain-grade behaviour without training anything —
+        and the behaviour holds when you swap the model, because the parts that must not be
+        wrong were never in the weights.
       </p>
     </div>
   </header>
