@@ -41,11 +41,12 @@ coded, a benchmark is a query plus a definition.
 3. [The worked example: an acute care pathway](#3-pathway)
 4. [Contracts: events, scores, and eligibility](#4-contracts)
 5. [Measures have three shapes](#5-measures)
-6. [Where core has to grow](#6-core)
-7. [Agent-first: dashboards without a dashboard](#7-agent)
-8. [Ownership: module or core](#8-ownership)
-9. [Milestones](#9-milestones)
-10. [Open questions](#10-questions)
+6. [A worked example at scale](#6-worked)
+7. [Where core has to grow](#7-core)
+8. [Agent-first: dashboards without a dashboard](#8-agent)
+9. [Ownership: module or core](#9-ownership)
+10. [Milestones](#10-milestones)
+11. [Open questions](#11-questions)
 
 ---
 
@@ -156,7 +157,7 @@ someone administering the instrument.
 **Eligibility is computed and contested.** *"Thrombolysis rate among
 eligible patients"* requires knowing who was eligible — a function of
 time since onset, contraindications, and clinical judgement. This is the
-hardest part of the design and §10 Q6 asks how to represent it.
+hardest part of the design and §11 Q6 asks how to represent it.
 
 ## 4. Contracts: events, scores, and eligibility<a name="4-contracts"></a>
 
@@ -257,7 +258,162 @@ The corollary: a measure whose denominator cannot be computed **reports
 that it cannot**, rather than returning zero. A zero and an unknown look
 identical in a dashboard and mean opposite things.
 
-## 6. Where core has to grow<a name="6-core"></a>
+## 6. A worked example at scale<a name="6-worked"></a>
+
+Take a hypothetical that makes the design concrete: **ten stroke centres
+built across a country of over two hundred million people**, funded
+externally, three or four years in. The funders want to know whether the
+investment changed anything — not whether the buildings exist, but
+whether **acute reperfusion, thrombectomy and rehabilitation are
+happening, and whether mortality and morbidity moved.**
+
+That question is harder than it sounds, and the interesting part of this
+section is *why* — because the architecture has to be honest about it
+rather than produce a confident chart.
+
+### 6.1 The question they ask is not the question that can be answered first
+
+Funders ask about **outcomes**. Outcomes are the right thing to care
+about and the wrong thing to start with:
+
+| | Process measures | Outcome measures |
+|---|---|---|
+| e.g. | door-to-needle, dysphagia screen before intake, thrombectomy rate among eligible | 90-day mortality, modified Rankin at 90 days |
+| feedback loop | same day | 90 days minimum |
+| confounded by case mix | barely | **severely** |
+| actionable | directly — a centre can change it next week | only through the processes that drive it |
+| N needed to see a change | small | large |
+
+A centre that receives sicker patients will look worse on mortality
+while delivering better care. So an outcome comparison between centres is
+**meaningless without case-mix adjustment**, and a dashboard that ranks
+ten centres by raw mortality is actively harmful — it punishes the
+centres taking the hardest cases.
+
+The architecture's answer is not to choose. It is to measure **process
+continuously and outcome periodically**, state which is which, and never
+present an unadjusted outcome comparison as a ranking.
+
+### 6.2 What makes adjustment possible is the coded chart
+
+Case-mix adjustment needs baseline severity, age, comorbidity burden and
+time from onset to arrival. Every one of those is already in an hdh
+chart:
+
+| Adjustment variable | Where it already lives |
+|---|---|
+| baseline severity | `AssessmentScore` — the admission instrument, LOINC-coded (§4.3) |
+| age, sex | `Patient` |
+| comorbidity burden | `Condition` — the problem list, SNOMED/ICD-coded |
+| onset-to-arrival | `PathwayEvent` timestamps (§4.2) |
+| pre-morbid function | `AssessmentScore` — the baseline functional score |
+
+This is the payoff of coding at write time. The variables that make an
+outcome comparison defensible are the same variables comprehension
+already extracts from the note — so adjustment is a query, not a second
+data-collection programme.
+
+Without that, a funder's outcome question requires a research study. With
+it, it requires a definition.
+
+### 6.3 The three programmes, and what each actually measures
+
+**Acute reperfusion.** Thrombolysis rate among eligible patients, and
+door-to-needle interval. Eligibility is the whole difficulty (§10 Q6):
+the denominator is *"patients who could have been treated"*, which is a
+clinical judgement about onset time and contraindications, not a field.
+A centre can improve its rate by treating more patients **or** by
+recording fewer as eligible, and only one of those is progress. The
+exclusion counts and their reasons are therefore not a footnote — they
+are the measure's integrity.
+
+**Thrombectomy.** Door-to-device, split by direct arrival and transfer,
+because a transferred patient's clock includes another hospital's delay
+and mixing them hides where the time went. At ten centres this is also
+where **volume** bites: a centre performing a small number of procedures
+per quarter cannot produce a stable interval percentile, and reporting
+one anyway invents precision. A measure result that carries its
+denominator makes this visible; one that reports only a percentage does
+not.
+
+**Rehabilitation.** Three distinct things that get conflated: whether an
+assessment happened, how long it took, and whether function improved.
+The first two are process. The third is a **paired** measure — a
+functional score at discharge and another at follow-up — and it is the
+only one that speaks to morbidity. It needs both scores on the same
+patient, which is a capture requirement, not a computation.
+
+### 6.4 The threat to every outcome claim: follow-up completeness
+
+A 90-day outcome exists only if someone captured it at 90 days.
+
+If a third of patients are lost to follow-up, and the lost patients are
+systematically different — sicker, poorer, further away — then measured
+outcomes are better than real outcomes, by an unknown margin and in a
+consistent direction. This is the single largest threat to an
+outcome-based programme, and it is invisible in any dashboard that
+reports only the patients it has.
+
+So **follow-up completeness is itself a first-class measure**, reported
+beside every outcome it conditions:
+
+> 90-day functional independence: 48% *(of 213 patients with a recorded
+> 90-day assessment, from 341 eligible — **62% follow-up**)*
+
+The parenthetical is not a caveat. It is the number that tells a reader
+whether to believe the first one. A measure result that carries its
+denominator and its exclusions (§5) produces this by construction, which
+is the point of that contract.
+
+### 6.5 What the centres describe — and what they do not
+
+Ten centres in a country of that size see a small fraction of its
+strokes. Their numbers describe **the patients who reached them**, not
+the national burden, and the two get conflated constantly in reporting.
+
+That distinction has to survive into the output. A measure knows its
+denominator, and the denominator is *presented patients*, not
+*population*. Any population-level claim needs a catchment denominator
+hdh does not have and should not pretend to — the honest report says
+*"among patients presenting to these centres"* and stops.
+
+The same discipline as everywhere else in this project: the system
+reports what it can support and declines the rest, rather than producing
+a plausible number nobody can check.
+
+### 6.6 Tracking change over time
+
+*"Did it improve?"* is a comparison of the same definition across
+periods, which is only sound if three things hold:
+
+1. **The definition did not change.** Hence versioned definitions (§5) —
+   a revised measure produces a discontinuity that looks like a real
+   change and is not.
+2. **Capture did not change.** A centre that starts recording severity
+   scores properly will appear to get sicker patients and better
+   risk-adjusted outcomes simultaneously. Capture completeness is
+   reported alongside, for the same reason follow-up is.
+3. **The comparison is powered.** Ten centres, quarterly, is a small
+   number of events per cell for an outcome measure. Process measures
+   support quarterly comparison; outcome measures may support annual.
+   The runner should say which, rather than leaving a reader to assume.
+
+### 6.7 Where this lands architecturally
+
+Nothing in §6.1–§6.6 requires a new mechanism beyond §4 and §5. It
+requires the measure contract to carry **denominator, exclusions with
+reasons, completeness, definition version and period** — which is why
+those are in the contract rather than left to each measure — and it
+requires the chart to be coded, which it already is.
+
+It does add one thing §5 did not anticipate, and §11 Q8 asks about it:
+**risk adjustment is part of a measure definition, not a separate
+report.** An unadjusted outcome and an adjusted one are different
+measures with different denominators, and treating adjustment as a
+presentation choice is how a dashboard ends up comparing centres on
+something it never measured.
+
+## 7. Where core has to grow<a name="7-core"></a>
 
 Three additions, and the argument for each being core rather than module.
 
@@ -270,7 +426,7 @@ the agent's population questions want it, and #88's dashboards want it.
 **Core.**
 
 The migration question is what an existing single-site dataset becomes;
-§10 Q1 asks it.
+§11 Q1 asks it.
 
 ### 6.2 A finder discovery hook
 
@@ -292,7 +448,7 @@ whoever transcribes a standard.
 This is exactly the `termsearch` split: the mechanism is shared, the
 profile is the caller's.
 
-## 7. Agent-first: dashboards without a dashboard<a name="7-agent"></a>
+## 8. Agent-first: dashboards without a dashboard<a name="8-agent"></a>
 
 **No fixed UI for this module.** The same commitment as everywhere else:
 the agent is the interface, and a screen is one renderer among several.
@@ -321,7 +477,7 @@ validator checks claims against tool evidence, and a measure result
 carrying its counts and definition id is exactly the evidence it needs.
 A rate quoted without them should not survive validation.
 
-## 8. Ownership: module or core<a name="8-ownership"></a>
+## 9. Ownership: module or core<a name="9-ownership"></a>
 
 | Owned by the specialty module | Owned by core |
 |---|---|
@@ -337,7 +493,7 @@ The test this document is really running: **if building the specialty
 module requires changing anything in the right-hand column beyond the
 three additions in §6, the architecture did not hold.**
 
-## 9. Milestones<a name="9-milestones"></a>
+## 10. Milestones<a name="10-milestones"></a>
 
 | | Delivers | Proves |
 |---|---|---|
@@ -349,10 +505,10 @@ three additions in §6, the architecture did not hold.**
 
 Each milestone is human-tested before the next begins.
 
-## 10. Open questions<a name="10-questions"></a>
+## 11. Open questions<a name="11-questions"></a>
 
 **Q1 — Does the `Site` dimension go in core, and what happens to existing
-data?** The argument for core is in §6.1. If yes: does an existing
+data?** The argument for core is in §7.1. If yes: does an existing
 single-site dataset get a synthesised default site, or does the column
 stay nullable and measures report "unattributed"?
 
@@ -398,3 +554,14 @@ The codebase's own history argues for the second: `termsearch` and
 `ConditionSource` were both extracted **after** a second consumer
 existed, and generalising from one case is the mistake the RxNorm
 document was written to correct.
+
+**Q8 — Is risk adjustment part of a measure definition, or a separate
+report?** §6.7 argues it is part of the definition: an unadjusted outcome
+and an adjusted one have different denominators and answer different
+questions, so treating adjustment as a presentation choice is how a
+dashboard ends up comparing services on something it never measured. The
+cost is that a definition then carries a model — which variables, fitted
+how, on which reference population — and that is a heavier thing to
+transcribe than a numerator. Does a first version report **unadjusted
+only, labelled as such**, and refuse the cross-service comparison
+entirely until adjustment exists?
