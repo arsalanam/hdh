@@ -71,13 +71,16 @@ def test_three_sources_with_precedence(tagging_db):
     _patient_with(
         tagging_db,
         ("N18.4", "Chronic kidney disease, stage 4"),  # profile-authored (CKD stage)
-        ("J06.9", "Acute upper respiratory infection"),  # curated demo map
+        # curated demo map. NOT J06.9 any more: uri_adult became
+        # profile-authored when #86 completed catalog coverage, and profile
+        # outranks curated — same SNOMED code, higher-precedence source.
+        ("F32.9", "Depressive disorder"),
         ("B99.9", "Glimmer fever"),  # derived: matches a fixture synonym
         ("Q99.999", "Unmappable synthetic mystery"),  # stays unmapped
     )
     mappings = derive_mappings(tagging_db)
     assert mappings["N18.4"].source == "profile" and mappings["N18.4"].snomed_code == "431857002"
-    assert mappings["J06.9"].source == "curated" and mappings["J06.9"].snomed_code == "54150009"
+    assert mappings["F32.9"].source == "curated" and mappings["F32.9"].snomed_code == "35489007"
     assert mappings["B99.9"].source == "derived" and mappings["B99.9"].snomed_code == fx.BLORBITIS
     assert mappings["B99.9"].confidence >= 0.6
     assert "Q99.999" not in mappings
@@ -152,3 +155,157 @@ def test_fail_soft_without_snomed_catalog(tmp_path):
     assert counts["profile"] == 1 and counts["derived"] == 0
     session.close()
     engine.dispose()
+
+
+# ── catalog coverage and the chartable/not-chartable line (#86) ──────────
+
+
+def test_every_condition_maps_to_snomed():
+    """Coverage is the point of #86: an ICD code with no SNOMED equivalent
+    cannot be reconciled, cross-walked, or reasoned about by the agent."""
+    from hdh.core.conditions import default_catalog
+
+    catalog = default_catalog()
+    unmapped = [n for n in catalog.names() if not catalog.get(n).snomed_code]
+    assert not unmapped, f"conditions with no SNOMED code: {sorted(unmapped)}"
+
+
+def test_every_mapped_code_records_its_hierarchy():
+    """The code alone does not say whether it is a problem. Whoever authors
+    one has to say which hierarchy it came from, because the consumer
+    downstream cannot look it up — a FHIR enricher has no session."""
+    from hdh.core.conditions import default_catalog
+    from hdh.modules.ontology.fhir import CHARTABLE_TAGS
+
+    catalog = default_catalog()
+    known = CHARTABLE_TAGS | {"procedure", "event"}
+    for name in catalog.names():
+        profile = catalog.get(name)
+        if profile.snomed_code:
+            assert profile.snomed_tag in known, f"{name}: unknown snomed_tag {profile.snomed_tag!r}"
+
+
+def test_encounter_reasons_are_mapped_but_not_problems():
+    """The decision this issue turned on.
+
+    An annual physical, a well-child visit and a fall all map correctly to
+    SNOMED — as `procedure` and `event`. Mapping them keeps ICD→SNOMED
+    coverage complete; refusing to call them problems keeps them off the
+    problem list.
+    """
+    from hdh.core.conditions import default_catalog
+    from hdh.modules.ontology.fhir import CHARTABLE_TAGS
+
+    catalog = default_catalog()
+    by_name = {n: catalog.get(n) for n in catalog.names()}
+
+    for name in ("annual_physical_adult", "well_child", "sports_physical", "fall_injury"):
+        profile = by_name[name]
+        assert profile.snomed_code, f"{name} should still MAP"
+        assert profile.snomed_tag not in CHARTABLE_TAGS, f"{name} is not a problem"
+
+    # and the ordinary case is untouched
+    assert by_name["type2_diabetes"].snomed_tag == "disorder"
+    # a history-of IS a problem-list entry, and SNOMED calls it a situation
+    assert by_name["stroke_history"].snomed_tag == "situation"
+    assert by_name["stroke_history"].snomed_tag in CHARTABLE_TAGS
+
+
+def test_the_enricher_skips_a_non_problem_and_keeps_a_problem():
+    """`Condition.code` is bound to problems and diagnoses. A procedure
+    concept in it would be a conformance error dressed as completeness."""
+    from types import SimpleNamespace
+
+    from hdh.modules.ontology.fhir import ConditionCodingEnricher
+
+    enricher = ConditionCodingEnricher()
+
+    def condition_resource():
+        return SimpleNamespace(code=SimpleNamespace(coding=[]))
+
+    # an encounter reason: mapped, but not appended
+    skipped = condition_resource()
+    enricher.enrich(
+        skipped,
+        SimpleNamespace(
+            snomed_code="162673000",
+            snomed_display="General examination of patient",
+            description="Annual physical",
+        ),
+        None,
+    )
+    assert skipped.code.coding == [], "a procedure concept reached Condition.code"
+
+    # an ordinary disorder: appended as before
+    charted = condition_resource()
+    enricher.enrich(
+        charted,
+        SimpleNamespace(
+            snomed_code="44054006", snomed_display="Type 2 diabetes mellitus", description="Type 2 diabetes"
+        ),
+        None,
+    )
+    assert [c.code for c in charted.code.coding] == ["44054006"]
+
+
+def test_icd_lookup_answers_from_the_icd_side(tagging_db, capsys):
+    """`maps_to` edges existed since `hdh ontology tag`, and only
+    comprehension read them — from the SNOMED side, to find a billing code.
+    Asked from the ICD side there was no answer at all (#86)."""
+    from sqlalchemy import insert
+
+    from hdh.core.models import Base
+    from hdh.modules.icd10cm.cli import _cmd_lookup
+
+    tables = Base.metadata.tables
+    tagging_db.execute(
+        insert(tables["ontology_concepts"]),
+        [
+            {
+                "id": "icd10cm:E11.9",
+                "ontology": "icd10cm",
+                "code": "E11.9",
+                "kind": "code",
+                "display": "Type 2 diabetes mellitus without complications",
+                "is_billable": True,
+                "path": "E11.9",
+                "hierarchy_depth": 0,
+                "properties": {},
+            }
+        ],
+    )
+    tagging_db.execute(
+        insert(tables["ontology_edges"]),
+        [
+            {
+                "source_id": "icd10cm:E11.9",
+                "target_id": "snomed_ct:44054006",
+                "edge_type": "maps_to",
+                "authority": "PACK_AUTHORED",
+                "confidence": 1.0,
+                "properties": {},
+            }
+        ],
+    )
+    tagging_db.execute(
+        insert(tables["ontology_concepts"]),
+        [
+            {
+                "id": "snomed_ct:44054006",
+                "ontology": "snomed_ct",
+                "code": "44054006",
+                "kind": "concept",
+                "display": "Type 2 diabetes mellitus",
+                "properties": {},
+            }
+        ],
+    )
+    tagging_db.flush()
+
+    _cmd_lookup(tagging_db, "E11.9")
+    printed = capsys.readouterr().out
+    assert "maps to" in printed
+    assert "snomed_ct:44054006" in printed
+    # the authority is shown, because an asserted mapping and a derived one
+    # are different things to trust
+    assert "PACK_AUTHORED" in printed

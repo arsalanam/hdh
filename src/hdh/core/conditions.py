@@ -203,6 +203,13 @@ class ConditionProfile:
     visit_type: VisitType
     chronic: bool = False
     snomed_code: str | None = None
+    #: Which SNOMED hierarchy ``snomed_code`` lives in — "disorder",
+    #: "finding", "procedure", "event". Recorded because the code alone does
+    #: not say, and a consumer needs to: a FHIR ``Condition.code`` may carry
+    #: a disorder and must not carry a procedure. Encounter reasons — an
+    #: annual physical, a well-child visit — map correctly to SNOMED and are
+    #: not problems, and the mapping is worth having either way.
+    snomed_tag: str | None = None
     sex_limit: Sex | None = None
     bp_sys_delta: tuple[float, float] = (0, 5)
     bp_dia_delta: tuple[float, float] = (0, 3)

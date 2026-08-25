@@ -175,6 +175,36 @@ def _cmd_lookup(session, code: str) -> None:
         ).all()
         if siblings:
             print(f"   episodes: {', '.join(f'{c} ({e})' for c, e in siblings)}")
+    _print_mappings(session, row)
+
+
+def _print_mappings(session, row) -> None:
+    """Cross-vocabulary mappings for a code.
+
+    These edges have existed since `hdh ontology tag` shipped, and until now
+    only comprehension read them — from the SNOMED side, to find a billing
+    code. Asked from the ICD side there was no answer at all.
+
+    The authority is printed because it is the difference between a mapping
+    someone asserted and one a funnel derived at 0.87, and a reader deciding
+    whether to trust it needs to know which.
+    """
+    concepts_t, edges_t, _l = _tables()
+    mappings = session.execute(
+        select(
+            concepts_t.c.ontology,
+            concepts_t.c.code,
+            concepts_t.c.display,
+            edges_t.c.authority,
+            edges_t.c.confidence,
+        )
+        .join(edges_t, edges_t.c.target_id == concepts_t.c.id)
+        .where(edges_t.c.source_id == row["id"], edges_t.c.edge_type == "maps_to")
+        .order_by(concepts_t.c.ontology, concepts_t.c.code)
+    ).all()
+    for ontology, mcode, mdisplay, authority, confidence in mappings:
+        score = f" @{confidence:.2f}" if confidence is not None and confidence < 1.0 else ""
+        print(f"   maps to → {ontology}:{mcode} {mdisplay}  [{authority}{score}]")
 
 
 def search_concepts(session, term: str, limit: int) -> list:
