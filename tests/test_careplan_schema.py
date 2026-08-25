@@ -361,3 +361,51 @@ def test_a_measure_carries_its_vocabulary_not_just_a_code(world):
         columns = _entity(table).c
         assert "measure_system" in columns and "measure_code" in columns
         assert "measure_loinc" not in columns
+
+
+# ── the PostgreSQL requirement, stated rather than degraded ──────────────
+
+
+def test_a_postgresql_requirement_refuses_with_a_reason(world):
+    """ARCHITECTURE §4a: an advanced module says what it cannot do here.
+
+    The failure names the feature in the user's terms, the dialect it
+    actually found, and how to get a PostgreSQL database — because the
+    alternative this replaces was silently doing a quarter of the job.
+    """
+    from hdh.core.dialect import DatabaseFeatureError, is_postgresql, require_postgresql
+
+    session, _patient = world
+    assert not is_postgresql(session)
+
+    with pytest.raises(DatabaseFeatureError) as err:
+        require_postgresql(session, "Care-plan knowledge retrieval")
+    message = str(err.value)
+    assert "Care-plan knowledge retrieval" in message
+    assert "sqlite" in message
+    assert "just deps" in message
+
+
+def test_the_check_passes_silently_where_the_feature_exists():
+    """It must be cheap and quiet on the supported path — a guard that
+    logged or warned on success would be noise on every call."""
+    from types import SimpleNamespace
+
+    from hdh.core.dialect import require_postgresql
+
+    pg = SimpleNamespace(get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql")))
+    require_postgresql(pg, "anything")  # no raise, no output
+
+
+def test_the_plan_data_model_itself_stays_portable(world):
+    """The requirement is scoped to the capability that needs it, not the
+    whole module. Six tables of plan graph are ordinary SQL and work
+    anywhere — which is why these tests run on SQLite at all."""
+    from sqlalchemy import func, select
+
+    session, patient = world
+    plan_id = _plan(session, patient)
+    concern_id = _concern(session, plan_id)
+    _goal(session, plan_id, concern_id)
+    session.commit()
+    assert session.execute(select(func.count()).select_from(_entity("plan_goals"))).scalar() == 1

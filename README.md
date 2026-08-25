@@ -176,9 +176,12 @@ hdh agent --compact-after 8                 # demo context compaction
 
 ## Run it on PostgreSQL
 
-**Use PostgreSQL.** SQLite works and the test suite runs on it, but the
-clinical surface is meaningfully weaker there, and the difference is
-mechanical rather than a matter of taste.
+**Use PostgreSQL.** SQLite works for generation, the chart, exports and the
+basic agent flow — and that is deliberate, so a first look costs nothing.
+But the clinical surface is meaningfully weaker there, and some modules
+**require** PostgreSQL and refuse rather than degrade (see
+[ARCHITECTURE §4a](docs/ARCHITECTURE.md)). The difference is mechanical,
+not a matter of taste.
 
 Terminology lookup — the step that turns *"SOB"* into a code — is a funnel
 with several rungs:

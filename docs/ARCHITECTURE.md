@@ -179,6 +179,41 @@ robust:
 2. **A module that fails to import is skipped silently** — the core CLI never
    breaks because an optional feature is broken.
 
+## 4a. Which database a module requires
+
+hdh started on SQLite and the core still runs there: **generation, the
+chart, exports and the basic agent flow are portable and stay portable.**
+That is what makes `hdh generate` work on a laptop with nothing installed.
+
+**Advanced modules require PostgreSQL, and say so rather than degrading.**
+
+The rule exists because the alternative was tried. Comprehension carried a
+portable retrieval path alongside a PostgreSQL one, and the cost was real:
+`hdh.core.termsearch` has four rungs — exact term, abbreviation alias,
+full-text search, trigram similarity — and only the first is portable. On
+SQLite the funnel falls back to substring `LIKE`, so `"SOB"` never reaches
+*Dyspnea*, a misspelling never recovers, and `"diabetes mellitus type 2"`
+cannot match *"Type 2 diabetes mellitus"* because substring matching
+cannot reorder words. The code carried two paths; the behaviour was
+one-quarter of the feature; and nothing warned the user.
+
+So the boundary is explicit:
+
+| | SQLite | PostgreSQL |
+|---|---|---|
+| generation, chart, exports, FHIR API | ✅ | ✅ |
+| basic agent flow and SQL tools | ✅ | ✅ |
+| terminology retrieval at full strength | ⚠️ exact match only | ✅ |
+| modules declaring a PostgreSQL requirement | ❌ **refuses, with a reason** | ✅ |
+
+A module in the last row does not silently do less. It checks the dialect
+at the point it needs the feature and fails with a message naming what is
+missing and how to get it — the same posture as every other refusal in
+this project: **an honest stop beats a quiet degradation.**
+
+Its tests live in `tests/test_postgres.py`, which skips without
+`HDH_PG_TEST_URL` and runs as the required `qa-postgres` check in CI.
+
 ## 5. Module architectures in brief
 
 | Module | Shape | Key design decision |
