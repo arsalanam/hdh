@@ -86,10 +86,69 @@ precedence order:
 
 Mappings also materialize as **`maps_to` edges** (authority
 `PACK_AUTHORED` / `CURATED_DEMO` / `DERIVED_NORMALIZE`, confidence
-carried) when both concepts exist in the shared tables — the first real
-rows of the cross-ontology plan
-([#18](https://github.com/arsalanam/hdh/issues/18)); official crosswalk
+carried) when both concepts exist in the shared tables; official crosswalk
 edges under other authorities are never touched.
+
+Ask for one from either side:
+
+```bash
+hdh icd lookup E11.9
+#   E11.9 — Type 2 diabetes mellitus without complications  [billable]
+#      └ E00-E89: Endocrine, nutritional and metabolic diseases
+#        └ E08-E13: Diabetes mellitus (E08-E13)
+#          └ E11: Type 2 diabetes mellitus
+#      maps to → snomed_ct:44054006 Type 2 diabetes mellitus  [PACK_AUTHORED]
+```
+
+The authority is printed because an asserted mapping and one a funnel
+derived at 0.87 are different things to trust; a derived edge shows its
+score.
+
+## Mapped, but not a problem
+
+Every ICD-10 code the generator emits maps to a SNOMED concept — and
+**seven of them are not problems.** An annual physical is
+`162673000 General examination of patient`, a well-child visit is
+`410620009 Well child visit`, and a fall is `217082002 Accidental fall`:
+five procedures and an event. Correct mappings, and none of them belongs
+on a problem list.
+
+So a profile records the hierarchy alongside the code:
+
+```python
+_SNOMED = {
+    "type2_diabetes":         ("44054006",  "disorder"),
+    "stroke_history":         ("275526006", "situation"),   # "History of..."
+    "annual_physical_adult":  ("162673000", "procedure"),   # mapped, not a problem
+    "fall_injury":            ("217082002", "event"),
+}
+```
+
+FHIR `Condition.code` is bound to problems, diagnoses and health
+concerns, so `ConditionCodingEnricher` appends a coding only for
+`disorder`, `finding` and `situation` — a *situation with explicit
+context* qualifies, since "history of stroke" really is a problem-list
+entry. The mapping still exists and `hdh icd lookup` still shows it; it
+simply never claims to be the patient's problem.
+
+The hierarchy is recorded rather than looked up because the consumer
+cannot look it up: a FHIR enricher gets the entity and no database
+session, by design.
+
+## Licensing — what ships, and what you supply
+
+| Ontology | License reality | What hdh does |
+|---|---|---|
+| **ICD-10-CM** | public domain | full catalog ships and downloads (`hdh icd load --download`) |
+| **SNOMED CT** | UMLS license — free for US affiliates, **not redistributable** | loader ships, data never; `hdh snomed load --download` with your own UMLS key. The starter map ships as `maps_to` edges, not as SNOMED content |
+| **LOINC** | free with registration, redistribution restricted | loader ships; you supply the release (`hdh loinc load --source <dir>`) |
+| **RxNorm** | UMLS license | loader ships; you supply the release (`hdh rxnorm load --source <dir>`) |
+| **CPT** | AMA-copyrighted, **paid** | the schema supports it; hdh will never ship it |
+| **ICD-10-PCS / HCPCS** | public domain | future loaders, same `LoadStage` pipeline |
+
+The rule is one line: **loaders ship, licensed data never does.** Release
+builds are gated by `just release-check`, which fails on any licensed row
+in a release asset — see CONTRIBUTING.
 - **Add your own schema module** — copy this module's shape (manifest +
   `schema/entities/*.json`), register it in `hdh.modules.SCHEMA_MODULES`,
   and your columns appear at next bootstrap. New entities, relationships,

@@ -736,21 +736,56 @@ _CHRONIC = frozenset(
 _SEX_LIMIT = {"uti": Sex.FEMALE, "contraception_consult": Sex.FEMALE}
 
 # Opportunistic SNOMED codes for the well-known conditions (design §10 Q3)
-_SNOMED = {
-    "hypertension": "59621000",
-    "type2_diabetes": "44054006",
-    "hyperlipidemia": "55822004",
-    "copd": "13645005",
-    "osteoarthritis": "396275006",
-    "hypothyroidism": "40930008",
-    "obesity": "414916001",
-    "gerd": "235595009",
-    "influenza": "6142004",
-    "uti": "68566005",
-    "anxiety_adult": "21897009",
-    "anxiety_teen": "21897009",
-    "depression_senior": "35489007",
-    "low_back_pain": "279039007",
+#: SNOMED CT concept per condition, with the hierarchy it belongs to.
+#:
+#: The hierarchy is recorded because the code alone does not say it, and
+#: consumers differ: a FHIR ``Condition.code`` may carry a disorder and must
+#: not carry a procedure. Every ICD code the generator emits maps to
+#: something — but an annual physical is a `procedure` and a fall is an
+#: `event`, and neither is a problem. Mapping them anyway keeps ICD->SNOMED
+#: coverage complete; tagging them keeps them out of places they don't
+#: belong.
+#:
+#: Concepts were chosen against the loaded US Edition rather than from
+#: memory. Two were not what a top-ranked search returned: "Fever,
+#: unspecified" ranks *Q fever* alongside *Fever*, and "Open wound,
+#: unspecified head" needs `Laceration of head` rather than a bare
+#: `Open wound`.
+_SNOMED: dict[str, tuple[str, str]] = {
+    # ── disorders and findings: chartable as a problem ────────────────
+    "hypertension": ("59621000", "disorder"),
+    "type2_diabetes": ("44054006", "disorder"),
+    "hyperlipidemia": ("55822004", "disorder"),
+    "copd": ("13645005", "disorder"),
+    "osteoarthritis": ("396275006", "disorder"),
+    "hypothyroidism": ("40930008", "disorder"),
+    "obesity": ("414916001", "disorder"),
+    "gerd": ("235595009", "disorder"),
+    "influenza": ("6142004", "disorder"),
+    "uti": ("68566005", "disorder"),
+    "anxiety_adult": ("21897009", "disorder"),
+    "anxiety_teen": ("21897009", "disorder"),
+    "depression_senior": ("35489007", "disorder"),
+    "low_back_pain": ("279039007", "finding"),
+    "acne": ("88616000", "disorder"),
+    "conjunctivitis": ("9826008", "disorder"),
+    "febrile_illness": ("386661006", "finding"),
+    "minor_laceration": ("428088000", "disorder"),
+    "mononucleosis": ("271558008", "disorder"),
+    "otitis_media": ("65363002", "disorder"),
+    "rash_eczema": ("24079001", "disorder"),
+    "rsv": ("57089007", "disorder"),
+    "sports_injury": ("44465007", "disorder"),
+    "strep_throat_ped": ("43878008", "disorder"),
+    "uri_adult": ("54150009", "disorder"),
+    # ── encounter reasons and events: mapped, but NOT problems ────────
+    "annual_physical_adult": ("162673000", "procedure"),
+    "annual_physical_senior": ("162673000", "procedure"),
+    "well_child": ("410620009", "procedure"),
+    "sports_physical": ("103736005", "procedure"),
+    "contraception_consult": ("408969000", "procedure"),
+    "polypharmacy_review": ("182836005", "procedure"),
+    "fall_injury": ("217082002", "event"),
 }
 
 # Chart-start onset rules — the legacy comorbidity_seeds table, declarative
@@ -788,7 +823,8 @@ class FamilyMedicineCorePack:
                 chief_complaint=draft.chief_complaint,
                 visit_type=VisitType(draft.visit_type),
                 chronic=cname in _CHRONIC,
-                snomed_code=_SNOMED.get(cname),
+                snomed_code=(_SNOMED.get(cname) or (None, None))[0],
+                snomed_tag=(_SNOMED.get(cname) or (None, None))[1],
                 sex_limit=_SEX_LIMIT.get(cname),
                 bp_sys_delta=tuple(draft.bp_sys_delta),
                 bp_dia_delta=tuple(draft.bp_dia_delta),
