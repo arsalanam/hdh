@@ -409,3 +409,105 @@ def test_the_plan_data_model_itself_stays_portable(world):
     _goal(session, plan_id, concern_id)
     session.commit()
     assert session.execute(select(func.count()).select_from(_entity("plan_goals"))).scalar() == 1
+
+
+# ── the knowledge layer: what is portable (M1b) ──────────────────────────
+
+
+def test_chunking_respects_paragraphs_not_character_counts():
+    """A retrieved half-sentence is worse than a slightly long chunk: the
+    plan element citing it has to stand on what the chunk actually says."""
+    from hdh.modules.careplan.knowledge import chunk_document
+
+    text = "\n\n".join(["A" * 500, "B" * 500, "C" * 100])
+    chunks = chunk_document(text, max_chars=900)
+    assert len(chunks) == 2
+    assert chunks[0] == "A" * 500
+    assert chunks[1].startswith("B" * 500)
+    assert all(not c.startswith("\n") for c in chunks)
+
+
+def test_a_document_shorter_than_the_limit_stays_one_chunk():
+    from hdh.modules.careplan.knowledge import chunk_document
+
+    assert chunk_document("one para.\n\ntwo para.") == ["one para.\n\ntwo para."]
+
+
+def test_a_hit_can_always_cite_itself():
+    """The property that rules out fine-tuning this knowledge in: a chunk
+    carries where it came from, so a plan element can point at it."""
+    from hdh.modules.careplan.knowledge import KnowledgeHit
+
+    hit = KnowledgeHit(
+        corpus="med_safety",
+        doc_id="sulfonylurea-older-adults",
+        chunk="...",
+        score=0.44,
+        source="hdh med-safety notes",
+        license="MIT",
+        metadata={},
+    )
+    assert hit.citation() == "med_safety/sulfonylurea-older-adults"
+
+
+def test_the_bundled_corpus_reads_and_every_document_can_be_cited():
+    """Ingestion refuses a document with no source, because a chunk that
+    cannot be cited is not evidence."""
+    from hdh.modules.careplan.ingest import available, read_corpus
+
+    assert "med_safety" in available()
+    manifest, documents = read_corpus("med_safety")
+    assert manifest["license"]
+    assert documents
+    for doc in documents:
+        assert doc.source, f"{doc.doc_id} has no source"
+        assert doc.license, f"{doc.doc_id} has no licence"
+        assert doc.text.strip()
+
+
+def test_a_corpus_without_a_source_is_refused(tmp_path):
+    import json
+
+    from hdh.modules.careplan.ingest import CorpusError, read_corpus
+
+    root = tmp_path / "corpora"
+    (root / "nameless").mkdir(parents=True)
+    (root / "nameless" / "corpus.json").write_text(
+        json.dumps({"name": "nameless", "version": "0.1.0", "license": "MIT"}), encoding="utf-8"
+    )
+    (root / "nameless" / "doc.md").write_text("Some clinical claim.", encoding="utf-8")
+
+    with pytest.raises(CorpusError, match="no source"):
+        read_corpus("nameless", root)
+
+
+def test_front_matter_becomes_retrieval_metadata(tmp_path):
+    import json
+
+    from hdh.modules.careplan.ingest import read_corpus
+
+    root = tmp_path / "corpora"
+    (root / "tiny").mkdir(parents=True)
+    (root / "tiny" / "corpus.json").write_text(
+        json.dumps({"name": "tiny", "version": "0.1.0", "license": "MIT", "source": "notes"}),
+        encoding="utf-8",
+    )
+    (root / "tiny" / "doc.md").write_text(
+        '---\n{"drug_class": "sulfonylurea"}\n---\nBody text here.', encoding="utf-8"
+    )
+    _manifest, documents = read_corpus("tiny", root)
+    assert documents[0].metadata == {"drug_class": "sulfonylurea"}
+    assert documents[0].text == "Body text here."
+
+
+def test_retrieval_refuses_on_sqlite_rather_than_returning_nothing(world):
+    """The distinction that matters: an empty result means 'no evidence
+    matched', and a wrong database means 'this cannot work here'. Returning
+    [] for both would make a missing corpus and a missing feature look
+    identical to the caller."""
+    from hdh.core.dialect import DatabaseFeatureError
+    from hdh.modules.careplan.knowledge import PgStore
+
+    session, _patient = world
+    with pytest.raises(DatabaseFeatureError, match="Care-plan knowledge retrieval"):
+        PgStore(session).search("anything", "med_safety")
