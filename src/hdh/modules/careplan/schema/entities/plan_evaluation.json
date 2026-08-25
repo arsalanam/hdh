@@ -1,0 +1,16 @@
+{
+  "entity": "PlanEvaluation",
+  "tablename": "plan_evaluations",
+  "module": "careplan_module",
+  "columns": [
+    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
+    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
+    {"name": "rubric_id", "type": "String", "length": 100, "nullable": false},
+    {"name": "dimension_scores", "type": "JSON"},
+    {"name": "overall", "type": "Float"},
+    {"name": "verdict", "type": "Enum", "values": ["pass", "revise", "fail"], "nullable": false},
+    {"name": "narrative", "type": "Text"},
+    {"name": "evaluated_at", "type": "DateTime"}
+  ],
+  "indexes": [{"name": "ix_evaluation_plan", "columns": ["care_plan_id"]}]
+}

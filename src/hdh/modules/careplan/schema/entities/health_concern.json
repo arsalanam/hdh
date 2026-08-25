@@ -1,0 +1,22 @@
+{
+  "entity": "HealthConcern",
+  "tablename": "health_concerns",
+  "module": "careplan_module",
+  "columns": [
+    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
+    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
+    {
+      "name": "concern_type",
+      "type": "Enum",
+      "values": ["condition", "risk", "sdoh", "functional"],
+      "nullable": false
+    },
+    {"name": "statement", "type": "String", "length": 400, "nullable": false},
+    {"name": "code_system", "type": "String", "length": 20},
+    {"name": "code", "type": "String", "length": 40},
+    {"name": "priority", "type": "Integer"},
+    {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
+    {"name": "evidence_refs", "type": "JSON"}
+  ],
+  "indexes": [{"name": "ix_concern_plan", "columns": ["care_plan_id"]}]
+}

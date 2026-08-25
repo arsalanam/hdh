@@ -1,0 +1,28 @@
+{
+  "entity": "PlanIntervention",
+  "tablename": "plan_interventions",
+  "module": "careplan_module",
+  "columns": [
+    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
+    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
+    {"name": "goal_id", "type": "Integer", "foreign_key": "plan_goals.id", "nullable": false},
+    {
+      "name": "intervention_type",
+      "type": "Enum",
+      "values": ["medication", "service", "referral", "education", "monitoring"],
+      "nullable": false
+    },
+    {"name": "statement", "type": "String", "length": 400, "nullable": false},
+    {"name": "code_system", "type": "String", "length": 20},
+    {"name": "code", "type": "String", "length": 40},
+    {"name": "owner_role", "type": "String", "length": 60},
+    {"name": "schedule", "type": "String", "length": 200},
+    {"name": "request_id", "type": "Integer", "foreign_key": "service_requests.id"},
+    {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
+    {"name": "evidence_refs", "type": "JSON"}
+  ],
+  "indexes": [
+    {"name": "ix_intervention_plan", "columns": ["care_plan_id"]},
+    {"name": "ix_intervention_goal", "columns": ["goal_id"]}
+  ]
+}

@@ -53,4 +53,5 @@ SCHEMA_MODULES = (
     "hdh.modules.loinc",
     "hdh.modules.comprehension",
     "hdh.modules.interchange",
+    "hdh.modules.careplan",
 )
