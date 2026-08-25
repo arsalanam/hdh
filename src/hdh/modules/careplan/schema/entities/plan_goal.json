@@ -1,0 +1,28 @@
+{
+  "entity": "PlanGoal",
+  "tablename": "plan_goals",
+  "module": "careplan_module",
+  "columns": [
+    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
+    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
+    {"name": "concern_id", "type": "Integer", "foreign_key": "health_concerns.id", "nullable": false},
+    {"name": "statement", "type": "String", "length": 400, "nullable": false},
+    {"name": "measure_system", "type": "String", "length": 20},
+    {"name": "measure_code", "type": "String", "length": 40},
+    {"name": "target_value", "type": "String", "length": 60},
+    {"name": "target_due", "type": "Date"},
+    {"name": "expressed_by", "type": "Enum", "values": ["patient", "clinician"], "nullable": false},
+    {
+      "name": "status",
+      "type": "Enum",
+      "values": ["proposed", "active", "achieved", "not_achieved", "cancelled"],
+      "nullable": false
+    },
+    {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
+    {"name": "evidence_refs", "type": "JSON"}
+  ],
+  "indexes": [
+    {"name": "ix_goal_plan", "columns": ["care_plan_id"]},
+    {"name": "ix_goal_concern", "columns": ["concern_id"]}
+  ]
+}

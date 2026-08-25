@@ -262,12 +262,29 @@ class KnowledgeHit:
     source: str; license: str; metadata: Mapping
 ```
 
-Two shipped implementations:
+**Amended 2026-08-25 — this module requires PostgreSQL.**
+
+The original text specified a `Fts5Store` in a separate
+`~/.hdh/knowledge.db`. Two things have changed since, and both point the
+other way:
+
+- **hdh is PostgreSQL-first for advanced modules** (ARCHITECTURE §4a).
+  Carrying a portable path through comprehension cost real capability and
+  warned nobody; the project stopped paying that tax.
+- **`hdh.core.termsearch` exists.** It is the dialect-aware retrieval
+  funnel, already used by four vocabularies. A second retrieval mechanism,
+  in a second database, is precisely the duplication the RxNorm design was
+  written to prevent — and a knowledge store in its own file cannot be
+  joined against the chart it is supposed to inform.
 
 | Store | Backend | Why |
 |---|---|---|
-| `Fts5Store` (default) | SQLite FTS5 (BM25) in `~/.hdh/knowledge.db` | Zero dependencies, fully offline, deterministic — tests and the practitioner path run on this |
-| `VectorStore` (optional extra) | sqlite-vec (or Chroma) + an embedding provider behind an injected `embed()` callable | Semantic retrieval where lexical match fails |
+| `PgStore` (default) | PostgreSQL full-text (`ts_rank`) + trigram, over a knowledge-chunk entity in the **same database as the chart** | one database, one retrieval idiom, joinable against patient data; the module refuses on SQLite with a reason rather than degrading |
+| `VectorStore` (optional extra) | pgvector + an embedding provider behind an injected `embed()` callable | semantic retrieval where lexical match fails — and it stays in the same database too |
+
+The knowledge chunks are a **schema-registry entity**, like everything
+else this module owns, so ingestion goes through migrations rather than a
+side-file with its own lifecycle.
 
 Production-style deployments would use hybrid retrieval (BM25 ∪ vector,
 reciprocal-rank fusion) — the protocol supports it as a third composite
@@ -440,7 +457,9 @@ fixture and demo:
 - **Unit/offline**: every node with injected fakes (fake retrieval hits,
   fake LLM callables) — the full graph, interrupt and resume included, runs
   in pytest without an API key, exactly like `test_pipeline.py` does today.
-  FTS5 store tested against a tiny committed corpus.
+  The knowledge store is tested against a tiny committed corpus in
+  `tests/test_postgres.py`, which is where a PostgreSQL-requiring module's
+  tests belong (skips without `HDH_PG_TEST_URL`, required in CI).
 - **Golden fixture**: the §12 scenario asserted end-to-end (flags fired,
   concern present with evidence, veto honored, FK graph complete).
 - **Eval set (the real asset)**: 50–200 physician-authored reference plans
@@ -456,7 +475,8 @@ fixture and demo:
 
 | Phase | Delivers | Proves |
 |---|---|---|
-| 1 | Schema module (entities + registry specs), FTS5 knowledge store, corpus format + `ingest`, med-safety rules | data model, registry new-entity path, offline retrieval |
+| 1 | ✅ Schema module (entities + registry specs) — the plan graph enforced by foreign keys | registry new-entity path; orphans structurally impossible |
+| 1b | Knowledge-chunk entity, PostgreSQL store, corpus format + `ingest`, med-safety corpus | retrieval reuses the project's retrieval idiom rather than adding one |
 | 2 | Subagent graph nodes 1–7 with fakes-first tests; CLI `generate/show` | constrained generation, section tools, traceability validation |
 | 3 | Auto-evaluation (rubric corpus + grader + revise loop) | rubric-driven quality gate |
 | 4 | Checkpointer + interrupt + `review/resume/approve/edit/reject` | durable human-in-the-loop |
@@ -468,8 +488,9 @@ guide section; phases 1–2 are the minimum demonstrable slice.
 ## 15. Open questions
 
 1. **Embedding provider for the vector store** — local model (no API, heavier
-   install) vs API embeddings (simple, costs, another key)? Default remains
-   FTS5 either way; likely resolve in Phase 5.
+   install) vs API embeddings (simple, costs, another key)? The lexical
+   PostgreSQL store remains the default either way; likely resolve in
+   Phase 5.
 2. **Corpus depth vs breadth for v1** — propose: deep on T2DM-elderly +
    SDOH (the fixture) rather than shallow across many conditions.
 3. **Seizure-action-plan-style sub-documents** (distinct structured artifacts

@@ -1,0 +1,26 @@
+{
+  "entity": "PlanOutcome",
+  "tablename": "plan_outcomes",
+  "module": "careplan_module",
+  "columns": [
+    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
+    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
+    {"name": "goal_id", "type": "Integer", "foreign_key": "plan_goals.id", "nullable": false},
+    {"name": "measure_system", "type": "String", "length": 20},
+    {"name": "measure_code", "type": "String", "length": 40},
+    {"name": "measure", "type": "String", "length": 200, "nullable": false},
+    {"name": "observed_value", "type": "String", "length": 60},
+    {"name": "observed_at", "type": "Date"},
+    {
+      "name": "achievement_status",
+      "type": "Enum",
+      "values": ["in_progress", "improving", "worsening", "achieved", "not_achieved", "no_change"],
+      "nullable": false
+    },
+    {"name": "lab_result_id", "type": "Integer", "foreign_key": "lab_results.id"}
+  ],
+  "indexes": [
+    {"name": "ix_outcome_plan", "columns": ["care_plan_id"]},
+    {"name": "ix_outcome_goal", "columns": ["goal_id"]}
+  ]
+}
