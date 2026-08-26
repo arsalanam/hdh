@@ -224,3 +224,96 @@ def test_a_misspelt_brand_is_found_but_not_charted(pg_engine):
         # a lock turns that into a hang rather than a failure
         session.close()
         engine.dispose()
+
+
+def test_careplan_retrieval_finds_the_scenario_the_design_specifies(pg_engine):
+    """Design §12: an 82-year-old on glipizide who lives alone.
+
+    This test exists because the first implementation returned **nothing**
+    for it, and the failure was two separate wrong choices that only a real
+    query against real text could expose:
+
+    - `plainto_tsquery` ANDs every term, so "glipizide" — a drug the corpus
+      never names, because it talks about the *class* — killed the whole
+      match. A clinical situation shares some vocabulary with a reference
+      statement and never all of it.
+    - `similarity()` compares whole strings and is dominated by length: a
+      45-character query against a 900-character paragraph peaked at 0.09.
+      `word_similarity()` finds the best-matching window *inside* the text
+      and scored 0.44 on the right chunk.
+
+    Both are the same lesson the funnel work kept teaching: the retrieval
+    was plausible and the measurement disagreed.
+    """
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.ingest import ingest_corpus
+    from hdh.modules.careplan.knowledge import PgStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(__import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        written = ingest_corpus(session, "med_safety")
+        assert written > 0
+
+        hits = PgStore(session).search("elderly patient on glipizide who lives alone", "med_safety", k=3)
+        assert hits, "the design's own scenario retrieved nothing"
+
+        cited = [h.citation() for h in hits]
+        assert "med_safety/living-alone-and-medication-risk" in cited
+        assert any("sulfonylurea" in c for c in cited)
+        # living alone is what makes this dangerous, so it should lead
+        assert cited[0] == "med_safety/living-alone-and-medication-risk"
+        # and every hit can be cited by the plan element that uses it
+        assert all(h.source and h.license for h in hits)
+    finally:
+        session.close()
+
+
+def test_careplan_ingest_is_idempotent(pg_engine):
+    """A corpus edited in the repo and re-ingested must not accumulate, and
+    a document removed from it must disappear — which is why ingestion
+    replaces the corpus rather than upserting into it."""
+    from sqlalchemy import func, select
+
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.ingest import ingest_corpus
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        table = Base.metadata.tables["knowledge_chunks"]
+        first = ingest_corpus(session, "med_safety")
+        second = ingest_corpus(session, "med_safety")
+        session.commit()
+        total = session.execute(
+            select(func.count()).select_from(table).where(table.c.corpus == "med_safety")
+        ).scalar()
+        assert first == second == total, "re-ingesting duplicated chunks"
+    finally:
+        session.close()
+
+
+def test_careplan_retrieval_returns_nothing_when_nothing_matches(pg_engine):
+    """An empty result is a legitimate answer. A plan element with no
+    retrieved evidence should not be generated at all, so retrieval must
+    not invent a weak hit to avoid returning nothing."""
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.ingest import ingest_corpus
+    from hdh.modules.careplan.knowledge import PgStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(__import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        ingest_corpus(session, "med_safety")
+        assert PgStore(session).search("orbital mechanics of comets", "med_safety") == []
+        assert PgStore(session).search("", "med_safety") == []
+    finally:
+        session.close()

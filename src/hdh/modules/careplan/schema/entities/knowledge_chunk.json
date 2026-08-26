@@ -1,0 +1,25 @@
+{
+  "entity": "KnowledgeChunk",
+  "tablename": "knowledge_chunks",
+  "module": "careplan_module",
+  "columns": [
+    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
+    {"name": "corpus", "type": "String", "length": 60, "nullable": false},
+    {"name": "doc_id", "type": "String", "length": 200, "nullable": false},
+    {"name": "chunk_index", "type": "Integer", "nullable": false},
+    {"name": "text", "type": "Text", "nullable": false},
+    {"name": "source", "type": "String", "length": 300, "nullable": false},
+    {"name": "license", "type": "String", "length": 100, "nullable": false},
+    {"name": "chunk_metadata", "type": "JSON"},
+    {"name": "content_hash", "type": "String", "length": 64, "nullable": false},
+    {"name": "ingested_at", "type": "DateTime"}
+  ],
+  "indexes": [
+    {"name": "ix_knowledge_corpus", "columns": ["corpus"]},
+    {
+      "name": "ux_knowledge_chunk",
+      "columns": ["corpus", "doc_id", "chunk_index"],
+      "unique": true
+    }
+  ]
+}

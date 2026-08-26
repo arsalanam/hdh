@@ -21,6 +21,7 @@ CLI_MODULES = {
     "hdh.modules.narrative.cli": None,
     "hdh.modules.comprehension.cli": "agent",
     "hdh.modules.interchange.cli": None,
+    "hdh.modules.careplan.cli": None,
     "hdh.modules.fhir_api.cli": "api",
 }
 
