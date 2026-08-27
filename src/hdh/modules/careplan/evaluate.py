@@ -85,13 +85,23 @@ class Evaluation:
     scores: list[DimensionScore] = field(default_factory=list)
     facts: PlanFacts | None = None
 
+    def _scored(self) -> list[tuple[int, DimensionScore]]:
+        """Graded dimensions paired with their score.
+
+        The pairing is what carries the narrowing: ``score`` is optional on
+        the dataclass, and a property that filters on it cannot tell a type
+        checker that everything surviving the filter has a number. Reading
+        the value out here says it once, in the one place that knows.
+        """
+        return [(score.score, score) for score in self.scores if score.score is not None]
+
     @property
     def graded(self) -> list[DimensionScore]:
-        return [score for score in self.scores if score.graded]
+        return [score for _value, score in self._scored()]
 
     @property
     def ungraded(self) -> list[DimensionScore]:
-        return [score for score in self.scores if not score.graded]
+        return [score for score in self.scores if score.score is None]
 
     @property
     def overall(self) -> float | None:
@@ -100,24 +110,27 @@ class Evaluation:
         Recorded for reporting and comparison over time. It does **not**
         decide the verdict — see :meth:`verdict`.
         """
-        graded = self.graded
-        if not graded:
+        scored = self._scored()
+        if not scored:
             return None
-        return round(sum(score.score for score in graded) / len(graded), 2)
+        return round(sum(value for value, _score in scored) / len(scored), 2)
 
     @property
     def lowest(self) -> DimensionScore | None:
-        graded = self.graded
-        return min(graded, key=lambda score: score.score) if graded else None
+        scored = self._scored()
+        if not scored:
+            return None
+        return min(scored, key=lambda pair: pair[0])[1]
 
     def verdict(self, rubric: Rubric) -> str:
         """The governing dimension decides, and an unknown is never a pass."""
-        if not self.graded:
+        scored = self._scored()
+        if not scored:
             return FAIL if self.scores else REVISE
-        worst = self.lowest
-        if worst.score < rubric.fail_below:
+        worst = min(value for value, _score in scored)
+        if worst < rubric.fail_below:
             return FAIL
-        if worst.score < rubric.revise_below or self.ungraded:
+        if worst < rubric.revise_below or self.ungraded:
             return REVISE
         return PASS
 
