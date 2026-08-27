@@ -26,6 +26,7 @@ plan's own status is untouched by grading.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -63,6 +64,11 @@ class DimensionScore:
     score: int | None
     justification: str = ""
     ungraded_reason: str = ""
+    #: What kind of failure this was, stripped of anything per-call. The
+    #: reason text carries a request id on API errors, which made six
+    #: identical faults look like six different ones — see
+    #: :attr:`Evaluation.common_failure`.
+    ungraded_kind: str = ""
 
     @property
     def graded(self) -> bool:
@@ -73,6 +79,7 @@ class DimensionScore:
             "score": self.score,
             "justification": self.justification,
             "ungraded_reason": self.ungraded_reason,
+            "ungraded_kind": self.ungraded_kind,
         }
 
 
@@ -122,6 +129,27 @@ class Evaluation:
             return None
         return min(scored, key=lambda pair: pair[0])[1]
 
+    @property
+    def common_failure(self) -> str | None:
+        """The one reason nothing could be graded, when there is only one.
+
+        Six dimensions each reporting *"could not resolve authentication"*
+        is not six judgements the grader was unable to reach — it is one
+        environmental fault, laundered into a scorecard. A missing API key,
+        an exhausted rate limit or a network outage hits every dimension
+        identically, and saying so once is the difference between a
+        diagnosis and a wall of noise.
+        """
+        if not self.scores or self.graded:
+            return None
+        # Grouped on `ungraded_kind`, never on the message. The first live
+        # run failed all six dimensions on one malformed schema, and the
+        # messages still differed — each carried its own API request id, so
+        # comparing text found six distinct faults where there was one.
+        if len({score.ungraded_kind for score in self.scores}) != 1:
+            return None
+        return self.scores[0].ungraded_reason
+
     def verdict(self, rubric: Rubric) -> str:
         """The governing dimension decides, and an unknown is never a pass."""
         scored = self._scored()
@@ -148,11 +176,24 @@ class Evaluation:
 
 
 def grade_schema(rubric: Rubric) -> dict:
-    """The answer shape for one dimension, bounded by the rubric's scale."""
+    """The answer shape for one dimension, bounded by the rubric's scale.
+
+    The bound is an ``enum`` of the levels, not ``minimum``/``maximum``.
+    Partly because the API rejects the latter on integers — a live call
+    returned *"For 'integer' type, properties maximum, minimum are not
+    supported"* — and partly because an enum is the truer description: an
+    anchored scale is a small set of named levels, each with a paragraph
+    saying what it means, not a range with arbitrary points inside it.
+
+    This is belt and braces with :func:`_score_one`, which rejects an
+    out-of-scale score independently. Schema validation is the API's
+    promise; the check is ours, and a promise nobody verifies is one
+    nobody notices breaking.
+    """
     return {
         "type": "object",
         "properties": {
-            "score": {"type": "integer", "minimum": rubric.scale_min, "maximum": rubric.scale_max},
+            "score": {"type": "integer", "enum": list(range(rubric.scale_min, rubric.scale_max + 1))},
             "justification": {"type": "string"},
         },
         "required": ["score", "justification"],
@@ -194,19 +235,30 @@ def _score_one(task: GradingTask, grader: Grader) -> DimensionScore:
         answer = grader(task)
     except Exception as err:  # noqa: BLE001 — one bad dimension must not lose the rest
         return DimensionScore(
-            task.dimension.id, None, ungraded_reason=f"grader raised {type(err).__name__}: {err}"
+            task.dimension.id,
+            None,
+            ungraded_reason=f"grader raised {type(err).__name__}: {err}",
+            ungraded_kind=type(err).__name__,
         )
     if not isinstance(answer, Mapping) or "score" not in answer:
-        return DimensionScore(task.dimension.id, None, ungraded_reason="grader returned no score")
+        return DimensionScore(
+            task.dimension.id, None, ungraded_reason="grader returned no score", ungraded_kind="no_score"
+        )
     try:
         score = int(answer["score"])
     except (TypeError, ValueError):
         return DimensionScore(
-            task.dimension.id, None, ungraded_reason=f"score {answer['score']!r} is not a number"
+            task.dimension.id,
+            None,
+            ungraded_reason=f"score {answer['score']!r} is not a number",
+            ungraded_kind="not_a_number",
         )
     if not low <= score <= high:
         return DimensionScore(
-            task.dimension.id, None, ungraded_reason=f"score {score} is outside the scale {low}-{high}"
+            task.dimension.id,
+            None,
+            ungraded_reason=f"score {score} is outside the scale {low}-{high}",
+            ungraded_kind="out_of_scale",
         )
     return DimensionScore(task.dimension.id, score, str(answer.get("justification", "")).strip())
 
@@ -242,6 +294,97 @@ def evaluate(
     return rubric, evaluation
 
 
+#: What the grader is told before it is shown anything.
+#:
+#: Three sentences here are load-bearing, and each stops a specific failure.
+#:
+#: The **facts are given** sentence is §9's whole instruction: the
+#: deterministic checks exist so the grader does not re-derive them, and a
+#: model asked to recount what it was already told will sometimes recount it
+#: wrong.
+#:
+#: The **lexical** paragraph exists because the deterministic side made
+#: exactly this mistake first. ``problems_not_mentioned`` reported eight
+#: absent problems for a plan that discussed one of them throughout in
+#: different words; a grader that reads that fact as a verdict rather than
+#: as a word comparison will mark down a plan that handled the problem
+#: perfectly well. The fact is named for what it measured — the prompt has
+#: to make sure the reader honours the distinction.
+#:
+#: The **low levels are expected** sentence counteracts the pull toward the
+#: middle of any scale. It is the same move the selector makes with
+#: "returning fewer items, or none, is a valid and expected answer", and for
+#: the same reason: without it the safe answer is always a 4.
+GRADING_INSTRUCTION = """You are grading ONE dimension of a care plan against a rubric.
+
+DIMENSION: {title}
+QUESTION: {question}
+
+SCALE — choose exactly one of these levels:
+{anchors}
+
+PATIENT SITUATION
+{situation}
+
+THE PLAN
+{plan}
+
+ESTABLISHED FACTS — computed from the chart and from the plan's own graph.
+These are given. Do not recount them and do not contradict them.
+{facts}
+
+A fact labelled as a lexical check compares wording only. It reports what
+the plan does not SAY, which is not what the plan does not HANDLE — the
+same problem addressed in different words is still addressed. Judge that
+yourself from the plan text above.
+
+Answer with the level whose description fits best, and a justification that
+names the level you chose and points at the specific plan text or fact that
+decided it. A low level is a valid and expected answer when the plan earns
+one; do not settle on the middle of the scale to be safe."""
+
+
+def grading_prompt(task: GradingTask) -> str:
+    """The prompt for one dimension. Separated so a test can read it."""
+    return GRADING_INSTRUCTION.format(
+        title=task.dimension.title,
+        question=task.dimension.question,
+        anchors="\n".join(task.dimension.anchor_lines()),
+        situation=task.situation,
+        plan=task.plan_text,
+        facts="\n".join(task.fact_lines) or "(this dimension declares no facts)",
+    )
+
+
+def llm_grader(model: str | None = None, client=None) -> Grader:
+    """A Grader backed by Claude structured output, one call per dimension.
+
+    Per dimension rather than per dimension group, which §9 allowed. Graded
+    together, a strong showing on traceability bleeds into the safety score;
+    graded alone, each dimension is answered on its own evidence. Six small
+    calls also fail independently — :func:`_score_one` turns one bad
+    response into one ungraded dimension instead of losing the evaluation.
+    """
+    import os
+
+    from anthropic import Anthropic
+
+    client = client or Anthropic()  # quality: allow(dependency-injection)
+    resolved = model or os.environ.get("HDH_AGENT_MODEL", "claude-opus-5")
+
+    def grade(task: GradingTask) -> dict:
+        response = client.beta.messages.create(
+            model=resolved,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": grading_prompt(task)}],
+            output_config={"format": {"type": "json_schema", "schema": dict(task.schema)}},
+        )
+        blocks = [block for block in response.content if block.type == "text"]
+        return json.loads(blocks[0].text)
+
+    return grade
+
+
 def stub_grader(answers: Mapping[str, object] | Sequence[object]) -> Grader:
     """A fixed set of answers — tests and offline demos, zero LLM.
 
@@ -265,14 +408,32 @@ def stub_grader(answers: Mapping[str, object] | Sequence[object]) -> Grader:
     return grade
 
 
+class EvaluationError(RuntimeError):
+    """An evaluation that must not be written as one."""
+
+
 def record_evaluation(session, plan_id: int, rubric: Rubric, evaluation: Evaluation) -> int:
     """Persist one evaluation; returns its id.
 
     The plan's own ``status`` is deliberately not touched. Grading informs
     the human who approves; it does not do the approving, and it does not
     do the rejecting either.
+
+    Raises:
+        EvaluationError: nothing was graded. The verdict enum has no value
+            for *"not evaluated"*, so an evaluation where every dimension
+            failed would persist as ``fail`` — a row asserting that a plan
+            was judged and found wanting, when what happened is that the
+            API key was missing. That is the confident guess dressed as a
+            measurement this module refuses everywhere else, and it would
+            be attached to a patient's care plan. The guard lives here
+            rather than in the callers so none of them can skip it.
     """
     from sqlalchemy import insert
+
+    if not evaluation.graded:
+        reason = evaluation.common_failure or "no dimension could be graded"
+        raise EvaluationError(f"nothing was graded, so there is no evaluation to record — {reason}")
 
     from hdh.core.models import Base
 

@@ -432,6 +432,38 @@ things came out differently, and each is a decision rather than a detail.
   omitted until the narrative exists (node 7, Phase 5). A dimension that
   always scores against nothing is worse than an absent one.
 
+**Amended 2026-08-27 — three more, from the first live grading run.**
+
+- **The scale is an `enum` of its levels, not a numeric range.** A live
+  call rejected `minimum`/`maximum` outright — *"For 'integer' type,
+  properties maximum, minimum are not supported"*. An enum is also the
+  truer description: an anchored scale is a small set of named levels,
+  each with a paragraph saying what it means. `_score_one` still checks
+  the returned score independently, because a promise nobody verifies is
+  one nobody notices breaking.
+- **One call per dimension, not per dimension group.** §9 allowed either.
+  Graded together, a strong showing on traceability bleeds into the safety
+  score; graded alone, each dimension is answered on its own evidence, and
+  one bad response costs one dimension rather than the run.
+- **An evaluation that graded nothing is not recorded.** The verdict enum
+  has no value for *"not evaluated"*, so an all-failed evaluation would
+  persist as `fail` — a row asserting that a plan was judged and found
+  wanting, when what happened is that the API key was missing. The guard
+  lives in `record_evaluation` so no caller can skip it. A fault that hits
+  every dimension identically is also reported once rather than as six
+  ungraded dimensions, grouped on the failure *kind* — the first live run
+  failed all six on one malformed schema and the messages still differed,
+  because each carried its own API request id.
+
+The first graded plan scored 2/2/4/3/3/2 against `multimorbid-elderly` —
+a real spread rather than the mid-scale parking an unanchored rubric
+invites, and every score cited either plan text or an injected fact. The
+grader also identified a medication hazard in the chart that neither the
+plan nor the §7 stratify rules had caught (see the NSAID/anticoagulant
+issue), which is evidence for the dimension split: *traceability quality*
+scored 2 on citations that the deterministic check — which can only see
+presence — passed without complaint.
+
 The thresholds and the `default` / `multimorbid-elderly` split are a
 starting point set by us, not by clinicians. Every dimension records the
 source of its standard for that reason, and validating them is the ask
@@ -520,7 +552,7 @@ fixture and demo:
 | 1b | Knowledge-chunk entity, PostgreSQL store, corpus format + `ingest`, med-safety corpus | retrieval reuses the project's retrieval idiom rather than adding one |
 | 2 | Subagent graph nodes 1–7 with fakes-first tests; CLI `generate/show` | constrained generation, section tools, traceability validation |
 | 3a | ✅ Rubric format + loader, archetype selection, deterministic facts, scoring/verdict, `PlanEvaluation` persistence; CLI `rubrics/facts` | the quality gate, grader injected — runs with no API key |
-| 3b | The grader itself: one schema-enforced call per dimension, facts injected, cited justification | judgement only where judgement is needed |
+| 3b | ✅ The grader itself: one schema-enforced call per dimension, facts injected, cited justification; CLI `evaluate` and `generate --evaluate` | judgement only where judgement is needed |
 | 3c | The bounded revise loop — max 2 rounds, advisory in both directions | feedback routing that terminates |
 | 4 | Checkpointer + interrupt + `review/resume/approve/edit/reject` | durable human-in-the-loop |
 | 5 | FHIR export + `/CarePlan` endpoint; agent-pipeline tool registration; vector-store extra; eval-set harness | end-to-end integration |

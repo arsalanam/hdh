@@ -19,7 +19,17 @@ from dataclasses import dataclass
 import pytest
 
 from hdh.modules.careplan.context import CarePlanContext, MedicationView, ProblemView
-from hdh.modules.careplan.evaluate import FAIL, PASS, REVISE, Evaluation, evaluate, stub_grader
+from hdh.modules.careplan.evaluate import (
+    FAIL,
+    PASS,
+    REVISE,
+    DimensionScore,
+    Evaluation,
+    EvaluationError,
+    evaluate,
+    record_evaluation,
+    stub_grader,
+)
 from hdh.modules.careplan.facts import NOT_RECORDED, PlanEvidence, compute_facts, mentions, render
 from hdh.modules.careplan.reconcile import ReconcileReport
 from hdh.modules.careplan.rubric import BUNDLED, RubricError, load_rubrics, parse_rubric, select_rubric
@@ -491,3 +501,79 @@ def test_the_grader_sees_the_plan_with_its_graph_intact():
     evaluate(evidence, grader)
     assert "CONCERN" in seen[0] and "  GOAL" in seen[0] and "    INTERVENTION" in seen[0]
     assert "[prescriber]" in seen[0]
+
+
+# ── one fault, reported once ─────────────────────────────────────────────
+
+
+def test_a_shared_failure_is_reported_once_despite_differing_messages():
+    """The regression the first live run produced.
+
+    All six dimensions failed on one malformed schema — but each message
+    carried its own API request id, so comparing the reason text found six
+    distinct faults where there was one. Grouping on the failure *kind*
+    is what makes a single diagnosis possible.
+    """
+    evaluation = Evaluation(rubric_id="default", rubric_version=1)
+    evaluation.scores = [
+        DimensionScore(
+            f"dimension_{index}",
+            None,
+            ungraded_reason=f"grader raised BadRequestError: ... request_id req_{index}",
+            ungraded_kind="BadRequestError",
+        )
+        for index in range(6)
+    ]
+    assert evaluation.common_failure is not None
+    assert "BadRequestError" in evaluation.common_failure
+
+
+def test_genuinely_different_failures_are_not_collapsed_into_one():
+    """Two dimensions failing for two reasons is not an environmental
+    fault, and reporting it as one would hide half of what went wrong."""
+    evaluation = Evaluation(rubric_id="default", rubric_version=1)
+    evaluation.scores = [
+        DimensionScore("a", None, ungraded_reason="timeout", ungraded_kind="APITimeoutError"),
+        DimensionScore("b", None, ungraded_reason="score 9 is outside", ungraded_kind="out_of_scale"),
+    ]
+    assert evaluation.common_failure is None
+
+
+def test_a_partly_graded_evaluation_has_no_common_failure():
+    evaluation = Evaluation(rubric_id="default", rubric_version=1)
+    evaluation.scores = [
+        DimensionScore("a", 4),
+        DimensionScore("b", None, ungraded_reason="timeout", ungraded_kind="APITimeoutError"),
+    ]
+    assert evaluation.common_failure is None
+
+
+def test_an_evaluation_that_graded_nothing_is_not_recorded():
+    """The verdict enum has no value for "not evaluated", so an evaluation
+    where every dimension failed would persist as `fail` — a row asserting
+    a plan was judged and found wanting, when what happened is that the API
+    key was missing. Attached to a patient's care plan, that is the
+    confident guess dressed as a measurement this module refuses
+    everywhere else.
+
+    The guard sits in `record_evaluation` rather than in its callers so
+    that none of them can skip it — including the one that does not exist
+    yet.
+    """
+    rubric = next(r for r in load_rubrics() if r.rubric_id == "default")
+    evaluation = Evaluation(rubric_id="default", rubric_version=1)
+    evaluation.scores = [
+        DimensionScore("safety", None, ungraded_reason="no key", ungraded_kind="AuthenticationError")
+    ]
+    with pytest.raises(EvaluationError, match="nothing was graded"):
+        record_evaluation(None, 1, rubric, evaluation)
+
+
+def test_the_failure_kind_is_recorded_alongside_the_reason():
+    """The reason is for a human; the kind is what code can group on."""
+    scores = dict.fromkeys(DIMENSIONS, 5)
+    scores["safety"] = 99
+    _rubric, evaluation = _evaluate(scores)
+    safety = next(score for score in evaluation.scores if score.dimension_id == "safety")
+    assert safety.ungraded_kind == "out_of_scale"
+    assert safety.as_dict()["ungraded_kind"] == "out_of_scale"
