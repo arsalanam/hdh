@@ -38,6 +38,12 @@ def register_cli(subparsers) -> None:
     gen.add_argument("--mrn", required=True)
     gen.add_argument("--dry-run", action="store_true", help="Propose it, write nothing")
     gen.add_argument("--model", help="Model override (default: HDH_AGENT_MODEL)")
+    gen.add_argument("--evaluate", action="store_true", help="Grade the written plan against its rubric (§9)")
+
+    grade = sub.add_parser("evaluate", help="Grade an existing plan against its rubric")
+    grade.add_argument("--id", type=int, required=True, help="Care plan id")
+    grade.add_argument("--model", help="Model override (default: HDH_AGENT_MODEL)")
+    grade.add_argument("--dry-run", action="store_true", help="Score it, record nothing")
 
     show = sub.add_parser("show", help="One plan, with what each element traces to")
     show.add_argument("--id", type=int, required=True)
@@ -63,7 +69,102 @@ def run(session, args) -> None:
         "show": lambda: _cmd_show(session, args),
         "rubrics": lambda: _cmd_rubrics(),
         "facts": lambda: _cmd_facts(session, args),
+        "evaluate": lambda: _cmd_evaluate(session, args),
     }[args.careplan_cmd]()
+
+
+def _print_evaluation(rubric, evaluation) -> None:
+    """One evaluation, printed so a disputed score can be argued with.
+
+    Every graded dimension prints the anchor it was scored against, not
+    just the number — a 3 means nothing on its own, and the whole point of
+    an anchored scale is that the level has a description a reviewer can
+    disagree with.
+    """
+    print()
+    print(f"  rubric: {rubric.rubric_id}@{rubric.version} ({rubric.title})")
+    print()
+    for score in evaluation.scores:
+        dimension = rubric.dimension(score.dimension_id)
+        title = dimension.title if dimension is not None else score.dimension_id
+        if score.score is None:
+            print(f"  ??  {title}")
+            print(f"      ungraded: {score.ungraded_reason}")
+            print()
+            continue
+        anchor = (dimension.anchors.get(score.score, "") if dimension is not None else "").strip()
+        print(f"  {score.score}/{rubric.scale_max}  {title}")
+        if anchor:
+            print(f"      anchor: {anchor}")
+        if score.justification:
+            print(f"      because: {score.justification}")
+        print()
+
+    verdict = evaluation.verdict(rubric)
+    mark = {"pass": "✅", "revise": "⚠", "fail": "⛔"}.get(verdict, "·")
+    print(f"  {mark} {evaluation.narrative(rubric)}")
+    # §9 draws this line, and the mirror matters as much as the rule: a
+    # `fail` that binned a plan would take away the decision reserved for
+    # a person, exactly as an auto-approval would.
+    print("     advisory only — grading neither approves nor rejects a plan")
+
+
+def _cmd_evaluate(session, args) -> None:
+    """Grade a written plan against the rubric its archetype selects."""
+    from sqlalchemy import select
+
+    from hdh.core.models import Base, Patient
+    from hdh.modules.careplan.context import build_context
+    from hdh.modules.careplan.evaluate import (
+        EvaluationError,
+        evaluate,
+        llm_grader,
+        record_evaluation,
+    )
+    from hdh.modules.careplan.facts import gather
+    from hdh.modules.careplan.rubric import RubricError
+    from hdh.modules.careplan.stratify import stratify
+
+    plans = Base.metadata.tables["care_plan_records"]
+    plan = session.execute(select(plans).where(plans.c.id == args.id)).first()
+    if plan is None:
+        raise SystemExit(f"no care plan #{args.id}")
+    patient = session.query(Patient).filter(Patient.id == plan.patient_id).first()
+    if patient is None:
+        raise SystemExit(f"care plan #{args.id} has no patient")
+
+    try:
+        grader = llm_grader(model=args.model)
+    except ImportError:
+        raise SystemExit("careplan evaluate needs the agent extra: pip install 'hdh[agent]'") from None
+
+    context = build_context(session, patient)
+    evidence = gather(session, args.id, context, stratify(context))
+    try:
+        rubric, evaluation = evaluate(evidence, grader)
+    except RubricError as err:
+        raise SystemExit(f"hdh careplan evaluate: {err}") from None
+
+    # One environmental fault — no API key, an exhausted rate limit — hits
+    # every dimension identically. Printing six ungraded dimensions would
+    # bury the diagnosis in a scorecard that says nothing.
+    shared = evaluation.common_failure
+    if shared is not None:
+        raise SystemExit(f"hdh careplan evaluate: no dimension could be graded — {shared}")
+
+    print()
+    print(f"#{plan.id}  {plan.title}")
+    _print_evaluation(rubric, evaluation)
+
+    if args.dry_run:
+        print("     dry run — nothing recorded")
+        return
+    try:
+        evaluation_id = record_evaluation(session, args.id, rubric, evaluation)
+    except EvaluationError as err:
+        raise SystemExit(f"hdh careplan evaluate: {err}") from None
+    session.commit()
+    print(f"     recorded as evaluation #{evaluation_id}; plan status unchanged")
 
 
 def _cmd_rubrics() -> None:
@@ -255,6 +356,7 @@ def _cmd_generate(session, args) -> None:
     """
     from hdh.core.dialect import DatabaseFeatureError
     from hdh.core.models import Patient
+    from hdh.modules.careplan.evaluate import llm_grader
     from hdh.modules.careplan.generate import llm_selector
     from hdh.modules.careplan.plan import generate_plan
 
@@ -268,7 +370,8 @@ def _cmd_generate(session, args) -> None:
         raise SystemExit("careplan generate needs the agent extra: pip install 'hdh[agent]'") from None
 
     try:
-        result = generate_plan(session, patient, selector=selector, dry_run=args.dry_run)
+        grader = llm_grader(model=args.model) if args.evaluate else None
+        result = generate_plan(session, patient, selector=selector, grader=grader, dry_run=args.dry_run)
     except DatabaseFeatureError as err:
         raise SystemExit(f"hdh careplan generate: {err}") from None
 
@@ -308,6 +411,9 @@ def _cmd_generate(session, args) -> None:
             print(f"  refused: {error}")
         return
     print(f"  ✅ plan #{result.plan_id} written as ai_generated — not approved")
+    if result.evaluation is not None and result.rubric is not None:
+        _print_evaluation(result.rubric, result.evaluation)
+        print(f"     recorded as evaluation #{result.evaluation_id}")
     for check in result.report.checked:
         print(f"     checked: {check}")
 
