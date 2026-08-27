@@ -1,8 +1,10 @@
 ---
 {"conditions": ["hyperlipidemia"], "icd10": ["E78.5"], "topic": "lipid management"}
 ---
-CONCERN — Raised lipids are a modifiable contributor to vascular events and,
-like blood pressure, produce no symptoms to prompt attention. The decision to
+CONCERN — Hyperlipidemia — raised blood lipids, whether recorded as
+hyperlipidaemia, dyslipidaemia or raised cholesterol — is a modifiable
+contributor to vascular events and, like blood pressure, produces no symptoms
+to prompt attention. The decision to
 treat rests on overall cardiovascular risk rather than on the lipid figure
 alone, which means the same result justifies different action in different
 patients. Where vascular disease is already established, the question is not
