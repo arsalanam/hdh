@@ -19,6 +19,7 @@ from hdh.modules.careplan.generate import (
     propose_goals,
     propose_interventions,
 )
+from hdh.modules.careplan.reconcile import ReconcileReport, reconcile
 from hdh.modules.careplan.stratify import RiskFlag, stratify
 
 
@@ -31,6 +32,7 @@ class PlanResult:
     flags: list[RiskFlag]
     draft: PlanDraft
     report: ValidationReport
+    reconciliation: ReconcileReport | None = None
 
     @property
     def refused(self) -> bool:
@@ -80,14 +82,19 @@ def generate_plan(
     draft.dropped.extend(dropped)
 
     interventions, dropped = propose_interventions(store, context, draft.goals, selector)
-    draft.interventions.extend(interventions)
     draft.dropped.extend(dropped)
+
+    # Node 6, before anything is written. Reconciling after assembly would
+    # mean writing rows only to delete them, and an audit trail that records
+    # a plan proposing what it also forbade.
+    kept, reconciliation = reconcile(interventions, flags, goal_count=len(draft.goals))
+    draft.interventions.extend(kept)
 
     if not draft.concerns or dry_run:
         report = ValidationReport()
         if not draft.concerns:
             report.errors.append("nothing retrievable supported a concern — no plan written")
-        return PlanResult(None, context, flags, draft, report)
+        return PlanResult(None, context, flags, draft, report, reconciliation)
 
     plan_id = assemble(session, patient, draft, _title(context, flags))
     report = validate(session, plan_id)
@@ -95,6 +102,6 @@ def generate_plan(
         # Structural validation failing means the graph is wrong, and a
         # wrong graph must not persist just because the rows inserted.
         session.rollback()
-        return PlanResult(None, context, flags, draft, report)
+        return PlanResult(None, context, flags, draft, report, reconciliation)
     session.commit()
-    return PlanResult(plan_id, context, flags, draft, report)
+    return PlanResult(plan_id, context, flags, draft, report, reconciliation)

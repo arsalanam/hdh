@@ -198,6 +198,19 @@ def _cmd_generate(session, args) -> None:
         owner = f" [{intervention.owner_role}]" if intervention.owner_role else ""
         print(f"  intervention {intervention.statement}{owner}")
 
+    reconciliation = result.reconciliation
+    if reconciliation is not None and (reconciliation.merged or reconciliation.vetoed):
+        print()
+        print(f"  reconciled: {len(reconciliation.merged)} merged, {len(reconciliation.vetoed)} vetoed")
+        for item in reconciliation.vetoed:
+            print(f"    ⛔ {item}")
+        for item in reconciliation.merged:
+            print(f"    ↳ {item}")
+    if reconciliation is not None and reconciliation.burden_flagged:
+        print(f"    ⚠ burden {reconciliation.burden} — review before approval")
+    for index in reconciliation.bare_goals if reconciliation else []:
+        print(f"    ⚠ goal {index + 1} has no intervention of its own after merging")
+
     if result.draft.dropped:
         print()
         print(f"  {len(result.draft.dropped)} dropped for lack of evidence:")
