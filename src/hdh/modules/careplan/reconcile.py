@@ -31,7 +31,9 @@ from hdh.modules.careplan.generate import InterventionDraft
 from hdh.modules.careplan.stratify import RiskFlag
 
 #: Words carrying no distinguishing information in a clinical instruction.
-_STOPWORDS = frozenset(
+#: Public because ``facts`` compares plan text against chart wording and
+#: must not disagree with this module about which words carry meaning.
+STOPWORDS = frozenset(
     "the a an and or of to for in on with that this is are be as by given if it its "
     "at any so whether still been was were has have had not no can could should".split()
 )
@@ -132,7 +134,7 @@ def _action(statement: str) -> set[str]:
     words = [
         w
         for w in re.findall(r"[a-z]+", action_clause(statement).lower())
-        if w not in _STOPWORDS and len(w) > 2
+        if w not in STOPWORDS and len(w) > 2
     ]
     return set(words[:ACTION_WORDS])
 

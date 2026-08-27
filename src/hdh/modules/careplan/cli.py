@@ -42,6 +42,13 @@ def register_cli(subparsers) -> None:
     show = sub.add_parser("show", help="One plan, with what each element traces to")
     show.add_argument("--id", type=int, required=True)
 
+    sub.add_parser("rubrics", help="The evaluation rubrics on disk, and what each dimension asks")
+
+    facts_p = sub.add_parser(
+        "facts", help="What the grader would be TOLD about a plan, before anything is scored"
+    )
+    facts_p.add_argument("--id", type=int, required=True, help="Care plan id")
+
     parser.set_defaults(func=run)
 
 
@@ -54,7 +61,85 @@ def run(session, args) -> None:
         "stratify": lambda: _cmd_stratify(session, args),
         "generate": lambda: _cmd_generate(session, args),
         "show": lambda: _cmd_show(session, args),
+        "rubrics": lambda: _cmd_rubrics(),
+        "facts": lambda: _cmd_facts(session, args),
     }[args.careplan_cmd]()
+
+
+def _cmd_rubrics() -> None:
+    """Every rubric on disk, validated by the act of listing them."""
+    from hdh.modules.careplan.rubric import RubricError, load_rubrics
+
+    try:
+        rubrics = load_rubrics()
+    except RubricError as err:
+        raise SystemExit(f"hdh careplan rubrics: {err}") from None
+
+    print()
+    for rubric in rubrics:
+        match = ", ".join(f"{k}={v}" for k, v in rubric.match.items()) or "everyone (fallback)"
+        print(f"  {rubric.rubric_id}@{rubric.version}  {rubric.title}")
+        print(f"      applies to: {match}")
+        print(
+            f"      scale {rubric.scale_min}-{rubric.scale_max}"
+            f"  ·  revise below {rubric.revise_below}  ·  fail below {rubric.fail_below}"
+        )
+        for dimension in rubric.dimensions:
+            print(f"      · {dimension.id:<22} {dimension.question}")
+            print(f"        {'':<22} facts: {', '.join(dimension.facts) or 'none'}")
+        print()
+
+
+def _cmd_facts(session, args) -> None:
+    """The deterministic facts for a written plan, and the rubric selected.
+
+    Worth its own command for the reason `search` and `stratify` are: these
+    facts are what the grader will be handed, and a wrong score is far more
+    often a wrong fact than a wrong judgement.
+    """
+    from sqlalchemy import select
+
+    from hdh.core.models import Base, Patient
+    from hdh.modules.careplan.context import build_context
+    from hdh.modules.careplan.evaluate import render_plan
+    from hdh.modules.careplan.facts import gather
+    from hdh.modules.careplan.rubric import RubricError, select_rubric
+    from hdh.modules.careplan.stratify import stratify
+
+    plans = Base.metadata.tables["care_plan_records"]
+    plan = session.execute(select(plans).where(plans.c.id == args.id)).first()
+    if plan is None:
+        raise SystemExit(f"no care plan #{args.id}")
+    patient = session.query(Patient).filter(Patient.id == plan.patient_id).first()
+    if patient is None:
+        raise SystemExit(f"care plan #{args.id} has no patient")
+
+    context = build_context(session, patient)
+    flags = stratify(context)
+    evidence = gather(session, args.id, context, flags)
+    try:
+        rubric = select_rubric(context)
+    except RubricError as err:
+        raise SystemExit(f"hdh careplan facts: {err}") from None
+
+    print()
+    print(f"#{plan.id}  {plan.title}")
+    print(f"  rubric: {rubric.rubric_id}@{rubric.version} ({rubric.title})")
+    print()
+    print(render_plan(evidence))
+    print()
+    for dimension in rubric.dimensions:
+        print(f"  {dimension.title}")
+        for line in evidence_lines(evidence, dimension):
+            print(f"      {line}")
+        print()
+
+
+def evidence_lines(evidence, dimension) -> list[str]:
+    """The fact lines one dimension would be given."""
+    from hdh.modules.careplan.facts import compute_facts
+
+    return compute_facts(evidence, dimension.facts).as_lines(dimension.facts) or ["(no facts declared)"]
 
 
 def _cmd_stratify(session, args) -> None:

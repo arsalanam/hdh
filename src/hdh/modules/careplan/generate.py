@@ -184,7 +184,7 @@ def llm_selector(model: str | None = None, client=None) -> Selector:
 # ── retrieval helpers ────────────────────────────────────────────────────
 
 
-def _situation(context: CarePlanContext, flags: Sequence[RiskFlag]) -> str:
+def situation(context: CarePlanContext, flags: Sequence[RiskFlag]) -> str:
     """The patient in a paragraph — what retrieval and selection both see."""
     drugs = ", ".join(f"{m.name} ({m.drug_class})" for m in context.medications) or "none recorded"
     problems = ", ".join(p.description for p in context.problems) or "none recorded"
@@ -226,8 +226,8 @@ def _kept(items: Sequence[dict], offered: set[str], drafts: list, dropped: list[
 
 def propose_concerns(store, context, flags, selector: Selector) -> tuple[list[ConcernDraft], list[str]]:
     """Node 3. Concerns, each citing the chunk it came from."""
-    situation = _situation(context, flags)
-    candidates = _candidates(store, situation)
+    described = situation(context, flags)
+    candidates = _candidates(store, described)
     drafts: list[ConcernDraft] = []
     dropped: list[str] = []
     if not candidates:
@@ -238,7 +238,7 @@ def propose_concerns(store, context, flags, selector: Selector) -> tuple[list[Co
                 "Select the health concerns this patient's situation supports. "
                 "Phrase each in one sentence a clinician would recognise."
             ),
-            situation=situation,
+            situation=described,
             candidates=candidates,
             schema=CONCERN_SCHEMA,
         )
@@ -272,7 +272,7 @@ def propose_goals(store, context, concerns, selector: Selector) -> tuple[list[Go
                     "Select goals that answer this concern. State each as an "
                     "outcome for the patient, not an action for the clinician."
                 ),
-                situation=f"{_situation(context, ())}\n\nCONCERN: {concern.statement}",
+                situation=f"{situation(context, ())}\n\nCONCERN: {concern.statement}",
                 candidates=candidates,
                 schema=GOAL_SCHEMA,
             )
@@ -308,7 +308,7 @@ def propose_interventions(store, context, goals, selector: Selector):
                     "responsible for each. Removing or reducing a medication is "
                     "a valid intervention."
                 ),
-                situation=f"{_situation(context, ())}\n\nGOAL: {goal.statement}",
+                situation=f"{situation(context, ())}\n\nGOAL: {goal.statement}",
                 candidates=candidates,
                 schema=INTERVENTION_SCHEMA,
             )

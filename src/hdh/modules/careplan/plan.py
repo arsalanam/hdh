@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from hdh.modules.careplan.assemble import ValidationReport, assemble, validate
 from hdh.modules.careplan.context import CarePlanContext, build_context
+from hdh.modules.careplan.evaluate import Evaluation, Grader
 from hdh.modules.careplan.generate import (
     PlanDraft,
     Selector,
@@ -20,6 +21,7 @@ from hdh.modules.careplan.generate import (
     propose_interventions,
 )
 from hdh.modules.careplan.reconcile import ReconcileReport, reconcile
+from hdh.modules.careplan.rubric import Rubric
 from hdh.modules.careplan.stratify import RiskFlag, stratify
 
 
@@ -33,6 +35,9 @@ class PlanResult:
     draft: PlanDraft
     report: ValidationReport
     reconciliation: ReconcileReport | None = None
+    rubric: Rubric | None = None
+    evaluation: Evaluation | None = None
+    evaluation_id: int | None = None
 
     @property
     def refused(self) -> bool:
@@ -51,6 +56,7 @@ def generate_plan(
     *,
     store=None,
     selector: Selector | None = None,
+    grader: Grader | None = None,
     dry_run: bool = False,
 ) -> PlanResult:
     """Nodes 1-5 and 7, then validation.
@@ -103,5 +109,20 @@ def generate_plan(
         # wrong graph must not persist just because the rows inserted.
         session.rollback()
         return PlanResult(None, context, flags, draft, report, reconciliation)
+
+    result = PlanResult(plan_id, context, flags, draft, report, reconciliation)
+    if grader is not None:
+        # Design §9. Evaluation reads the plan back out of the database
+        # rather than scoring the draft: what a reviewer will see is the
+        # written graph, and that is what should be graded.
+        from hdh.modules.careplan.evaluate import evaluate, record_evaluation
+        from hdh.modules.careplan.facts import gather
+
+        evidence = gather(session, plan_id, context, flags, reconciliation=reconciliation)
+        rubric, evaluation = evaluate(evidence, grader)
+        result.rubric = rubric
+        result.evaluation = evaluation
+        result.evaluation_id = record_evaluation(session, plan_id, rubric, evaluation)
+
     session.commit()
-    return PlanResult(plan_id, context, flags, draft, report, reconciliation)
+    return result
