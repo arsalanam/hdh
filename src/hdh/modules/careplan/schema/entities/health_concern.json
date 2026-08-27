@@ -11,7 +11,7 @@
       "values": ["condition", "risk", "sdoh", "functional"],
       "nullable": false
     },
-    {"name": "statement", "type": "String", "length": 400, "nullable": false},
+    {"name": "statement", "type": "Text", "nullable": false},
     {"name": "code_system", "type": "String", "length": 20},
     {"name": "code", "type": "String", "length": 40},
     {"name": "priority", "type": "Integer"},

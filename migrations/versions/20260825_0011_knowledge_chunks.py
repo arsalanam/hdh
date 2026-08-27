@@ -39,8 +39,7 @@ def upgrade() -> None:
     if bind.dialect.name == "postgresql":
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         op.execute(
-            "CREATE INDEX IF NOT EXISTS ix_knowledge_text_trgm "
-            f"ON {TABLE} USING gin (text gin_trgm_ops)"
+            f"CREATE INDEX IF NOT EXISTS ix_knowledge_text_trgm ON {TABLE} USING gin (text gin_trgm_ops)"
         )
         op.execute(
             "CREATE INDEX IF NOT EXISTS ix_knowledge_text_fts "

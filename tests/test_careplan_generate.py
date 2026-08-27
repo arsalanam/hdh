@@ -216,7 +216,12 @@ def test_interventions_bind_to_their_goal_the_same_way():
 def test_retrieval_is_scoped_to_the_thing_being_answered():
     """Node 4 retrieves per concern rather than once for the patient —
     otherwise every goal is chosen from the same menu and the plan says the
-    same thing four times."""
+    same thing four times.
+
+    Asserted on the set of queries rather than their positions: each node
+    now retrieves from several corpora (§6.3), so the number of calls per
+    concern is a property of the corpus list and not of this claim.
+    """
     store = FakeStore()
     concerns = [
         type("C", (), {"statement": "Hypoglycaemia risk"})(),
@@ -224,8 +229,39 @@ def test_retrieval_is_scoped_to_the_thing_being_answered():
     ]
     empty = {"selections": []}
     propose_goals(store, _context(), concerns, stub_selector([empty, empty]))
-    assert "Hypoglycaemia risk" in store.queries[-2]
-    assert "Social isolation" in store.queries[-1]
+    assert any("Hypoglycaemia risk" in query for query in store.queries)
+    assert any("Social isolation" in query for query in store.queries)
+    # Neither concern is retrieved for using the other's wording.
+    for query in store.queries:
+        assert not ("Hypoglycaemia risk" in query and "Social isolation" in query)
+
+
+def test_each_node_retrieves_from_the_corpora_its_question_needs():
+    """Design §6.3. A goal template is not a medication-risk statement, and
+    a plan built only from the latter can only ever be about drugs — which
+    is exactly what the first live run produced when every node was
+    hardwired to `med_safety`."""
+    from hdh.modules.careplan.generate import (
+        CONCERN_CORPORA,
+        GOAL_CORPORA,
+        INTERVENTION_CORPORA,
+    )
+
+    class _Recorder(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.corpora: list[str] = []
+
+        def search(self, query, corpus, k=5, filters=None):
+            self.corpora.append(corpus)
+            return super().search(query, corpus, k=k, filters=filters)
+
+    store = _Recorder()
+    propose_concerns(store, _context(), (), stub_selector([{"selections": []}]))
+    assert store.corpora == list(CONCERN_CORPORA)
+    assert "condition_guidelines" in CONCERN_CORPORA
+    assert "condition_guidelines" in GOAL_CORPORA
+    assert "condition_guidelines" in INTERVENTION_CORPORA
 
 
 # ── assemble and validate ────────────────────────────────────────────────

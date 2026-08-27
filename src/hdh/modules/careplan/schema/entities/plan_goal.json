@@ -6,10 +6,10 @@
     {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
     {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
     {"name": "concern_id", "type": "Integer", "foreign_key": "health_concerns.id", "nullable": false},
-    {"name": "statement", "type": "String", "length": 400, "nullable": false},
+    {"name": "statement", "type": "Text", "nullable": false},
     {"name": "measure_system", "type": "String", "length": 20},
     {"name": "measure_code", "type": "String", "length": 40},
-    {"name": "target_value", "type": "String", "length": 60},
+    {"name": "target_value", "type": "Text"},
     {"name": "target_due", "type": "Date"},
     {"name": "expressed_by", "type": "Enum", "values": ["patient", "clinician"], "nullable": false},
     {
