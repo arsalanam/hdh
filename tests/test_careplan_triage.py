@@ -64,14 +64,61 @@ POLYPHARMACY_FLAG = _flag("polypharmacy", "Polypharmacy worth reviewing", "8 dis
 # ── the dedupe, and the bug that made it dangerous ───────────────────────
 
 
-def test_a_problem_a_flag_already_covers_is_not_topiced_twice():
-    """The `uncontrolled-chronic` rule's basis names the very problems that
-    would otherwise become topics of their own, and two concerns about one
-    condition is how a plan starts saying the same thing twice."""
+def test_an_aggregate_flag_yields_to_the_problems_it_names():
+    """`uncontrolled-chronic` fires once and lists every uncontrolled
+    problem, so as a topic it restates what those problems already say. The
+    problem is the subject; the flag is a pointer. So the problems keep
+    their topics and the flag does not spawn one — it stays in
+    `flags_fired` and in the safety dimension regardless."""
     selected, deferred = triage(_context(), [UNCONTROLLED_FLAG])
     keys = {topic.key for topic in selected + deferred}
-    assert "problem:E78.5" not in keys
-    assert "flag:uncontrolled-chronic" in keys
+    assert "problem:E78.5" in keys
+    assert "flag:uncontrolled-chronic" not in keys
+
+
+def test_two_uncontrolled_problems_both_survive():
+    """The regression, and the reason the previous arrangement was wrong.
+
+    A patient with osteoarthritis and hypothyroidism both recorded as
+    uncontrolled had them folded into one aggregate flag topic. One topic
+    yields one concern (`MAX_CONCERNS_PER_TOPIC`), the model wrote about
+    the osteoarthritis, and the hypothyroidism vanished — not deferred,
+    not dropped, not reported anywhere: absent. The grader found it and
+    marked completeness down for an omission nothing had recorded.
+
+    Losing a problem the chart flags as uncontrolled is the worst thing
+    this node can do, so it gets its own test.
+    """
+    problems = [
+        ("I10", "Essential hypertension", True),
+        ("M19.90", "Unspecified osteoarthritis, unspecified site", False),
+        ("E03.9", "Hypothyroidism, unspecified", False),
+    ]
+    flag = _flag(
+        "uncontrolled-chronic",
+        "Chronic condition recorded as not controlled",
+        "Unspecified osteoarthritis, unspecified site (M19.90), Hypothyroidism, unspecified (E03.9)",
+    )
+    selected, _deferred = triage(_context(problems), [flag])
+    keys = [topic.key for topic in selected]
+    assert "problem:M19.90" in keys
+    assert "problem:E03.9" in keys
+    # And both sort above the controlled problem.
+    assert keys.index("problem:M19.90") < keys.index("problem:I10")
+    assert keys.index("problem:E03.9") < keys.index("problem:I10")
+
+
+def test_a_flag_pointing_at_a_deferred_problem_keeps_its_topic():
+    """Filtered against what was SELECTED, not against the whole chart. A
+    flag naming a deferred problem is that problem's only remaining
+    mention, and dropping it would lose the subject twice over."""
+    problems = [(f"X{index:02d}.0", f"Condition {index}", True) for index in range(8)]
+    flag = _flag(
+        "uncontrolled-chronic", "Chronic condition recorded as not controlled", "Condition 7 (X07.0)"
+    )
+    selected, deferred = triage(_context(problems), [flag], limit=3)
+    assert "problem:X07.0" in {topic.key for topic in deferred}
+    assert "flag:uncontrolled-chronic" in {topic.key for topic in selected}
 
 
 def test_dedupe_does_not_delete_a_problem_over_a_shared_filler_word():
@@ -139,10 +186,19 @@ def test_the_cap_applies_to_problems_and_the_rest_are_deferred():
 
 def test_nothing_is_lost_between_selected_and_deferred():
     """A problem that is neither addressed nor recorded as deferred has
-    simply vanished, which is the failure this whole node exists to stop."""
-    selected, deferred = triage(_context(), [POLYPHARMACY_FLAG])
-    keys = {t.key for t in selected + deferred if t.key.startswith("problem:")}
-    assert keys == {f"problem:{code}" for code, _text, _ctl in PROBLEMS}
+    simply vanished, which is the failure this whole node exists to stop.
+
+    Asserted with `UNCONTROLLED_FLAG`, whose basis names an ICD-10 code.
+    The earlier version of this test used a flag with no codes in its
+    basis, so the path that could actually lose a problem never ran and it
+    passed vacuously — while the bug it was written to catch was live.
+    """
+    for flags in ([POLYPHARMACY_FLAG], [UNCONTROLLED_FLAG], [UNCONTROLLED_FLAG, POLYPHARMACY_FLAG]):
+        selected, deferred = triage(_context(), flags)
+        keys = {t.key for t in selected + deferred if t.key.startswith("problem:")}
+        assert keys == {f"problem:{code}" for code, _text, _ctl in PROBLEMS}, (
+            f"a problem vanished with flags {[f.rule_id for f in flags]}"
+        )
 
 
 def test_triage_is_reproducible_for_the_same_chart():
@@ -173,10 +229,12 @@ def test_each_topic_queries_one_subject():
 
 
 def test_a_topic_says_why_it_was_chosen():
-    selected, _deferred = triage(_context(), [UNCONTROLLED_FLAG])
+    # POLYPHARMACY_FLAG names no problem code, so it keeps its own topic —
+    # UNCONTROLLED_FLAG would yield to the problems it points at.
+    selected, _deferred = triage(_context(), [POLYPHARMACY_FLAG])
     assert all(topic.basis for topic in selected)
     flag_topic = next(t for t in selected if t.is_flag)
-    assert "uncontrolled-chronic" in flag_topic.basis
+    assert "polypharmacy" in flag_topic.basis
 
 
 def test_deferral_lines_name_the_problem_and_say_it_was_not_addressed():

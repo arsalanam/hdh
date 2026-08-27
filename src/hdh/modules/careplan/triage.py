@@ -71,72 +71,101 @@ class Topic:
     query: str
     priority: int
     basis: str
+    #: The ICD-10 code, for problem topics. Used to decide whether a flag
+    #: is saying anything the problem topics do not already say.
+    code: str = ""
 
     @property
     def is_flag(self) -> bool:
         return self.priority == FLAG
 
 
-def _flag_topics(flags: Sequence[RiskFlag]) -> list[Topic]:
-    """Every fired flag becomes a topic.
+def _flag_topics(flags: Sequence[RiskFlag], covered: Sequence[Topic]) -> list[Topic]:
+    """Fired flags, minus those the problem topics already say.
 
-    Flags are not capped. They are deterministic safety findings that the
-    rules have already justified, they are bounded by the size of the rule
-    set, and the rubric's safety dimension grades precisely whether the
-    plan answered them. Deferring one would be deferring the part of the
-    plan most likely to matter.
+    Flags are not capped. They are deterministic safety findings the rules
+    have already justified, bounded by the size of the rule set, and the
+    rubric's safety dimension grades whether the plan answered them.
+    Deferring one would defer the part of the plan most likely to matter.
+
+    But some flags are **pointers rather than findings**.
+    ``uncontrolled-chronic`` fires once and lists every uncontrolled problem
+    in its basis, so as a topic it restates what those problems already say
+    for themselves. Giving it a topic *and* giving them topics produces two
+    concerns about one condition; giving it a topic *instead of* them was
+    worse, and is the bug this replaced:
+
+        A patient with two uncontrolled problems — osteoarthritis and
+        hypothyroidism — got one aggregate topic. One topic yields one
+        concern (``MAX_CONCERNS_PER_TOPIC``), the model wrote about the
+        osteoarthritis, and the hypothyroidism vanished. Not deferred, not
+        dropped, not reported: absent. The grader caught it and scored
+        completeness down for an omission nothing had recorded.
+
+    So a flag is skipped as a topic when every problem it names is already
+    a selected topic in its own right — it keeps its place in
+    ``flags_fired`` and in the safety dimension, it simply does not spawn a
+    concern that says what another concern already says.
     """
-    return [
-        Topic(
-            key=f"flag:{flag.rule_id}",
-            label=flag.statement,
-            query=f"{flag.statement}. {flag.basis}",
-            priority=FLAG,
-            basis=f"rule {flag.rule_id} fired: {flag.basis}",
-        )
-        for flag in flags
-    ]
-
-
-def _problem_topics(context: CarePlanContext, flags: Sequence[RiskFlag]) -> list[Topic]:
-    """Chronic problems, uncontrolled first, minus those a flag already covers.
-
-    The overlap is real rather than theoretical: the ``uncontrolled-chronic``
-    rule's basis names the very problems that would otherwise become topics
-    of their own, and two concerns about one condition is how a plan starts
-    saying the same thing twice.
-
-    **Matched on the ICD-10 code, never on the wording.** The first version
-    used :func:`~hdh.modules.careplan.text.mentions`, which is an OR over
-    significant words — and on the first real chart it dropped
-    osteoarthritis and atrial fibrillation because both descriptions contain
-    *"unspecified"*, which also appears in "Hyperlipidemia, unspecified",
-    and dropped heart failure and chronic kidney disease on the word
-    *"chronic"*, which appears in "Chronic condition recorded as not
-    controlled". Four conditions silently removed from a plan by two of the
-    least meaningful words in the sentence.
-
-    A lexical OR is right for asking *"does the plan discuss this at all"*,
-    where a false positive costs nothing. It is wrong for *"is this already
-    covered"*, where a false positive deletes a topic. The code is exact,
-    and ``uncontrolled-chronic`` already writes it into its basis.
-    """
-    covered = " ".join(flag.basis for flag in flags).lower()
+    selected = {topic.code.lower() for topic in covered if topic.code}
     topics: list[Topic] = []
-    for problem in context.problems:
-        code = (problem.icd10 or "").lower()
-        if code and code in covered:
+    for flag in flags:
+        basis = flag.basis.lower()
+        named = [code for code in selected if code and code in basis]
+        if named:
+            # Every problem this flag points at is being planned for on its
+            # own terms, so the flag adds no subject of its own.
             continue
-        uncontrolled = problem.controlled is False
         topics.append(
             Topic(
-                key=f"problem:{problem.icd10}",
-                label=problem.description,
-                query=problem.description,
-                priority=UNCONTROLLED if uncontrolled else STABLE,
-                basis=("recorded as not controlled" if uncontrolled else "chronic problem on the chart"),
+                key=f"flag:{flag.rule_id}",
+                label=flag.statement,
+                query=f"{flag.statement}. {flag.basis}",
+                priority=FLAG,
+                basis=f"rule {flag.rule_id} fired: {flag.basis}",
             )
         )
+    return topics
+
+
+def _problem_topics(context: CarePlanContext) -> list[Topic]:
+    """Every chronic problem becomes a topic, uncontrolled first.
+
+    No deduplication against the flags happens here, and that is a
+    correction. The first version dropped a problem whose ICD-10 code
+    appeared in any flag's basis, on the reasoning that the flag already
+    covered it. It does not: ``uncontrolled-chronic`` fires once and lists
+    *every* uncontrolled problem, so two uncontrolled conditions collapsed
+    into one topic, one topic yielded one concern, and the second condition
+    vanished — not deferred, not dropped, simply absent.
+
+    The overlap is real, but it is the flag that is redundant, not the
+    problem. A problem is the subject; an aggregate flag pointing at
+    several problems is a restatement. So every problem keeps its own
+    topic and :func:`_flag_topics` drops the flags that add nothing.
+
+    (An earlier version matched the flag's wording rather than its code,
+    which was worse still: an OR over significant words dropped
+    osteoarthritis and atrial fibrillation on *"unspecified"* and heart
+    failure and chronic kidney disease on *"chronic"* — four conditions
+    removed from a plan by two of the least meaningful words in the
+    sentence.)
+    """
+    topics = [
+        Topic(
+            key=f"problem:{problem.icd10}",
+            label=problem.description,
+            query=problem.description,
+            priority=UNCONTROLLED if problem.controlled is False else STABLE,
+            basis=(
+                "recorded as not controlled"
+                if problem.controlled is False
+                else "chronic problem on the chart"
+            ),
+            code=problem.icd10 or "",
+        )
+        for problem in context.problems
+    ]
     # Stable sort: within a tier, chart order is preserved, so the same
     # chart triages the same way every time.
     return sorted(topics, key=lambda topic: topic.priority)
@@ -153,9 +182,15 @@ def triage(
     return type: a plan that quietly addressed six of fifteen problems and
     said nothing would be indistinguishable from one that missed nine.
     """
-    flag_topics = _flag_topics(flags)
-    problem_topics = _problem_topics(context, flags)
-    return flag_topics + problem_topics[:limit], problem_topics[limit:]
+    problem_topics = _problem_topics(context)
+    selected_problems = problem_topics[:limit]
+    deferred = problem_topics[limit:]
+    # Flags are filtered against what is actually SELECTED, not against
+    # every problem on the chart: a flag pointing at a deferred problem is
+    # the only remaining mention of it, and dropping it would lose the
+    # subject twice over.
+    flag_topics = _flag_topics(flags, selected_problems)
+    return flag_topics + selected_problems, deferred
 
 
 def deferral_lines(deferred: Sequence[Topic]) -> list[str]:
