@@ -34,6 +34,14 @@ def register_cli(subparsers) -> None:
     )
     stratify_p.add_argument("--mrn", required=True)
 
+    gen = sub.add_parser("generate", help="Generate a plan from the chart and the corpora")
+    gen.add_argument("--mrn", required=True)
+    gen.add_argument("--dry-run", action="store_true", help="Propose it, write nothing")
+    gen.add_argument("--model", help="Model override (default: HDH_AGENT_MODEL)")
+
+    show = sub.add_parser("show", help="One plan, with what each element traces to")
+    show.add_argument("--id", type=int, required=True)
+
     parser.set_defaults(func=run)
 
 
@@ -44,6 +52,8 @@ def run(session, args) -> None:
         "corpora": lambda: _cmd_corpora(session),
         "search": lambda: _cmd_search(session, args),
         "stratify": lambda: _cmd_stratify(session, args),
+        "generate": lambda: _cmd_generate(session, args),
+        "show": lambda: _cmd_show(session, args),
     }[args.careplan_cmd]()
 
 
@@ -149,3 +159,93 @@ def _cmd_search(session, args) -> None:
         print(f"         {first_line[:96]}")
         print(f"         source: {hit.source}  ·  {hit.license}")
         print()
+
+
+def _cmd_generate(session, args) -> None:
+    """Nodes 1-5 and 7, then structural validation.
+
+    Prints what was DROPPED as prominently as what was kept: a selection
+    that cited something never offered is the model doing the one thing
+    this design forbids, and hiding it would defeat the check.
+    """
+    from hdh.core.dialect import DatabaseFeatureError
+    from hdh.core.models import Patient
+    from hdh.modules.careplan.generate import llm_selector
+    from hdh.modules.careplan.plan import generate_plan
+
+    patient = session.query(Patient).filter(Patient.mrn == args.mrn).first()
+    if patient is None:
+        raise SystemExit(f"no patient {args.mrn}")
+
+    try:
+        selector = llm_selector(model=args.model)
+    except ImportError:
+        raise SystemExit("careplan generate needs the agent extra: pip install 'hdh[agent]'") from None
+
+    try:
+        result = generate_plan(session, patient, selector=selector, dry_run=args.dry_run)
+    except DatabaseFeatureError as err:
+        raise SystemExit(f"hdh careplan generate: {err}") from None
+
+    print()
+    print(f"{result.context.mrn} · {len(result.flags)} flag(s) · {len(result.draft.concerns)} concern(s)")
+    for concern in result.draft.concerns:
+        print(f"  concern      {concern.statement}")
+        print(f"               cites {', '.join(concern.evidence_refs)}")
+    for goal in result.draft.goals:
+        print(f"  goal         {goal.statement}")
+    for intervention in result.draft.interventions:
+        owner = f" [{intervention.owner_role}]" if intervention.owner_role else ""
+        print(f"  intervention {intervention.statement}{owner}")
+
+    if result.draft.dropped:
+        print()
+        print(f"  {len(result.draft.dropped)} dropped for lack of evidence:")
+        for item in result.draft.dropped:
+            print(f"    ✗ {item}")
+
+    print()
+    if result.refused:
+        for error in result.report.errors:
+            print(f"  refused: {error}")
+        return
+    print(f"  ✅ plan #{result.plan_id} written as ai_generated — not approved")
+    for check in result.report.checked:
+        print(f"     checked: {check}")
+
+
+def _cmd_show(session, args) -> None:
+    """One plan, printed so every element shows what it traces to."""
+    from sqlalchemy import select
+
+    from hdh.core.models import Base
+
+    tables = Base.metadata.tables
+    plans = tables["care_plan_records"]
+    plan = session.execute(select(plans).where(plans.c.id == args.id)).first()
+    if plan is None:
+        raise SystemExit(f"no care plan #{args.id}")
+
+    print()
+    print(f"#{plan.id}  {plan.title}")
+    print(f"  status: {plan.status}")
+
+    concerns = session.execute(
+        select(tables["health_concerns"]).where(tables["health_concerns"].c.care_plan_id == plan.id)
+    ).all()
+    for concern in concerns:
+        refs = ", ".join((concern.evidence_refs or {}).get("chunks", [])) or "—"
+        print()
+        print(f"  [{concern.concern_type}] {concern.statement}   ({concern.source}, cites {refs})")
+        goals = session.execute(
+            select(tables["plan_goals"]).where(tables["plan_goals"].c.concern_id == concern.id)
+        ).all()
+        for goal in goals:
+            target = f" → {goal.target_value}" if goal.target_value else ""
+            print(f"      goal: {goal.statement}{target}")
+            interventions = session.execute(
+                select(tables["plan_interventions"]).where(tables["plan_interventions"].c.goal_id == goal.id)
+            ).all()
+            for item in interventions:
+                owner = f" [{item.owner_role}]" if item.owner_role else ""
+                print(f"          {item.intervention_type}: {item.statement}{owner}")
