@@ -378,3 +378,65 @@ def test_careplan_evaluation_is_recorded_without_touching_the_plan(pg_engine):
         assert plan.status == AI_GENERATED, "grading must not approve or reject a plan"
     finally:
         session.close()
+
+
+def test_careplan_stores_prose_a_model_actually_writes(pg_engine):
+    """The width class that broke two live runs in a row.
+
+    Every column a model writes into was bounded by a guessed width —
+    `statement` at 400 characters, `owner_role` at 60. Those held while the
+    corpus was four chunks about one drug class. Widening it to fourteen
+    conditions produced a 549-character intervention on the next run and a
+    134-character owner naming two roles on the one after, each failing
+    with StringDataRightTruncation partway through writing a plan.
+
+    SQLite does not enforce VARCHAR lengths, so no offline test could have
+    caught this — only PostgreSQL, and only with prose of realistic length.
+    """
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.assemble import assemble
+    from hdh.modules.careplan.generate import ConcernDraft, GoalDraft, InterventionDraft, PlanDraft
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        build_dataset(session, n_patients=1, years_of_history=1, verbose=False, seed=11)
+        patient = session.query(Patient).first()
+
+        # Longer than every old limit, and no longer than real output.
+        long_statement = (
+            "Review and deintensify the glucose-lowering regimen: consider reducing or "
+            "stopping the sulfonylurea given the patient's age, reduced renal clearance, "
+            "blunted adrenergic warning symptoms and the fact that they live alone, then "
+            "record the revised target as a band with a stated floor and document the "
+            "rationale so that a rising result is not later misread as a lapse. "
+        ) * 3
+        long_owner = (
+            "Pharmacist (interaction review and adherence counselling); prescribing "
+            "clinician to confirm the arrangement is working"
+        )
+        refs = ("med_safety/x#0",)
+        draft = PlanDraft(
+            concerns=[ConcernDraft(long_statement, "risk", refs)],
+            goals=[
+                GoalDraft(
+                    long_statement,
+                    0,
+                    "HbA1c 7.5-8.5% band with a stated floor, reviewed at three to six months",
+                    refs,
+                )
+            ],
+            interventions=[InterventionDraft(long_statement, 0, "medication", long_owner, refs)],
+        )
+        plan_id = assemble(session, patient, draft, "Width regression")
+        session.commit()
+
+        table = Base.metadata.tables["plan_interventions"]
+        row = session.execute(select(table).where(table.c.care_plan_id == plan_id)).one()
+        assert row.statement == long_statement, "the statement was altered on the way in"
+        assert row.owner_role == long_owner
+        assert len(row.statement) > 400 and len(row.owner_role) > 60
+    finally:
+        session.close()

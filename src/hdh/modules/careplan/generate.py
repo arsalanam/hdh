@@ -27,8 +27,22 @@ from typing import Any
 from hdh.modules.careplan.context import CarePlanContext
 from hdh.modules.careplan.stratify import RiskFlag
 
-#: How many chunks each node retrieves before asking the model to choose.
-CANDIDATES_PER_NODE = 4
+#: How many chunks each node retrieves PER CORPUS before asking the model
+#: to choose, and the ceiling across all of them. Hits become prompt
+#: tokens, so the cap is the token budget rather than a retrieval opinion.
+CANDIDATES_PER_CORPUS = 3
+MAX_CANDIDATES = 6
+
+#: Which corpora each node retrieves from (design §6.3). The nodes ask
+#: different questions and should not be handed the same shelf: a goal
+#: template is not a medication-risk statement, and a plan built only from
+#: the latter can only ever be about drugs.
+#:
+#: Corpora named here that are not ingested simply return nothing, so this
+#: tuple can name a corpus before it exists without breaking a run.
+CONCERN_CORPORA = ("med_safety", "condition_guidelines", "gravity_sdoh")
+GOAL_CORPORA = ("condition_guidelines", "mcc_ecare_plan")
+INTERVENTION_CORPORA = ("condition_guidelines", "med_safety", "gravity_sdoh")
 
 
 @dataclass(frozen=True)
@@ -200,9 +214,35 @@ def situation(context: CarePlanContext, flags: Sequence[RiskFlag]) -> str:
     return "\n".join(lines)
 
 
-def _candidates(store, query: str, corpus: str = "med_safety") -> tuple[Candidate, ...]:
-    hits = store.search(query, corpus, k=CANDIDATES_PER_NODE)
-    return tuple(Candidate(ref=hit.citation(), text=hit.chunk) for hit in hits)
+def _candidates(store, query: str, corpora: Sequence[str]) -> tuple[Candidate, ...]:
+    """Retrieve from each corpus in turn, by quota rather than by score.
+
+    Pooling every hit and sorting would be the obvious thing and would be
+    wrong: :class:`PgStore` scores with ``ts_rank`` when full-text matches
+    and falls back to ``word_similarity`` when it does not, and those two
+    are not calibrated against each other — trigram scores land around
+    0.2-0.5 where ts_rank lands an order of magnitude lower. A corpus
+    answered by the fallback would systematically outrank one answered by
+    full text, which is a ranking of retrieval modes rather than of
+    relevance.
+
+    A quota per corpus avoids comparing the incomparable, and guarantees
+    the node sees each shelf it was pointed at. Duplicates are dropped by
+    citation, since the same chunk can be reached from two corpora only if
+    something has gone wrong upstream.
+    """
+    candidates: list[Candidate] = []
+    seen: set[str] = set()
+    for corpus in corpora:
+        for hit in store.search(query, corpus, k=CANDIDATES_PER_CORPUS):
+            ref = hit.citation()
+            if ref in seen:
+                continue
+            seen.add(ref)
+            candidates.append(Candidate(ref=ref, text=hit.chunk))
+            if len(candidates) >= MAX_CANDIDATES:
+                return tuple(candidates)
+    return tuple(candidates)
 
 
 def _kept(items: Sequence[dict], offered: set[str], drafts: list, dropped: list[str], build) -> None:
@@ -227,7 +267,7 @@ def _kept(items: Sequence[dict], offered: set[str], drafts: list, dropped: list[
 def propose_concerns(store, context, flags, selector: Selector) -> tuple[list[ConcernDraft], list[str]]:
     """Node 3. Concerns, each citing the chunk it came from."""
     described = situation(context, flags)
-    candidates = _candidates(store, described)
+    candidates = _candidates(store, described, CONCERN_CORPORA)
     drafts: list[ConcernDraft] = []
     dropped: list[str] = []
     if not candidates:
@@ -262,7 +302,7 @@ def propose_goals(store, context, concerns, selector: Selector) -> tuple[list[Go
     drafts: list[GoalDraft] = []
     dropped: list[str] = []
     for index, concern in enumerate(concerns):
-        candidates = _candidates(store, concern.statement)
+        candidates = _candidates(store, concern.statement, GOAL_CORPORA)
         if not candidates:
             dropped.append(f"goal for {concern.statement[:40]!r} — nothing retrieved")
             continue
@@ -297,7 +337,7 @@ def propose_interventions(store, context, goals, selector: Selector):
     drafts: list[InterventionDraft] = []
     dropped: list[str] = []
     for index, goal in enumerate(goals):
-        candidates = _candidates(store, goal.statement)
+        candidates = _candidates(store, goal.statement, INTERVENTION_CORPORA)
         if not candidates:
             dropped.append(f"intervention for {goal.statement[:40]!r} — nothing retrieved")
             continue

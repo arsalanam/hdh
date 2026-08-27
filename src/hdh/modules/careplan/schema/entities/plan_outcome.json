@@ -8,7 +8,7 @@
     {"name": "goal_id", "type": "Integer", "foreign_key": "plan_goals.id", "nullable": false},
     {"name": "measure_system", "type": "String", "length": 20},
     {"name": "measure_code", "type": "String", "length": 40},
-    {"name": "measure", "type": "String", "length": 200, "nullable": false},
+    {"name": "measure", "type": "Text", "nullable": false},
     {"name": "observed_value", "type": "String", "length": 60},
     {"name": "observed_at", "type": "Date"},
     {

@@ -1,0 +1,7 @@
+{
+  "name": "condition_guidelines",
+  "version": "0.1.0",
+  "license": "MIT (original text, written for this repository)",
+  "source": "hdh condition notes \u2014 original prose summarising widely-taught chronic-disease management concepts",
+  "description": "One document per chronic condition the generator can produce, each carrying a concern statement, a goal template with a measurable target, and intervention options with named owners. These are OUR words describing well-established clinical concepts; no guideline, criteria set or reference work is reproduced here. Illustrative only, over synthetic patients, and no substitute for clinical judgement."
+}

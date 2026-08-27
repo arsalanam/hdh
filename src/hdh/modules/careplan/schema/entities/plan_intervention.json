@@ -12,11 +12,11 @@
       "values": ["medication", "service", "referral", "education", "monitoring"],
       "nullable": false
     },
-    {"name": "statement", "type": "String", "length": 400, "nullable": false},
+    {"name": "statement", "type": "Text", "nullable": false},
     {"name": "code_system", "type": "String", "length": 20},
     {"name": "code", "type": "String", "length": 40},
-    {"name": "owner_role", "type": "String", "length": 60},
-    {"name": "schedule", "type": "String", "length": 200},
+    {"name": "owner_role", "type": "Text"},
+    {"name": "schedule", "type": "Text"},
     {"name": "request_id", "type": "Integer", "foreign_key": "service_requests.id"},
     {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
     {"name": "evidence_refs", "type": "JSON"}
