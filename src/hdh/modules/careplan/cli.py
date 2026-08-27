@@ -29,6 +29,11 @@ def register_cli(subparsers) -> None:
     search.add_argument("--corpus", required=True)
     search.add_argument("-k", type=int, default=5)
 
+    stratify_p = sub.add_parser(
+        "stratify", help="The deterministic flags for one patient, before any generation"
+    )
+    stratify_p.add_argument("--mrn", required=True)
+
     parser.set_defaults(func=run)
 
 
@@ -38,7 +43,49 @@ def run(session, args) -> None:
         "ingest": lambda: _cmd_ingest(session, args),
         "corpora": lambda: _cmd_corpora(session),
         "search": lambda: _cmd_search(session, args),
+        "stratify": lambda: _cmd_stratify(session, args),
     }[args.careplan_cmd]()
+
+
+def _cmd_stratify(session, args) -> None:
+    """Nodes 1-2 for one patient, with nothing generated.
+
+    Worth its own command for the same reason `search` is: these flags are
+    what the generating nodes will be handed, and seeing them without a plan
+    attached is how you tell a wrong plan from a wrong chart.
+    """
+    from hdh.core.models import Patient
+    from hdh.modules.careplan.context import build_context
+    from hdh.modules.careplan.stratify import stratify
+
+    patient = session.query(Patient).filter(Patient.mrn == args.mrn).first()
+    if patient is None:
+        raise SystemExit(f"no patient {args.mrn}")
+
+    context = build_context(session, patient)
+    social = context.social
+    print()
+    print(f"{context.mrn} · {context.age}{context.sex[:1].lower()} · {len(context.problems)} chronic")
+    drugs = ", ".join(f"{m.name} [{m.drug_class}]" for m in context.medications)
+    print(f"  medications: {drugs or 'none recorded'}")
+    if social is not None:
+        alone = {True: "yes", False: "no", None: "unknown"}[social.lives_alone]
+        print(f"  lives alone: {alone}  ({social.lives_alone_basis})")
+    if context.risk_score is not None:
+        print(f"  risk score:  {context.risk_score:.3f}")
+
+    flags = stratify(context)
+    print()
+    if not flags:
+        print("  no flags fired — nothing for a plan to open with")
+        return
+    print(f"{len(flags)} flag(s):")
+    print()
+    for flag in flags:
+        print(f"  [{flag.kind}] {flag.statement}")
+        print(f"      because: {flag.basis}")
+        print(f"      see:     {flag.cites}")
+        print()
 
 
 def _cmd_ingest(session, args) -> None:
