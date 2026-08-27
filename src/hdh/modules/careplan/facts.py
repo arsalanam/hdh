@@ -17,18 +17,13 @@ is the failure this module spends most of its code avoiding.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from hdh.modules.careplan.context import CarePlanContext
-from hdh.modules.careplan.reconcile import BURDEN_LIMIT, STOPWORDS, ReconcileReport
+from hdh.modules.careplan.reconcile import BURDEN_LIMIT, ReconcileReport
 from hdh.modules.careplan.stratify import RiskFlag
-
-#: Shorter than this and a word is too common to indicate that a plan is
-#: talking about the same thing. Four is the shortest clinically
-#: distinctive length in practice — "COPD", "gout", "type" all qualify.
-_SIGNIFICANT = 4
+from hdh.modules.careplan.text import mentions
 
 #: A value the chart could not supply. Distinct from zero, and rendered as
 #: "not recorded" so the grader is never told that nothing happened when
@@ -52,6 +47,10 @@ class PlanEvidence:
     goals: tuple = ()
     interventions: tuple = ()
     reconciliation: ReconcileReport | None = None
+    #: The ``care_plan_records`` row, when there is one. Deferrals live on
+    #: it, which is what lets them survive into a grading run that happens
+    #: weeks after generation — unlike ``reconciliation``, which does not.
+    plan: object | None = None
 
     @property
     def plan_text(self) -> str:
@@ -100,32 +99,7 @@ def render(value: object) -> str:
     return str(value)
 
 
-# ── the lexical check, and its one honest claim ──────────────────────────
-
-
-def _significant_words(phrase: str) -> set[str]:
-    return {
-        word
-        for word in re.findall(r"[a-z]+", phrase.lower())
-        if word not in STOPWORDS and len(word) >= _SIGNIFICANT
-    }
-
-
-def mentions(phrase: str, haystack: str) -> bool:
-    """Does ``haystack`` use any distinctive word from ``phrase``?
-
-    Lexical only, and deliberately shallow. It answers *"does the plan talk
-    about this at all"* — not *"does the plan handle this correctly"*,
-    which no word comparison can answer.
-
-    A phrase with no distinctive words returns True. Reporting *"not
-    mentioned"* about something with nothing to look for would be a finding
-    manufactured by the check rather than found by it.
-    """
-    words = _significant_words(phrase)
-    if not words:
-        return True
-    return any(word in haystack for word in words)
+# ── the lexical checks, and their one honest claim ──────────────────────
 
 
 def _not_mentioned(phrases: Sequence[str], haystack: str) -> list[str]:
@@ -230,6 +204,16 @@ _REGISTRY: tuple[Fact, ...] = (
         lambda e: _not_mentioned([p.description for p in e.context.problems], e.plan_text),
     ),
     Fact(
+        "problems_deferred",
+        "chart problems triage deliberately set aside, with the reason — an omission "
+        "the plan RECORDED, as distinct from one it simply has",
+        lambda e: (
+            NOT_RECORDED
+            if e.plan is None
+            else list((getattr(e.plan, "deferred", None) or {}).get("problems") or [])
+        ),
+    ),
+    Fact(
         "flags_fired",
         "deterministic risk flags raised by node 2 for this patient",
         lambda e: [f"{flag.rule_id}: {flag.statement}" for flag in e.flags],
@@ -307,6 +291,8 @@ def gather(
     intervention_rows = tuple(
         session.execute(select(interventions).where(interventions.c.care_plan_id == plan_id)).all()
     )
+    plans = tables["care_plan_records"]
+    plan_row = session.execute(select(plans).where(plans.c.id == plan_id)).first()
     return PlanEvidence(
         context=context,
         flags=tuple(flags),
@@ -314,4 +300,5 @@ def gather(
         goals=goal_rows,
         interventions=intervention_rows,
         reconciliation=reconciliation,
+        plan=plan_row,
     )

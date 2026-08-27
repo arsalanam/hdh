@@ -11,7 +11,7 @@
       "title": "Completeness",
       "question": "Does the plan address the problems this chart presents, and is it honest about what it left out?",
       "source": "self-authored; med_safety/polypharmacy-review",
-      "facts": ["problem_count", "uncontrolled_count", "problems_not_mentioned", "concern_count"],
+      "facts": ["problem_count", "uncontrolled_count", "problems_not_mentioned", "problems_deferred", "concern_count"],
       "anchors": {
         "1": "The plan addresses none of the chart's significant problems.",
         "2": "The plan addresses one problem and is silent on the rest, including problems recorded as uncontrolled.",

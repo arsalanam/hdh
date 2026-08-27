@@ -440,3 +440,60 @@ def test_careplan_stores_prose_a_model_actually_writes(pg_engine):
         assert len(row.statement) > 400 and len(row.owner_role) > 60
     finally:
         session.close()
+
+
+def test_every_condition_document_is_reachable_by_its_own_condition(pg_engine):
+    """The gate the offline coverage test structurally cannot be.
+
+    `test_careplan_corpus` proves a document EXISTS for every chronic
+    condition. It cannot prove the document can be FOUND, because finding
+    is retrieval and retrieval needs PostgreSQL. The difference is not
+    academic: the hyperlipidaemia document named its condition only in
+    front matter, which is stripped before chunking, so the body never once
+    said the word. The document existed, the coverage gate passed, and the
+    chunk was unreachable by the one query that would ever look for it —
+    a false claim of coverage in exactly the form the offline gate was
+    written to prevent, and the form it could not see.
+
+    That was not hypothetical either. Hyperlipidaemia was the one condition
+    the grader singled out as flagged uncontrolled and completely
+    unaddressed in the generated plan.
+    """
+    from hdh.core.conditions import default_catalog
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.ingest import ingest_corpus, read_corpus
+    from hdh.modules.careplan.knowledge import PgStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        ingest_corpus(session, "condition_guidelines")
+
+        _manifest, documents = read_corpus("condition_guidelines")
+        owner = {
+            name: document.doc_id
+            for document in documents
+            for name in document.metadata.get("conditions", ())
+        }
+        catalog = {
+            profile.name: profile.description
+            for profile in default_catalog()._profiles.values()  # noqa: SLF001
+            if getattr(profile, "chronic", False)
+        }
+
+        store = PgStore(session)
+        unreachable = []
+        for name, description in sorted(catalog.items()):
+            hits = store.search(description, "condition_guidelines", k=1)
+            top = hits[0].doc_id if hits else None
+            if top != owner.get(name):
+                unreachable.append(f"{name} ({description!r}) -> {top}")
+        assert not unreachable, (
+            "these conditions do not retrieve their own document as the top hit, so a plan "
+            "for a patient who has one cannot cite it: " + "; ".join(unreachable)
+        )
+    finally:
+        session.close()

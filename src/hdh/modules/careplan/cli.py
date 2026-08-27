@@ -399,6 +399,14 @@ def _cmd_generate(session, args) -> None:
     for index in reconciliation.bare_goals if reconciliation else []:
         print(f"    ⚠ goal {index + 1} has no intervention of its own after merging")
 
+    if result.draft.deferred:
+        # Printed as prominently as what the plan DID address. A deferral
+        # a reader never sees is indistinguishable from an omission.
+        print()
+        print(f"  {len(result.draft.deferred)} problem(s) deferred, recorded on the plan:")
+        for item in result.draft.deferred:
+            print(f"    — {item}")
+
     if result.draft.dropped:
         print()
         print(f"  {len(result.draft.dropped)} dropped for lack of evidence:")
@@ -433,6 +441,8 @@ def _cmd_show(session, args) -> None:
     print()
     print(f"#{plan.id}  {plan.title}")
     print(f"  status: {plan.status}")
+    for item in (getattr(plan, "deferred", None) or {}).get("problems") or []:
+        print(f"  deferred: {item}")
 
     concerns = session.execute(
         select(tables["health_concerns"]).where(tables["health_concerns"].c.care_plan_id == plan.id)

@@ -26,12 +26,34 @@ from typing import Any
 
 from hdh.modules.careplan.context import CarePlanContext
 from hdh.modules.careplan.stratify import RiskFlag
+from hdh.modules.careplan.triage import Topic
 
 #: How many chunks each node retrieves PER CORPUS before asking the model
 #: to choose, and the ceiling across all of them. Hits become prompt
 #: tokens, so the cap is the token budget rather than a retrieval opinion.
 CANDIDATES_PER_CORPUS = 3
 MAX_CANDIDATES = 6
+
+#: How many concerns one topic may produce.
+#:
+#: A topic names one subject, so a second concern about it is the
+#: duplication node 6 exists to remove — and not making it is cheaper than
+#: merging it. Measured: fanning out over eight topics without this cap
+#: produced sixteen concerns and **88 interventions** against a burden
+#: limit of 8, which is not a care plan, it is a reading of the chart.
+MAX_CONCERNS_PER_TOPIC = 1
+
+#: And how far each later node may fan out, for the same reason.
+#:
+#: Without these, eleven topics became eleven concerns, and eleven concerns
+#: became **60 interventions** — every one individually reasonable, the
+#: whole unusable. Reconciliation merges what is duplicated; it cannot merge
+#: what is merely too much, and §7 is explicit that it must not truncate,
+#: because choosing which care to drop is the decision this system is least
+#: qualified to make. So the fan-out is bounded where the items are created
+#: rather than after.
+MAX_GOALS_PER_CONCERN = 2
+MAX_INTERVENTIONS_PER_GOAL = 2
 
 #: Which corpora each node retrieves from (design §6.3). The nodes ask
 #: different questions and should not be handed the same shelf: a goal
@@ -103,6 +125,10 @@ class PlanDraft:
     goals: list[GoalDraft] = field(default_factory=list)
     interventions: list[InterventionDraft] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
+    #: Chart problems triage set aside. Recorded rather than discarded: a
+    #: plan that quietly addressed six of fifteen would be indistinguishable
+    #: from one that missed nine.
+    deferred: list[str] = field(default_factory=list)
 
 
 # ── the schemas the model must answer in ─────────────────────────────────
@@ -264,36 +290,69 @@ def _kept(items: Sequence[dict], offered: set[str], drafts: list, dropped: list[
 # ── the nodes ────────────────────────────────────────────────────────────
 
 
-def propose_concerns(store, context, flags, selector: Selector) -> tuple[list[ConcernDraft], list[str]]:
-    """Node 3. Concerns, each citing the chunk it came from."""
+def propose_concerns(
+    store, context, flags, selector: Selector, topics: Sequence[Topic] | None = None
+) -> tuple[list[ConcernDraft], list[str]]:
+    """Node 3. One retrieval and one selection **per topic**.
+
+    This used to retrieve once for the whole patient — the entire chart as a
+    single query, six candidates back — and it could not span a long problem
+    list. Measured on a ten-problem chart, the blended query returned six
+    chunks covering five conditions, all scoring between 0.0065 and 0.0112:
+    weak, flat, and missing the one condition the chart recorded as
+    uncontrolled. Asked one topic at a time, the same corpus returned the
+    right document at rank 1 fourteen times out of fourteen.
+
+    Per topic rather than one selection over a pooled menu, because that is
+    what nodes 4 and 5 already do — a goal is chosen per concern, an
+    intervention per goal — and node 3 was the odd one out. It also
+    guarantees each triaged topic is considered on its own evidence instead
+    of competing for space in one prompt.
+
+    ``topics`` defaults to triaging the context, so callers that do not care
+    about deferral keep working.
+    """
+    from hdh.modules.careplan.triage import triage
+
+    if topics is None:
+        topics, _deferred = triage(context, flags)
     described = situation(context, flags)
-    candidates = _candidates(store, described, CONCERN_CORPORA)
     drafts: list[ConcernDraft] = []
     dropped: list[str] = []
-    if not candidates:
-        return drafts, ["no knowledge retrieved — no concern can be supported"]
-    answer = selector(
-        SelectionTask(
-            instruction=(
-                "Select the health concerns this patient's situation supports. "
-                "Phrase each in one sentence a clinician would recognise."
-            ),
-            situation=described,
-            candidates=candidates,
-            schema=CONCERN_SCHEMA,
+
+    for topic in topics:
+        candidates = _candidates(store, topic.query, CONCERN_CORPORA)
+        if not candidates:
+            dropped.append(f"{topic.label[:50]} — nothing retrieved, no concern can be supported")
+            continue
+        answer = selector(
+            SelectionTask(
+                instruction=(
+                    "Select the health concerns this topic supports for this patient. "
+                    "Phrase each in one sentence a clinician would recognise. Concerns "
+                    "about anything other than the topic belong to another pass — leave "
+                    "them out."
+                ),
+                situation=f"{described}\n\nTOPIC: {topic.label}\nWHY: {topic.basis}",
+                candidates=candidates,
+                schema=CONCERN_SCHEMA,
+            )
         )
-    )
-    _kept(
-        answer.get("selections", []),
-        {c.ref for c in candidates},
-        drafts,
-        dropped,
-        lambda item, cites: ConcernDraft(
-            statement=item["statement"],
-            concern_type=item.get("concern_type", "risk"),
-            evidence_refs=cites,
-        ),
-    )
+        _kept(
+            answer.get("selections", [])[:MAX_CONCERNS_PER_TOPIC],
+            {c.ref for c in candidates},
+            drafts,
+            dropped,
+            lambda item, cites, t=topic: ConcernDraft(
+                statement=item["statement"],
+                concern_type=item.get("concern_type", "risk"),
+                evidence_refs=cites,
+                basis=t.basis,
+            ),
+        )
+
+    if not drafts and not dropped:
+        dropped.append("no topics to plan from — the chart records no problems and no flags fired")
     return drafts, dropped
 
 
@@ -318,7 +377,7 @@ def propose_goals(store, context, concerns, selector: Selector) -> tuple[list[Go
             )
         )
         _kept(
-            answer.get("selections", []),
+            answer.get("selections", [])[:MAX_GOALS_PER_CONCERN],
             {c.ref for c in candidates},
             drafts,
             dropped,
@@ -354,7 +413,7 @@ def propose_interventions(store, context, goals, selector: Selector):
             )
         )
         _kept(
-            answer.get("selections", []),
+            answer.get("selections", [])[:MAX_INTERVENTIONS_PER_GOAL],
             {c.ref for c in candidates},
             drafts,
             dropped,
