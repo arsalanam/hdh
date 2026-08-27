@@ -396,6 +396,47 @@ pipeline but rubric-driven:
   then proceed to human review regardless, with low scores prominently
   displayed. Auto-evaluation *informs* the human; it never auto-approves.
 
+**Amended 2026-08-26 — rubrics are files, and four decisions the original
+left open.**
+
+Milestone 3a built the machinery above with the grader injected. Five
+things came out differently, and each is a decision rather than a detail.
+
+- **Rubrics are validated JSON files, not an `eval_rubrics` corpus.** A
+  rubric is structured — dimensions, scales, thresholds — and retrieval
+  returns prose. As files they validate on load, diff in review, and need
+  no database at all, which removes a whole ingest step from this phase.
+  §6.2's `retrieve_rubric(plan_type)` tool is dropped: selection is
+  arithmetic over age, problem count and medication count, and asking a
+  model to classify something countable would make it a judgement.
+- **The lowest dimension governs the verdict; the mean is only reported.**
+  Five 5s and a 1 average 4.33 and pass on any sane threshold. If the 1 is
+  on safety, that plan is not a good plan with a blemish. Averaging is
+  precisely the operation that hides it.
+- **A dimension that could not be graded is never a pass.** Malformed,
+  out-of-scale or missing answers produce an *ungraded* dimension carrying
+  its reason — not a zero, not an average. A pass nobody computed is not a
+  pass.
+- **Facts are named for what was measured, never for what it implies.**
+  The chart-versus-plan comparison is `problems_not_mentioned`, because a
+  word comparison establishes exactly that and no more. Whether an
+  unmentioned problem is genuinely unaddressed is the grader's judgement,
+  and a fact that has already made the leap is a confident guess dressed
+  as a measurement. The first live plan proved the distinction earns its
+  keep: a plan written entirely about uncontrolled diabetes never used the
+  word "diabetes" once, saying "glycaemic" and "glucose-lowering"
+  throughout. Flag engagement is therefore checked against the **citation
+  graph** as well as the wording — a plan citing the document a flag cites
+  is demonstrably engaging with it, and that is exact rather than lexical.
+- **v1 ships six dimensions, not seven.** *Readability of narrative* is
+  omitted until the narrative exists (node 7, Phase 5). A dimension that
+  always scores against nothing is worse than an absent one.
+
+The thresholds and the `default` / `multimorbid-elderly` split are a
+starting point set by us, not by clinicians. Every dimension records the
+source of its standard for that reason, and validating them is the ask
+that RFC #95 puts to practising clinicians.
+
 ## 10. Human-in-the-loop with checkpointing
 
 - The subgraph is compiled with a **LangGraph checkpointer** (SqliteSaver in
@@ -478,7 +519,9 @@ fixture and demo:
 | 1 | ✅ Schema module (entities + registry specs) — the plan graph enforced by foreign keys | registry new-entity path; orphans structurally impossible |
 | 1b | Knowledge-chunk entity, PostgreSQL store, corpus format + `ingest`, med-safety corpus | retrieval reuses the project's retrieval idiom rather than adding one |
 | 2 | Subagent graph nodes 1–7 with fakes-first tests; CLI `generate/show` | constrained generation, section tools, traceability validation |
-| 3 | Auto-evaluation (rubric corpus + grader + revise loop) | rubric-driven quality gate |
+| 3a | ✅ Rubric format + loader, archetype selection, deterministic facts, scoring/verdict, `PlanEvaluation` persistence; CLI `rubrics/facts` | the quality gate, grader injected — runs with no API key |
+| 3b | The grader itself: one schema-enforced call per dimension, facts injected, cited justification | judgement only where judgement is needed |
+| 3c | The bounded revise loop — max 2 rounds, advisory in both directions | feedback routing that terminates |
 | 4 | Checkpointer + interrupt + `review/resume/approve/edit/reject` | durable human-in-the-loop |
 | 5 | FHIR export + `/CarePlan` endpoint; agent-pipeline tool registration; vector-store extra; eval-set harness | end-to-end integration |
 

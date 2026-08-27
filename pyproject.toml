@@ -61,6 +61,15 @@ Documentation = "https://github.com/arsalanam/hdh/blob/main/docs/FEATURE_GUIDE.m
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Modules describe themselves in data files: `manifest.json`, the entity
+# specs the schema registry reads, the care-plan corpora and rubrics. None
+# of it is Python, so none of it shipped — an installed wheel had the
+# loaders and not one thing for them to load, and the module system could
+# not bootstrap. (Nothing licensed lives under `src`; the vocabularies
+# ship as loaders only, and their data never enters the repo.)
+[tool.setuptools.package-data]
+hdh = ["**/*.json", "**/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

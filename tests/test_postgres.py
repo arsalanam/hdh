@@ -317,3 +317,64 @@ def test_careplan_retrieval_returns_nothing_when_nothing_matches(pg_engine):
         assert PgStore(session).search("", "med_safety") == []
     finally:
         session.close()
+
+
+def test_careplan_evaluation_is_recorded_without_touching_the_plan(pg_engine):
+    """Milestone 3a's persistence path, and the boundary §9 draws.
+
+    Auto-evaluation *informs* the human. The mirror matters equally: a
+    ``fail`` that quietly binned a plan would take away the decision the
+    design reserves for a person. So the evaluation row lands and the
+    plan's own status is left exactly as generation left it.
+    """
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.assemble import AI_GENERATED, assemble
+    from hdh.modules.careplan.context import build_context
+    from hdh.modules.careplan.evaluate import evaluate, record_evaluation, stub_grader
+    from hdh.modules.careplan.facts import gather
+    from hdh.modules.careplan.generate import ConcernDraft, GoalDraft, InterventionDraft, PlanDraft
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        build_dataset(session, n_patients=1, years_of_history=1, verbose=False, seed=7)
+        patient = session.query(Patient).first()
+
+        draft = PlanDraft(
+            concerns=[ConcernDraft("Hypoglycaemia risk", "risk", ("med_safety/x#0",))],
+            goals=[GoalDraft("Avoid hypoglycaemic episodes", 0, "none in 3 months", ("med_safety/x#0",))],
+            interventions=[
+                InterventionDraft(
+                    "Review the glipizide dose", 0, "medication", "prescriber", ("med_safety/x#0",)
+                )
+            ],
+        )
+        plan_id = assemble(session, patient, draft, "Test plan")
+        session.commit()
+
+        context = build_context(session, patient)
+        evidence = gather(session, plan_id, context)
+        rubric, evaluation = evaluate(evidence, stub_grader({"safety": 2}))
+        evaluation_id = record_evaluation(session, plan_id, rubric, evaluation)
+        session.commit()
+
+        table = Base.metadata.tables["plan_evaluations"]
+        row = session.execute(select(table).where(table.c.id == evaluation_id)).one()
+        assert row.care_plan_id == plan_id
+        assert row.rubric_id == f"{rubric.rubric_id}@{rubric.version}"
+        assert row.verdict in {"pass", "revise", "fail"}
+        assert row.dimension_scores["safety"]["score"] == 2
+        # The facts the grader was handed are stored beside the score, so a
+        # disputed score can be re-argued from what it was actually told.
+        assert "flags_fired" in row.dimension_scores["safety"]["facts"]
+        # Ungraded dimensions persist as such rather than as zeros.
+        assert row.dimension_scores["completeness"]["score"] is None
+        assert row.dimension_scores["completeness"]["ungraded_reason"]
+
+        plans = Base.metadata.tables["care_plan_records"]
+        plan = session.execute(select(plans).where(plans.c.id == plan_id)).one()
+        assert plan.status == AI_GENERATED, "grading must not approve or reject a plan"
+    finally:
+        session.close()
