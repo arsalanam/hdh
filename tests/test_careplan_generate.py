@@ -22,7 +22,12 @@ import pytest
 
 from hdh.core.models import Patient, Sex, get_engine, get_session
 from hdh.core.schema_registry import bootstrap_schema
-from hdh.modules.careplan.context import CarePlanContext, MedicationView, SocialView
+from hdh.modules.careplan.context import (
+    CarePlanContext,
+    MedicationView,
+    ProblemView,
+    SocialView,
+)
 from hdh.modules.careplan.generate import (
     PlanDraft,
     propose_concerns,
@@ -57,12 +62,20 @@ def _hit(doc_id: str, corpus: str = "med_safety") -> KnowledgeHit:
     )
 
 
-def _context() -> CarePlanContext:
+def _context(problems=(("E11.9", "Type 2 diabetes mellitus", False),)) -> CarePlanContext:
+    """A chart with at least one problem.
+
+    Node 3 now fans out over triaged topics (#104), and a chart with no
+    problems and no flags has nothing to plan from — correctly producing an
+    empty plan. These tests are about what happens to a selection once a
+    topic exists, so the chart has to contain one.
+    """
     return CarePlanContext(
         mrn="MRN-GEN",
         age=84,
         sex="MALE",
         as_of=date(2026, 8, 1),
+        problems=tuple(ProblemView(code, text, controlled, None) for code, text, controlled in problems),
         medications=(MedicationView("Glipizide", "Sulfonylurea", "5 mg", date(2026, 5, 1)),),
         social=SocialView(
             lives_alone=True, lives_alone_basis="none recorded", smoker=None, marital_status=None
@@ -144,7 +157,7 @@ def test_no_retrieval_means_no_concern():
     store = FakeStore(hits=[])
     concerns, dropped = propose_concerns(store, _context(), (), stub_selector([]))
     assert concerns == []
-    assert dropped and "no knowledge retrieved" in dropped[0]
+    assert dropped and "nothing retrieved" in dropped[0]
 
 
 # ── the graph keeps its shape ────────────────────────────────────────────
@@ -154,29 +167,33 @@ def test_each_goal_is_generated_against_one_concern():
     """Node 4 runs per concern, so a goal cannot outlive its reason — the
     index it carries is assigned by the loop, not chosen by the model."""
     store = FakeStore()
-    concerns, _ = propose_concerns(
-        store,
-        _context(),
-        (),
-        stub_selector(
-            [
-                {
-                    "selections": [
-                        {
-                            "statement": "Concern A",
-                            "concern_type": "risk",
-                            "cites": ["med_safety/sulfonylurea-older-adults"],
-                        },
-                        {
-                            "statement": "Concern B",
-                            "concern_type": "sdoh",
-                            "cites": ["med_safety/sulfonylurea-older-adults"],
-                        },
-                    ]
-                }
-            ]
-        ),
+    # Two problems, so triage yields two topics. A single topic yields a
+    # single concern by design (`MAX_CONCERNS_PER_TOPIC`): a topic names one
+    # subject, and a second concern about it is the duplication node 6
+    # exists to remove.
+    two_problems = (
+        ("E11.9", "Type 2 diabetes mellitus", False),
+        ("N18.4", "Chronic kidney disease, stage 3b", True),
     )
+    one = {
+        "selections": [
+            {
+                "statement": "Concern A",
+                "concern_type": "risk",
+                "cites": ["med_safety/sulfonylurea-older-adults"],
+            }
+        ]
+    }
+    two = {
+        "selections": [
+            {
+                "statement": "Concern B",
+                "concern_type": "sdoh",
+                "cites": ["med_safety/sulfonylurea-older-adults"],
+            }
+        ]
+    }
+    concerns, _ = propose_concerns(store, _context(two_problems), (), stub_selector([one, two]))
     assert len(concerns) == 2
 
     goal_answer = {
@@ -188,7 +205,9 @@ def test_each_goal_is_generated_against_one_concern():
             }
         ]
     }
-    goals, _ = propose_goals(store, _context(), concerns, stub_selector([goal_answer, goal_answer]))
+    goals, _ = propose_goals(
+        store, _context(two_problems), concerns, stub_selector([goal_answer, goal_answer])
+    )
     assert [g.concern_index for g in goals] == [0, 1], "goal bound to the concern it was generated for"
 
 
@@ -284,6 +303,25 @@ def chart(tmp_path):
     )
     session.add(patient)
     session.flush()
+    # A chart with no problems has nothing to plan from, and triage (#104)
+    # correctly refuses rather than inventing a topic. The end-to-end test
+    # needs something for the plan to be about.
+    session.execute(
+        Base.metadata.tables["conditions"].insert(),
+        [
+            {
+                "patient_id": patient.id,
+                "icd10_code": "E11.9",
+                "description": "Type 2 diabetes mellitus",
+                "chronic": True,
+                "controlled": False,
+                "status": "active",
+                "onset_date": date(2020, 1, 1),
+            }
+        ],
+    )
+    session.flush()
+    session.refresh(patient)
     yield session, patient
     session.close()
     engine.dispose()

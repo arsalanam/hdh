@@ -362,6 +362,57 @@ edge coverage (guaranteed by FK schema, asserted anyway), every AI element
 has non-empty `evidence_refs`, codes exist in our terminology tables, and
 med-safety vetoes were honored.
 
+### 7.1 Node 2b — triage (added 2026-08-27, #104)
+
+Node 3 originally retrieved **once for the whole patient**: the chart
+compacted into a paragraph, matched against the corpus, six candidates
+back. On a ten-problem chart that returned six chunks covering five
+conditions, every score between 0.0065 and 0.0112 — weak, flat, and
+missing the one condition recorded as uncontrolled. The same corpus asked
+one topic at a time returned the right document at rank 1 fourteen times
+out of fourteen. Retrieval was never the weak part; asking it ten
+questions at once was.
+
+Triage sits before node 3 and answers *which* topics, deterministically:
+every fired flag (uncapped — they are safety findings the rules already
+justified, and the safety dimension grades whether the plan answered
+them), then chart problems, uncontrolled first, up to `PROBLEM_LIMIT`.
+Node 3 then retrieves and selects **per topic**, which is what nodes 4 and
+5 already did per concern and per goal.
+
+**Deferral is part of the plan, not part of the run.** What triage set
+aside is written to `care_plan_records.deferred` and surfaced as the
+`problems_deferred` fact, because §9's completeness anchors distinguish an
+omission made *"without saying why"* from one *"defensible from the chart
+and visible to the reader"* — and without somewhere to record it, the
+second was unreachable.
+
+**Fan-out is bounded where items are created, not after.** One concern per
+topic, two goals per concern, two interventions per goal. Unbounded, the
+same chart produced eleven concerns and 60 interventions against a burden
+limit of 8 — every item individually reasonable, the whole unusable.
+Reconciliation merges what is duplicated; it cannot merge what is merely
+too much, and §7 forbids it from truncating, because choosing which care
+to drop is the decision this system is least qualified to make.
+
+Measured on one patient across three changes, same chart each time:
+
+| dimension | 4 chunks | 32 chunks | + triage |
+|---|---|---|---|
+| completeness | 2 | 3 | **4** |
+| traceability | 2 | 2 | 2 |
+| guideline concordance | 4 | 4 | 4 |
+| safety | 3 | 4 | 4 |
+| goal quality | 3 | 3 | 3 |
+| feasibility & burden | 2 | 2 | **3** |
+| **mean** | 2.67 | 3.0 | **3.33** |
+| interventions | 25 | 31 | 26 |
+
+Traceability has not moved across any of it, and is now the lowest
+dimension — the grader's objection is that citations are attached to
+statements they only loosely support, which is a fit problem rather than a
+coverage one.
+
 ## 8. Why the graph invariant is not an LLM job
 
 The four-part traceability rule is checked three ways, none of them by

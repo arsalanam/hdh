@@ -23,6 +23,7 @@ from hdh.modules.careplan.generate import (
 from hdh.modules.careplan.reconcile import ReconcileReport, reconcile
 from hdh.modules.careplan.rubric import Rubric
 from hdh.modules.careplan.stratify import RiskFlag, stratify
+from hdh.modules.careplan.triage import deferral_lines, triage
 
 
 @dataclass
@@ -78,8 +79,13 @@ def generate_plan(
     context = build_context(session, patient)
     flags = stratify(context)
 
-    draft = PlanDraft()
-    concerns, dropped = propose_concerns(store, context, flags, selector)
+    # Node 2b: decide what this plan is about before anything retrieves.
+    # Without it, node 3 asked the corpus one question about ten problems
+    # and got six weak answers back (#104).
+    topics, deferred = triage(context, flags)
+
+    draft = PlanDraft(deferred=deferral_lines(deferred))
+    concerns, dropped = propose_concerns(store, context, flags, selector, topics)
     draft.concerns.extend(concerns)
     draft.dropped.extend(dropped)
 

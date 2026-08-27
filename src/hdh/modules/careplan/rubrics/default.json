@@ -11,7 +11,7 @@
       "title": "Completeness",
       "question": "Does the plan address the problems this chart actually presents?",
       "source": "self-authored; the chart-vs-plan comparison the design calls for in §9",
-      "facts": ["problem_count", "uncontrolled_count", "problems_not_mentioned", "concern_count"],
+      "facts": ["problem_count", "uncontrolled_count", "problems_not_mentioned", "problems_deferred", "concern_count"],
       "anchors": {
         "1": "The plan addresses none of the chart's significant problems, or addresses something the chart does not record.",
         "3": "The dominant problem is addressed; one or more significant problems are absent without explanation.",

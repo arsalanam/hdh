@@ -65,6 +65,11 @@ def assemble(session, patient, draft: PlanDraft, title: str) -> int:
                 "patient_id": patient.id,
                 "title": title,
                 "status": AI_GENERATED,
+                # What triage set aside, written with the plan rather than
+                # left in the run that produced it. A reviewer reading this
+                # plan next month needs to know it chose not to address
+                # three problems, not to infer it from an absence.
+                "deferred": {"problems": list(draft.deferred)},
                 "created_at": now,
                 "updated_at": now,
             }

@@ -29,14 +29,7 @@ from dataclasses import dataclass, field
 
 from hdh.modules.careplan.generate import InterventionDraft
 from hdh.modules.careplan.stratify import RiskFlag
-
-#: Words carrying no distinguishing information in a clinical instruction.
-#: Public because ``facts`` compares plan text against chart wording and
-#: must not disagree with this module about which words carry meaning.
-STOPWORDS = frozenset(
-    "the a an and or of to for in on with that this is are be as by given if it its "
-    "at any so whether still been was were has have had not no can could should".split()
-)
+from hdh.modules.careplan.text import STOPWORDS
 
 #: How many leading content words identify the ACTION.
 #:

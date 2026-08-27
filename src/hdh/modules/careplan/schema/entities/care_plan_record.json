@@ -23,6 +23,7 @@
     {"name": "narrative", "type": "Text"},
     {"name": "rejection_reason", "type": "String", "length": 300},
     {"name": "checkpoint_thread_id", "type": "String", "length": 100},
+    {"name": "deferred", "type": "JSON"},
     {"name": "created_at", "type": "DateTime"},
     {"name": "updated_at", "type": "DateTime"}
   ],
