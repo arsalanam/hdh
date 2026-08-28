@@ -287,11 +287,38 @@ def _kept(items: Sequence[dict], offered: set[str], drafts: list, dropped: list[
         drafts.append(build(item, cites))
 
 
+#: How a grader's objection is presented to the node that has to answer it.
+#:
+#: Framed as a critique of a previous attempt rather than as a new
+#: instruction, because the node's job has not changed — only its evidence
+#: about how it did. Stated as the last thing before the candidates so it is
+#: not buried behind the situation.
+FEEDBACK_PREAMBLE = (
+    "A previous attempt at this was reviewed and scored below the required "
+    "standard. The reviewer said:\n\n{feedback}\n\nAddress that specifically. "
+    "Do not simply reword the previous attempt, and do not add items to look "
+    "thorough — if the objection is that something was unsupported, the fix "
+    "may be to leave it out."
+)
+
+
+def _instruct(instruction: str, feedback: str) -> str:
+    """The node's instruction, with any critique of the last attempt."""
+    if not feedback.strip():
+        return instruction
+    return instruction + "\n\n" + FEEDBACK_PREAMBLE.format(feedback=feedback.strip())
+
+
 # ── the nodes ────────────────────────────────────────────────────────────
 
 
 def propose_concerns(
-    store, context, flags, selector: Selector, topics: Sequence[Topic] | None = None
+    store,
+    context,
+    flags,
+    selector: Selector,
+    topics: Sequence[Topic] | None = None,
+    feedback: str = "",
 ) -> tuple[list[ConcernDraft], list[str]]:
     """Node 3. One retrieval and one selection **per topic**.
 
@@ -327,11 +354,12 @@ def propose_concerns(
             continue
         answer = selector(
             SelectionTask(
-                instruction=(
+                instruction=_instruct(
                     "Select the health concerns this topic supports for this patient. "
                     "Phrase each in one sentence a clinician would recognise. Concerns "
                     "about anything other than the topic belong to another pass — leave "
-                    "them out."
+                    "them out.",
+                    feedback,
                 ),
                 situation=f"{described}\n\nTOPIC: {topic.label}\nWHY: {topic.basis}",
                 candidates=candidates,
@@ -356,7 +384,9 @@ def propose_concerns(
     return drafts, dropped
 
 
-def propose_goals(store, context, concerns, selector: Selector) -> tuple[list[GoalDraft], list[str]]:
+def propose_goals(
+    store, context, concerns, selector: Selector, feedback: str = ""
+) -> tuple[list[GoalDraft], list[str]]:
     """Node 4. One pass per concern, so a goal cannot outlive its reason."""
     drafts: list[GoalDraft] = []
     dropped: list[str] = []
@@ -367,9 +397,10 @@ def propose_goals(store, context, concerns, selector: Selector) -> tuple[list[Go
             continue
         answer = selector(
             SelectionTask(
-                instruction=(
+                instruction=_instruct(
                     "Select goals that answer this concern. State each as an "
-                    "outcome for the patient, not an action for the clinician."
+                    "outcome for the patient, not an action for the clinician.",
+                    feedback,
                 ),
                 situation=f"{situation(context, ())}\n\nCONCERN: {concern.statement}",
                 candidates=candidates,
@@ -391,7 +422,7 @@ def propose_goals(store, context, concerns, selector: Selector) -> tuple[list[Go
     return drafts, dropped
 
 
-def propose_interventions(store, context, goals, selector: Selector):
+def propose_interventions(store, context, goals, selector: Selector, feedback: str = ""):
     """Node 5. One pass per goal; each intervention names an owner."""
     drafts: list[InterventionDraft] = []
     dropped: list[str] = []
@@ -402,10 +433,11 @@ def propose_interventions(store, context, goals, selector: Selector):
             continue
         answer = selector(
             SelectionTask(
-                instruction=(
+                instruction=_instruct(
                     "Select interventions that serve this goal. Name the role "
                     "responsible for each. Removing or reducing a medication is "
-                    "a valid intervention."
+                    "a valid intervention.",
+                    feedback,
                 ),
                 situation=f"{situation(context, ())}\n\nGOAL: {goal.statement}",
                 candidates=candidates,

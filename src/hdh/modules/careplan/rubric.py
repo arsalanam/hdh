@@ -36,6 +36,13 @@ BUNDLED = pathlib.Path(__file__).resolve().parent / "rubrics"
 #: to classify something countable would make it one.
 MATCH_KEYS = ("min_age", "max_age", "min_problems", "min_medications")
 
+#: The generating nodes a failing dimension can be routed back to (§9), in
+#: pipeline order. Revising a node regenerates it and everything after it,
+#: so the earliest failing node governs — regenerating concerns and keeping
+#: the goals that were written for the old ones would leave a graph whose
+#: edges no longer mean anything.
+REVISABLE_NODES = ("concerns", "goals", "interventions")
+
 
 class RubricError(RuntimeError):
     """A rubric on disk is not usable as one."""
@@ -51,6 +58,14 @@ class Dimension:
     source: str
     facts: tuple[str, ...]
     anchors: Mapping[int, str]
+    #: Which generating node a low score on this dimension routes back to.
+    #: Declared per dimension because the rubric knows what it is judging:
+    #: vague goals are node 4's problem, an unanswered flag is node 5's.
+    revises: str
+
+    @property
+    def node_order(self) -> int:
+        return REVISABLE_NODES.index(self.revises)
 
     def anchor_lines(self) -> list[str]:
         """The scale, described, lowest first — what the grader is shown."""
@@ -102,7 +117,7 @@ def _require(block: Mapping, key: str, where: str):
 
 
 def _parse_dimension(raw: Mapping, where: str, scale: range, known_facts: frozenset[str]) -> Dimension:
-    for key in ("id", "title", "question", "source", "anchors"):
+    for key in ("id", "title", "question", "source", "anchors", "revises"):
         _require(raw, key, where)
     name = raw["id"]
     if not str(raw["source"]).strip():
@@ -140,6 +155,12 @@ def _parse_dimension(raw: Mapping, where: str, scale: range, known_facts: frozen
             f"{where}: dimension {name!r} asks for unknown fact(s) {', '.join(unknown)} — "
             f"known facts are {', '.join(sorted(known_facts))}"
         )
+    revises = str(raw["revises"])
+    if revises not in REVISABLE_NODES:
+        raise RubricError(
+            f"{where}: dimension {name!r} revises {revises!r}, which is not a generating node — "
+            f"expected one of {', '.join(REVISABLE_NODES)}"
+        )
     return Dimension(
         id=str(name),
         title=str(raw["title"]),
@@ -147,6 +168,7 @@ def _parse_dimension(raw: Mapping, where: str, scale: range, known_facts: frozen
         source=str(raw["source"]),
         facts=facts,
         anchors=anchors,
+        revises=revises,
     )
 
 

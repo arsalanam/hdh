@@ -409,10 +409,12 @@ def test_an_empty_plan_is_not_written_at_all(chart):
     """An empty plan recorded as a plan reports that the patient was
     assessed and nothing found — when what happened is that nothing could
     be supported. Those are different, and the chart should say which."""
-    from hdh.modules.careplan.plan import generate_plan
+    from hdh.modules.careplan.plan import PlanServices, generate_plan
 
     session, patient = chart
-    result = generate_plan(session, patient, store=FakeStore(hits=[]), selector=stub_selector([]))
+    result = generate_plan(
+        session, patient, services=PlanServices(store=FakeStore(hits=[]), selector=stub_selector([]))
+    )
     assert result.refused
     assert result.plan_id is None
     assert any("no plan written" in e for e in result.report.errors)
@@ -421,30 +423,36 @@ def test_an_empty_plan_is_not_written_at_all(chart):
 def test_the_whole_graph_runs_end_to_end_with_no_llm(chart):
     """§13: the full graph in pytest, no API key. A graph that can only be
     exercised by paying for tokens is a graph nobody exercises."""
-    from hdh.modules.careplan.plan import generate_plan
+    from hdh.modules.careplan.plan import PlanServices, generate_plan
 
     session, patient = chart
     ref = ["med_safety/sulfonylurea-older-adults"]
     result = generate_plan(
         session,
         patient,
-        store=FakeStore(),
-        selector=stub_selector(
-            [
-                {"selections": [{"statement": "Hypoglycaemia risk", "concern_type": "risk", "cites": ref}]},
-                {"selections": [{"statement": "No severe event", "concern_index": 0, "cites": ref}]},
-                {
-                    "selections": [
-                        {
-                            "statement": "Review the sulfonylurea",
-                            "goal_index": 0,
-                            "intervention_type": "medication",
-                            "owner_role": "prescriber",
-                            "cites": ref,
-                        }
-                    ]
-                },
-            ]
+        services=PlanServices(
+            store=FakeStore(),
+            selector=stub_selector(
+                [
+                    {
+                        "selections": [
+                            {"statement": "Hypoglycaemia risk", "concern_type": "risk", "cites": ref}
+                        ]
+                    },
+                    {"selections": [{"statement": "No severe event", "concern_index": 0, "cites": ref}]},
+                    {
+                        "selections": [
+                            {
+                                "statement": "Review the sulfonylurea",
+                                "goal_index": 0,
+                                "intervention_type": "medication",
+                                "owner_role": "prescriber",
+                                "cites": ref,
+                            }
+                        ]
+                    },
+                ]
+            ),
         ),
     )
     assert not result.refused, result.report.errors

@@ -1,0 +1,253 @@
+"""M3c: the bounded revise loop.
+
+Design §9's last clause — *"scores below threshold route back to the
+relevant section node with the grader's reasons as feedback ... max 2
+revision rounds, then proceed to human review regardless"*.
+
+Four decisions are worth finding here rather than inferring.
+
+**The rubric decides where feedback goes.** Each dimension declares the
+node it revises (`revises`), so routing is data rather than a table in
+code: vague goals are node 4's problem, an unanswered flag is node 5's. The
+*earliest* failing node governs, because regenerating concerns while
+keeping the goals written for the old ones would leave a graph whose edges
+no longer mean anything.
+
+**Rounds are graded before they are written.** A round that scores worse is
+discarded, and writing rows only to delete them would leave an audit trail
+of plans that never existed. That is what
+:func:`~hdh.modules.careplan.facts.evidence_from_draft` is for.
+
+**The best round is kept, not the last.** A revision can make a plan worse
+— the model is being told to change something, and change is not
+improvement. Best is decided the same way the verdict is: highest minimum
+score, then highest mean, then the earliest round, so a revision has to
+actually beat what it replaced rather than merely tie it.
+
+**Nothing here approves anything.** The loop ends and a human reviews,
+whether it converged or not. Both the rounds that were rejected and the
+reason each one ran are kept, because a reviewer looking at a plan that
+took three attempts should be able to see the two it beat.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from hdh.modules.careplan.context import CarePlanContext
+from hdh.modules.careplan.evaluate import Evaluation, Grader, evaluate
+from hdh.modules.careplan.facts import evidence_from_draft
+from hdh.modules.careplan.generate import (
+    PlanDraft,
+    Selector,
+    propose_concerns,
+    propose_goals,
+    propose_interventions,
+)
+from hdh.modules.careplan.reconcile import ReconcileReport, reconcile
+from hdh.modules.careplan.rubric import REVISABLE_NODES, Rubric, select_rubric
+from hdh.modules.careplan.stratify import RiskFlag
+from hdh.modules.careplan.triage import Topic
+
+#: How many times a plan may be sent back. §9 says two, and the number
+#: matters more than it looks: each round is a full regeneration plus a
+#: full re-grade, so an unbounded loop is an unbounded bill, and a model
+#: told repeatedly to "do better" starts changing things that were right.
+MAX_REVISION_ROUNDS = 2
+
+#: Separator between the objections handed to one node.
+JOIN = "\n\n"
+
+
+@dataclass(frozen=True)
+class PlanInputs:
+    """Everything the generating nodes need that does not change per round.
+
+    Bundled rather than threaded: each round re-runs the nodes with the
+    same store, chart, flags and topics, and only the feedback and the
+    starting node differ. Passing six unchanging arguments through three
+    call layers was how the parameter lists got long enough for the
+    quality gate to object, and it was right to.
+    """
+
+    store: object
+    context: CarePlanContext
+    flags: tuple[RiskFlag, ...]
+    topics: tuple[Topic, ...]
+    selector: Selector
+    deferred: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Round:
+    """One attempt, what prompted it, and how it scored."""
+
+    number: int
+    draft: PlanDraft
+    reconciliation: ReconcileReport
+    evaluation: Evaluation
+    node: str = ""
+    feedback: tuple[str, ...] = ()
+
+    def rank(self) -> tuple[int, float]:
+        """Higher is better, by the rule the verdict already uses."""
+        scored = [score.score for score in self.evaluation.graded if score.score is not None]
+        if not scored:
+            return (-1, -1.0)
+        return (min(scored), self.evaluation.overall or 0.0)
+
+
+@dataclass
+class RevisionLog:
+    """Every attempt, and which one was kept."""
+
+    rounds: list[Round] = field(default_factory=list)
+    kept: int = 0
+
+    @property
+    def best(self) -> Round:
+        return self.rounds[self.kept]
+
+    @property
+    def improved(self) -> bool:
+        return self.kept > 0
+
+    def as_lines(self, rubric: Rubric) -> list[str]:
+        """One line per attempt, marking the one that was kept."""
+        lines = []
+        for entry in self.rounds:
+            mark = "kept" if entry.number == self.kept else "    "
+            verdict = entry.evaluation.verdict(rubric)
+            mean = entry.evaluation.overall
+            worst = entry.evaluation.lowest
+            detail = f"lowest {worst.dimension_id} {worst.score}" if worst else "nothing graded"
+            reason = f" after revising {entry.node}" if entry.node else ""
+            lines.append(
+                f"  [{mark}] round {entry.number}{reason}: {verdict}, "
+                f"mean {mean if mean is not None else '—'}, {detail}"
+            )
+        if not self.improved and len(self.rounds) > 1:
+            lines.append("  no revision beat the first attempt — the first was kept")
+        return lines
+
+
+def _failing(evaluation: Evaluation, rubric: Rubric) -> list:
+    """Graded dimensions scoring below the rubric's revise threshold."""
+    by_id = {dimension.id: dimension for dimension in rubric.dimensions}
+    failing = []
+    for score in evaluation.graded:
+        dimension = by_id.get(score.dimension_id)
+        if dimension is not None and score.score is not None and score.score < rubric.revise_below:
+            failing.append((dimension, score))
+    return failing
+
+
+def route(evaluation: Evaluation, rubric: Rubric) -> tuple[str, list[str]]:
+    """Which node to send this back to, and what to tell it.
+
+    The earliest failing node wins. Feedback from *every* dimension routed
+    to that node travels with it — a node asked to fix one objection while
+    a second goes unmentioned will trade one for the other.
+    """
+    failing = _failing(evaluation, rubric)
+    if not failing:
+        return "", []
+    node = min(dimension.node_order for dimension, _score in failing)
+    name = REVISABLE_NODES[node]
+    notes = [
+        f"{dimension.title} scored {score.score} of {rubric.scale_max}. {score.justification}".strip()
+        for dimension, score in failing
+        if dimension.revises == name
+    ]
+    return name, notes
+
+
+def _build(
+    inputs: PlanInputs,
+    *,
+    node: str = "concerns",
+    previous: PlanDraft | None = None,
+    feedback: str = "",
+) -> tuple[PlanDraft, ReconcileReport]:
+    """Run the generating nodes from ``node`` onwards.
+
+    Everything before ``node`` is carried over from ``previous`` unchanged.
+    Everything after is regenerated, because a goal written for a concern
+    that no longer exists is an orphan and the graph invariant (§8) does
+    not permit one.
+    """
+    draft = PlanDraft(deferred=list(inputs.deferred))
+    start = REVISABLE_NODES.index(node)
+
+    if start == 0:
+        concerns, dropped = propose_concerns(
+            inputs.store, inputs.context, inputs.flags, inputs.selector, inputs.topics, feedback
+        )
+        draft.dropped.extend(dropped)
+    else:
+        assert previous is not None, "revising a later node needs the earlier one's output"
+        concerns = list(previous.concerns)
+    draft.concerns.extend(concerns)
+
+    if start <= 1:
+        goals, dropped = propose_goals(
+            inputs.store, inputs.context, draft.concerns, inputs.selector, feedback if start == 1 else ""
+        )
+        draft.dropped.extend(dropped)
+    else:
+        assert previous is not None
+        goals = list(previous.goals)
+    draft.goals.extend(goals)
+
+    interventions, dropped = propose_interventions(
+        inputs.store, inputs.context, draft.goals, inputs.selector, feedback if start == 2 else ""
+    )
+    draft.dropped.extend(dropped)
+
+    kept, reconciliation = reconcile(interventions, inputs.flags, goal_count=len(draft.goals))
+    draft.interventions.extend(kept)
+    return draft, reconciliation
+
+
+def revise_plan(
+    inputs: PlanInputs,
+    grader: Grader,
+    *,
+    rubric: Rubric | None = None,
+    max_rounds: int = MAX_REVISION_ROUNDS,
+) -> tuple[Rubric, RevisionLog]:
+    """Generate, grade, and send back up to ``max_rounds`` times.
+
+    Returns the rubric used and the full log. The caller writes the kept
+    round; nothing here touches the database.
+    """
+    rubric = rubric or select_rubric(inputs.context)
+    log = RevisionLog()
+
+    node: str = "concerns"
+    notes: list[str] = []
+    previous: PlanDraft | None = None
+    for number in range(max_rounds + 1):
+        draft, reconciliation = _build(inputs, node=node, previous=previous, feedback=JOIN.join(notes))
+        evidence = evidence_from_draft(inputs.context, draft, inputs.flags, reconciliation, inputs.deferred)
+        _rubric, evaluation = evaluate(evidence, grader, rubric=rubric)
+        log.rounds.append(
+            Round(
+                number=number,
+                draft=draft,
+                reconciliation=reconciliation,
+                evaluation=evaluation,
+                node="" if number == 0 else node,
+                feedback=tuple(notes),
+            )
+        )
+
+        node, notes = route(evaluation, rubric)
+        if not node:
+            break  # nothing below threshold — there is nothing to send back
+        previous = draft
+
+    # Best, not last. A revision has to beat what it replaced, and ties go
+    # to the earlier round so a change that achieved nothing is not adopted.
+    log.kept = max(range(len(log.rounds)), key=lambda index: (log.rounds[index].rank(), -index))
+    return rubric, log

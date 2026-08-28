@@ -268,6 +268,82 @@ def compute_facts(evidence: PlanEvidence, names: Sequence[str] | None = None) ->
     return PlanFacts({name: FACTS[name].compute(evidence) for name in wanted})
 
 
+@dataclass(frozen=True)
+class DraftRow:
+    """A plan element shaped like the database row it has not become yet.
+
+    Grading a draft before writing it is what makes the revise loop
+    affordable: a round that scores badly is discarded, and writing rows
+    only to delete them would leave an audit trail of plans that never
+    existed. The fact layer and :func:`~hdh.modules.careplan.evaluate.render_plan`
+    both read elements through attribute access, so a small stand-in is
+    enough — and the ids are synthetic indices, which is fine because
+    nothing downstream of grading persists them.
+    """
+
+    id: int
+    statement: str
+    source: str = "ai"
+    evidence_refs: Mapping[str, object] | None = None
+    concern_id: int | None = None
+    goal_id: int | None = None
+    concern_type: str = "risk"
+    intervention_type: str = "monitoring"
+    owner_role: str = ""
+    target_value: str = ""
+    #: Only meaningful on the stand-in for the plan row itself.
+    deferred: Mapping[str, object] | None = None
+
+
+def evidence_from_draft(context, draft, flags=(), reconciliation=None, deferred=()) -> PlanEvidence:
+    """Grade a plan that has not been written yet.
+
+    ``deferred`` is passed through as though it were on the plan row, so a
+    draft is graded on the same facts a persisted plan would be — including
+    the omissions it recorded.
+    """
+    refs = lambda item: {"chunks": list(item.evidence_refs)}  # noqa: E731
+    concerns = tuple(
+        DraftRow(
+            id=index + 1,
+            statement=item.statement,
+            evidence_refs=refs(item),
+            concern_type=item.concern_type,
+        )
+        for index, item in enumerate(draft.concerns)
+    )
+    goals = tuple(
+        DraftRow(
+            id=index + 1,
+            statement=item.statement,
+            evidence_refs=refs(item),
+            concern_id=item.concern_index + 1,
+            target_value=item.target_value or "",
+        )
+        for index, item in enumerate(draft.goals)
+    )
+    interventions = tuple(
+        DraftRow(
+            id=index + 1,
+            statement=item.statement,
+            evidence_refs=refs(item),
+            goal_id=item.goal_index + 1,
+            intervention_type=item.intervention_type,
+            owner_role=item.owner_role or "",
+        )
+        for index, item in enumerate(draft.interventions)
+    )
+    return PlanEvidence(
+        context=context,
+        flags=tuple(flags),
+        concerns=concerns,
+        goals=goals,
+        interventions=interventions,
+        reconciliation=reconciliation,
+        plan=DraftRow(id=0, statement="", deferred={"problems": list(deferred)}),
+    )
+
+
 def gather(
     session,
     plan_id: int,
