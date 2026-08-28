@@ -557,8 +557,12 @@ _DEFINITIONS: dict[str, _Draft] = {
     ),
     # ── Senior (65+) ──────────────────────────────────────────────────────────
     "copd": _Draft(
-        icd10_code="J44.1",
-        description="COPD with acute exacerbation",
+        # J44.9, not J44.1. An acute exacerbation is an episode; this profile
+        # is flagged chronic, and a chronic problem list that says "with
+        # acute exacerbation" claims the patient is permanently exacerbating.
+        # A generated plan read it that way and wrote a concern about it.
+        icd10_code="J44.9",
+        description="COPD, unspecified",
         chief_complaint="Shortness of breath, worsening COPD",
         visit_type="follow_up",
         rr_delta=(6, 3),
