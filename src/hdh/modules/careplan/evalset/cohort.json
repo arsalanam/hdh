@@ -1,0 +1,14 @@
+{
+  "name": "default",
+  "version": 1,
+  "seed": 4242,
+  "patients": 80,
+  "years_of_history": 4,
+  "description": "A fixed cohort for measuring care-plan changes. Patients are regenerated from the seed rather than committed, because generation is deterministic under one and a 80-patient dump is not a thing to keep in git. Cases are selected by topic count so the strata span what triage actually produces, and by MRN order within a stratum so nobody picks the flattering chart.",
+  "strata": [
+    {"name": "single", "min_topics": 1, "max_topics": 2, "take": 2},
+    {"name": "typical", "min_topics": 3, "max_topics": 4, "take": 2},
+    {"name": "multi", "min_topics": 5, "max_topics": 6, "take": 2},
+    {"name": "complex", "min_topics": 7, "max_topics": 999, "take": 2}
+  ]
+}

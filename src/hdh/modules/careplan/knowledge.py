@@ -256,19 +256,38 @@ class PgStore:
         word sequence *inside* the text, scored **0.44** on the right
         chunk. Same data, same query, right answer only from the second.
         """
+        from sqlalchemy.exc import ProgrammingError
+
+        from hdh.core.dialect import DatabaseFeatureError
+
         clause, params = self._filter_clause(filters)
-        rows = self._session.execute(
-            sql_text(
-                "SELECT corpus, doc_id, text, source, license, chunk_metadata, "
-                "       word_similarity(:q, text) AS score "
-                "FROM knowledge_chunks "
-                "WHERE corpus = :corpus "
-                f"  {clause}"
-                "  AND word_similarity(:q, text) > :floor "
-                "ORDER BY score DESC LIMIT :limit"
-            ),
-            {"q": needle, "corpus": corpus, "limit": limit, "floor": TRIGRAM_FLOOR, **params},
-        ).all()
+        try:
+            rows = self._session.execute(
+                sql_text(
+                    "SELECT corpus, doc_id, text, source, license, chunk_metadata, "
+                    "       word_similarity(:q, text) AS score "
+                    "FROM knowledge_chunks "
+                    "WHERE corpus = :corpus "
+                    f"  {clause}"
+                    "  AND word_similarity(:q, text) > :floor "
+                    "ORDER BY score DESC LIMIT :limit"
+                ),
+                {"q": needle, "corpus": corpus, "limit": limit, "floor": TRIGRAM_FLOOR, **params},
+            ).all()
+        except ProgrammingError as err:
+            # A database that has the tables but not the extension is a
+            # normal state — `create_all` builds the schema and cannot
+            # install pg_trgm. The raw error names a missing function and
+            # not the fix, which cost real time the first time a fresh
+            # eval database hit it.
+            if "word_similarity" not in str(err):
+                raise
+            self._session.rollback()
+            raise DatabaseFeatureError(
+                "trigram retrieval needs the pg_trgm extension, which this database does not "
+                "have. Run `CREATE EXTENSION IF NOT EXISTS pg_trgm;` against it, or apply the "
+                "migrations (0011 installs it)."
+            ) from None
         return [self._hit(row, float(row.score)) for row in rows]
 
     @staticmethod
