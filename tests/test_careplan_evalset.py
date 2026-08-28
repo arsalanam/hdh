@@ -178,9 +178,23 @@ def test_a_baseline_with_no_per_run_detail_falls_back_to_what_it_stored():
 
 
 def test_a_case_with_no_baseline_is_reported_rather_than_dropped():
-    report = Report(cohort="default", measurements=[_measurement("NEW", [4.0])])
-    lines = compare(report, {"mean": 3.0, "noise": 0.0, "cases": []})
-    assert any("no baseline" in line for line in lines)
+    """A case added to an existing cohort is named, not silently skipped.
+
+    The baseline must hold at least one of the cases for this to be a
+    comparison at all — see
+    `test_a_run_against_a_different_cohort_is_not_a_comparison`.
+    """
+    report = Report(
+        cohort="default",
+        measurements=[_measurement("KNOWN", [3.0, 3.1]), _measurement("NEW", [4.0])],
+    )
+    baseline = {
+        "mean": 3.0,
+        "noise": 0.1,
+        "cases": [{"mrn": "KNOWN", "mean": 3.0, "runs": [{"mean": 2.9}, {"mean": 3.1}]}],
+    }
+    lines = compare(report, baseline)
+    assert any("NEW" in line and "no baseline" in line for line in lines)
 
 
 def test_an_ungraded_run_does_not_become_a_zero():
@@ -228,3 +242,40 @@ def test_a_cohort_is_immutable():
     assert isinstance(cohort, Cohort)
     with pytest.raises(FrozenInstanceError):
         cohort.seed = 1  # type: ignore[misc]
+
+
+def test_a_run_against_a_different_cohort_is_not_a_comparison():
+    """The bug the first post-generator-change baseline exposed.
+
+    A generator change moves what a seed produces, so the cases change
+    wholesale. `compare` still printed a cohort-mean delta — 3.917 -> 4.071,
+    +0.15 — across two sets of patients with nobody in common. It looked
+    exactly like a result.
+
+    Two cohorts are comparable only if they are about the same people.
+    """
+    report = Report(cohort="default", measurements=[_measurement("NEW1", [4.0, 4.2])])
+    baseline = {
+        "mean": 3.9,
+        "noise": 0.2,
+        "cases": [{"mrn": "OLD1", "mean": 3.9, "runs": [{"mean": 3.8}, {"mean": 4.0}]}],
+    }
+    lines = compare(report, baseline)
+    assert any("not a comparison" in line for line in lines)
+    assert not any("+0." in line or "-0." in line for line in lines), "it still printed a delta"
+
+
+def test_a_partially_overlapping_cohort_still_compares():
+    """One case in common is enough to be talking about the same thing —
+    a cohort that gained a case has not become a different cohort."""
+    report = Report(
+        cohort="default",
+        measurements=[_measurement("A", [4.0, 4.2]), _measurement("NEW", [3.5, 3.6])],
+    )
+    baseline = {
+        "mean": 3.9,
+        "noise": 0.2,
+        "cases": [{"mrn": "A", "mean": 3.9, "runs": [{"mean": 3.8}, {"mean": 4.0}]}],
+    }
+    lines = compare(report, baseline)
+    assert any("overall" in line for line in lines)
