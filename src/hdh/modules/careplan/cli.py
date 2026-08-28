@@ -193,7 +193,9 @@ def _cmd_eval_run(session, args, cohort, cases) -> None:
         session,
         cases,
         services,
-        evalset.RunSettings(repeat=args.repeat, revise=args.revise, cohort=cohort.name),
+        evalset.RunSettings(
+            repeat=args.repeat, revise=args.revise, cohort=cohort.name, version=cohort.version
+        ),
         on_case=announce,
     )
 
