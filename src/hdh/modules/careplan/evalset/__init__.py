@@ -268,9 +268,9 @@ def check_case(session, mrn: str) -> CheckResult:
             + ", ".join(deferred_uncontrolled)
         )
 
-    from hdh.modules.careplan.knowledge import PgStore
+    from hdh.modules.careplan.retriever import build_store
 
-    store = PgStore(session)
+    store = build_store(session)
     for topic in selected:
         if not _candidates(store, topic.query, CONCERN_CORPORA):
             result.failures.append(f"topic {topic.label!r} retrieves nothing — it cannot be cited")
