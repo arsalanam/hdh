@@ -396,6 +396,19 @@ def compare(report: Report, baseline: dict) -> list[str]:
         return ["no comparable baseline mean"]
 
     by_mrn = {case["mrn"]: case for case in baseline.get("cases", [])}
+
+    # Two cohorts are comparable only if they are about the same patients.
+    # A generator change moves what a seed produces, so the cases change
+    # wholesale — and comparing the *cohort means* of two different sets of
+    # people looks exactly like a result. It produced one: 3.917 -> 4.071,
+    # +0.15, across charts with no patient in common.
+    shared = [m for m in report.measurements if m.mrn in by_mrn]
+    if not shared:
+        return [
+            "  not a comparison — the baseline holds none of these cases.",
+            "  A different cohort is a different question; this run is a new baseline,",
+            "  not a change from the old one.",
+        ]
     for measurement in report.measurements:
         previous = by_mrn.get(measurement.mrn, {}).get("mean")
         if previous is None or measurement.mean is None:
