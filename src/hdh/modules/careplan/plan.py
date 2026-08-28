@@ -16,11 +16,10 @@ from hdh.modules.careplan.evaluate import Evaluation, Grader
 from hdh.modules.careplan.generate import (
     PlanDraft,
     Selector,
-    propose_concerns,
-    propose_goals,
-    propose_interventions,
 )
-from hdh.modules.careplan.reconcile import ReconcileReport, reconcile
+from hdh.modules.careplan.graph import PlanServices as GraphServices
+from hdh.modules.careplan.graph import node_index, run_from, to_draft
+from hdh.modules.careplan.reconcile import ReconcileReport
 from hdh.modules.careplan.revise import RevisionLog
 from hdh.modules.careplan.rubric import Rubric
 from hdh.modules.careplan.stratify import RiskFlag, stratify
@@ -113,6 +112,7 @@ def generate_plan(
     topics, deferred = triage(context, flags)
 
     deferrals = deferral_lines(deferred)
+    reconciliation: ReconcileReport | None = None
     revision = None
     graded_rubric = None
 
@@ -136,23 +136,22 @@ def generate_plan(
         best = revision.best
         draft, reconciliation = best.draft, best.reconciliation
     else:
-        draft = PlanDraft(deferred=deferrals)
-        concerns, dropped = propose_concerns(store, context, flags, selector, topics)
-        draft.concerns.extend(concerns)
-        draft.dropped.extend(dropped)
-
-        goals, dropped = propose_goals(store, context, draft.concerns, selector)
-        draft.goals.extend(goals)
-        draft.dropped.extend(dropped)
-
-        interventions, dropped = propose_interventions(store, context, draft.goals, selector)
-        draft.dropped.extend(dropped)
-
-        # Node 6, before anything is written. Reconciling after assembly
-        # would mean writing rows only to delete them, and an audit trail
-        # that records a plan proposing what it also forbade.
-        kept, reconciliation = reconcile(interventions, flags, goal_count=len(draft.goals))
-        draft.interventions.extend(kept)
+        # Nodes 3-6 through the declared pipeline. Node 6 still runs before
+        # anything is written: reconciling after assembly would mean writing
+        # rows only to delete them, and an audit trail that records a plan
+        # proposing what it also forbade.
+        state = run_from(
+            {
+                "context": context,
+                "flags": flags,
+                "topics": topics,
+                "deferred": deferrals,
+            },
+            GraphServices(store=store, selector=selector),
+            node_index("concerns"),
+        )
+        draft = to_draft(state)
+        reconciliation = state.get("reconciliation")
 
     if not draft.concerns or dry_run:
         report = ValidationReport()

@@ -37,14 +37,17 @@ from dataclasses import dataclass, field
 from hdh.modules.careplan.context import CarePlanContext
 from hdh.modules.careplan.evaluate import Evaluation, Grader, evaluate
 from hdh.modules.careplan.facts import evidence_from_draft
-from hdh.modules.careplan.generate import (
-    PlanDraft,
-    Selector,
-    propose_concerns,
-    propose_goals,
-    propose_interventions,
+from hdh.modules.careplan.generate import PlanDraft, Selector
+from hdh.modules.careplan.graph import (
+    CarePlanState,
+    node_index,
+    run_from,
+    to_draft,
 )
-from hdh.modules.careplan.reconcile import ReconcileReport, reconcile
+from hdh.modules.careplan.graph import (
+    PlanServices as GraphServices,
+)
+from hdh.modules.careplan.reconcile import ReconcileReport
 from hdh.modules.careplan.rubric import REVISABLE_NODES, Rubric, select_rubric
 from hdh.modules.careplan.stratify import RiskFlag
 from hdh.modules.careplan.triage import Topic
@@ -61,13 +64,11 @@ JOIN = "\n\n"
 
 @dataclass(frozen=True)
 class PlanInputs:
-    """Everything the generating nodes need that does not change per round.
+    """The chart a run starts from, and the collaborators it uses.
 
-    Bundled rather than threaded: each round re-runs the nodes with the
-    same store, chart, flags and topics, and only the feedback and the
-    starting node differ. Passing six unchanging arguments through three
-    call layers was how the parameter lists got long enough for the
-    quality gate to object, and it was right to.
+    Retained as the caller-facing shape, but it is now a *seed* rather than
+    an argument bundle: :meth:`seed` turns it into the graph state, and the
+    nodes read that instead of taking six threaded parameters.
     """
 
     store: object
@@ -77,6 +78,18 @@ class PlanInputs:
     selector: Selector
     deferred: tuple[str, ...] = ()
 
+    def seed(self) -> CarePlanState:
+        """The state a run begins with, before any node has run."""
+        return {
+            "context": self.context,
+            "flags": list(self.flags),
+            "topics": list(self.topics),
+            "deferred": list(self.deferred),
+        }
+
+    def services(self) -> GraphServices:
+        return GraphServices(store=self.store, selector=self.selector)
+
 
 @dataclass(frozen=True)
 class Round:
@@ -84,7 +97,7 @@ class Round:
 
     number: int
     draft: PlanDraft
-    reconciliation: ReconcileReport
+    reconciliation: ReconcileReport | None
     evaluation: Evaluation
     node: str = ""
     feedback: tuple[str, ...] = ()
@@ -162,53 +175,6 @@ def route(evaluation: Evaluation, rubric: Rubric) -> tuple[str, list[str]]:
     return name, notes
 
 
-def _build(
-    inputs: PlanInputs,
-    *,
-    node: str = "concerns",
-    previous: PlanDraft | None = None,
-    feedback: str = "",
-) -> tuple[PlanDraft, ReconcileReport]:
-    """Run the generating nodes from ``node`` onwards.
-
-    Everything before ``node`` is carried over from ``previous`` unchanged.
-    Everything after is regenerated, because a goal written for a concern
-    that no longer exists is an orphan and the graph invariant (§8) does
-    not permit one.
-    """
-    draft = PlanDraft(deferred=list(inputs.deferred))
-    start = REVISABLE_NODES.index(node)
-
-    if start == 0:
-        concerns, dropped = propose_concerns(
-            inputs.store, inputs.context, inputs.flags, inputs.selector, inputs.topics, feedback
-        )
-        draft.dropped.extend(dropped)
-    else:
-        assert previous is not None, "revising a later node needs the earlier one's output"
-        concerns = list(previous.concerns)
-    draft.concerns.extend(concerns)
-
-    if start <= 1:
-        goals, dropped = propose_goals(
-            inputs.store, inputs.context, draft.concerns, inputs.selector, feedback if start == 1 else ""
-        )
-        draft.dropped.extend(dropped)
-    else:
-        assert previous is not None
-        goals = list(previous.goals)
-    draft.goals.extend(goals)
-
-    interventions, dropped = propose_interventions(
-        inputs.store, inputs.context, draft.goals, inputs.selector, feedback if start == 2 else ""
-    )
-    draft.dropped.extend(dropped)
-
-    kept, reconciliation = reconcile(interventions, inputs.flags, goal_count=len(draft.goals))
-    draft.interventions.extend(kept)
-    return draft, reconciliation
-
-
 def revise_plan(
     inputs: PlanInputs,
     grader: Grader,
@@ -226,9 +192,16 @@ def revise_plan(
 
     node: str = "concerns"
     notes: list[str] = []
-    previous: PlanDraft | None = None
+    services = inputs.services()
+    state: CarePlanState = inputs.seed()
     for number in range(max_rounds + 1):
-        draft, reconciliation = _build(inputs, node=node, previous=previous, feedback=JOIN.join(notes))
+        # Re-entry, not reconstruction. `run_from` clears whatever the nodes
+        # at or after this one wrote and regenerates it; everything earlier
+        # is carried forward untouched. Which node that is comes from the
+        # rubric, so a new node needs no change here.
+        state = run_from(state, services, node_index(node), feedback=JOIN.join(notes))
+        draft = to_draft(state)
+        reconciliation = state.get("reconciliation")
         evidence = evidence_from_draft(inputs.context, draft, inputs.flags, reconciliation, inputs.deferred)
         _rubric, evaluation = evaluate(evidence, grader, rubric=rubric)
         log.rounds.append(
@@ -245,7 +218,6 @@ def revise_plan(
         node, notes = route(evaluation, rubric)
         if not node:
             break  # nothing below threshold — there is nothing to send back
-        previous = draft
 
     # Best, not last. A revision has to beat what it replaced, and ties go
     # to the earlier round so a change that achieved nothing is not adopted.
