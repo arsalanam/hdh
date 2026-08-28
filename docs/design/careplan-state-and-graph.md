@@ -131,7 +131,8 @@ PIPELINE: tuple[NodeSpec, ...] = (
 )
 ```
 
-Adding a node becomes one tuple entry plus its function. Removing one becomes
+Adding a node becomes one tuple entry, its function, **and its state
+channels** — see §9, which corrects this. Removing one becomes
 deleting an entry.
 
 ### 4.3 Invalidation replaces the index ladder
@@ -170,10 +171,9 @@ Each stage ships on its own and leaves the module working.
 
 | Stage | Delivers | How we know it worked |
 |---|---|---|
-| **0** | Agree the state shape. This document. | Nobody is surprised at stage 1 |
-| **1** | Extract `CarePlanState`; nodes become `state -> partial`; `PIPELINE` as data; invalidation by `writes`. **Current runner retained.** | **Every existing test passes unchanged** — that is what makes it a refactor rather than a rewrite |
-| **2** | Swap the runner for a compiled `StateGraph`. Same nodes, same state. | Same tests, same eval-harness numbers within the noise floor |
-| **3** | Postgres checkpointer; a thread per plan; `checkpoint_thread_id` finally written. | A run can be killed mid-pipeline and resumed |
+| **0** | ✅ Agree the state shape. This document. | Nobody is surprised at stage 1 |
+| **1** | ✅ Extract `CarePlanState`; nodes become `state -> partial`; `PIPELINE` as data; invalidation by `writes`. Current runner retained. | Existing tests passed unchanged **but one**, and that one found a regression — see §9 |
+| **2+3** | ✅ **Merged.** Compiled `StateGraph`, Postgres checkpointer, a thread per plan, `checkpoint_thread_id` finally written. | Eval neutral: 3.917 → 3.834, inside a 0.26 noise floor; durability proven across two graph objects |
 | **4** | `interrupt()` before assemble; review / approve / edit / reject as graph resumptions; `edits` carry provenance. | Design Phase 4, and the `source` column stops being decorative |
 | **5** | The interactive surface: clinician dialogue on `messages`, turns driving graph invocations. | *"Make the second goal measurable"* works |
 
@@ -226,3 +226,77 @@ by measurement.
 
 The one thing this design *is* confident about is the diagnosis in §2, which is
 read off the code rather than inferred.
+
+---
+
+## 9. What stages 1–3 actually cost (added 2026-08-28)
+
+Written after doing it, because four things were wrong or unknown in the
+plan above and the estimates were not close.
+
+### Stages 2 and 3 could not be separated
+
+"Swap the runner" cannot be done without a checkpointer: re-entry uses
+`update_state`, which needs a thread, which needs somewhere to keep it. A
+`StateGraph` compiled without one would have left `run_from` alongside it —
+two runners, which was the outcome the adoption was meant to avoid. The
+separable axis was never graph-versus-no-graph; it is **memory-versus-durable**,
+and that is what `checkpoints.py` chooses between.
+
+### Adding a node is two edits, not one
+
+**LangGraph silently discards state keys the schema does not declare.** No
+error, no warning: the node runs, looks fine, and produces nothing. So a
+`PIPELINE` entry needs its channels on `CarePlanState` as well, and
+`require_declared` now fails at compile time rather than letting a node
+vanish quietly. §4.2's "one tuple entry" was wrong.
+
+### A checkpoint round trip was lossy, and only on resume
+
+msgpack has no tuple. A frozen dataclass declared `tuple[str, ...]` came
+back holding a **list** — the type survived, so nothing complained, but
+equality stopped working and the annotation lied. Single-pass runs never
+touched it; every *resume* got subtly different data. The dataclasses now
+coerce in `__post_init__`.
+
+This is the concrete form of the risk §4.4 named as speculation: adopting
+the framework means adopting its serialisation, and ours did not survive it
+unchanged.
+
+### Unregistered types are a deprecation, not a warning
+
+LangGraph warns on deserialising types it was not told about and states it
+will block them. An unlisted type is therefore a run that stops working on
+an upgrade, not noise to live with. `ALLOWED_MODULES` names the ten, which
+is also a boundary worth having: a checkpoint is data, and reconstructing
+arbitrary classes from data is how deserialisation bugs start.
+
+### The size estimate was wrong
+
+§6 guessed ~500 lines for stage 1 and "roughly 50" for the graph swap. Stage
+1 was about right. The swap was several hundred once node signatures,
+context plumbing, invalidation semantics, thread management and the
+serialisation fixes are counted. The estimate was made from reading rather
+than doing, which §8 said and should be believed next time.
+
+### What the measurement says
+
+Both refactors are behaviour-neutral, on the fixed cohort at three repeats:
+
+| | cohort mean | delta | noise floor |
+|---|---|---|---|
+| before stage 1 | 3.897 | — | — |
+| after stage 1 | 3.917 | +0.02 | 0.23 |
+| after stages 2+3 | 3.834 | −0.08 | 0.26 |
+
+An earlier two-repeat comparison put stage 1 at −0.21 with all four cases
+down, and that was reported as possibly real. It was not; it was noise, and
+the third repeat dissolved it.
+
+The harness itself was also corrected in the process: it judged deltas
+against the observed **range**, which grows with sample size — the same four
+cases gave 0.50 at two repeats and 0.67 at three from an unchanged process.
+More measurement was making real change *harder* to detect. It now uses a
+pooled standard deviation, which is stable across n and roughly halves the
+floor.
+
