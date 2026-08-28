@@ -46,7 +46,7 @@ def _tables():
     )
 
 
-def assemble(session, patient, draft: PlanDraft, title: str) -> int:
+def assemble(session, patient, draft: PlanDraft, title: str, thread_id: str = "") -> int:
     """Write the plan graph; returns the care-plan id.
 
     Order is forced by the foreign keys — a concern cannot exist before its
@@ -70,6 +70,10 @@ def assemble(session, patient, draft: PlanDraft, title: str) -> int:
                 # plan next month needs to know it chose not to address
                 # three problems, not to infer it from an absence.
                 "deferred": {"problems": list(draft.deferred)},
+                # The thread this plan's checkpoints live under. Written so a
+                # reviewer can resume the run that produced the plan — the
+                # column has existed since milestone 1 and been empty since.
+                "checkpoint_thread_id": thread_id or None,
                 "created_at": now,
                 "updated_at": now,
             }

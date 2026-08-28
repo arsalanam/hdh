@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
 from hdh.modules.careplan.context import CarePlanContext
+from hdh.modules.careplan.evaluate import Grader
 from hdh.modules.careplan.generate import (
     ConcernDraft,
     GoalDraft,
@@ -98,7 +99,14 @@ class PlanServices:
 
     store: object | None = None
     selector: Selector | None = None
-    grader: object | None = None
+    grader: Grader | None = None
+    #: A LangGraph checkpointer, or None for an ephemeral run.
+    #:
+    #: Not built by :meth:`resolved`, deliberately: the durable saver opens
+    #: its own database connection, and a factory that did that as a side
+    #: effect of a default would open one per plan. The caller builds it
+    #: once per session and passes it down.
+    checkpointer: object | None = None
 
     @property
     def selecting(self) -> Selector:
@@ -122,7 +130,12 @@ class PlanServices:
             from hdh.modules.careplan.generate import llm_selector
 
             selector = llm_selector()
-        return PlanServices(store=store, selector=selector, grader=self.grader)
+        return PlanServices(
+            store=store,
+            selector=selector,
+            grader=self.grader,
+            checkpointer=self.checkpointer,
+        )
 
 
 Node = Callable[[CarePlanState, PlanServices], Mapping[str, Any]]

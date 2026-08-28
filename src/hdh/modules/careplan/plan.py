@@ -9,55 +9,36 @@ the agent graph.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 from hdh.modules.careplan.assemble import ValidationReport, assemble, validate
 from hdh.modules.careplan.context import CarePlanContext, build_context
-from hdh.modules.careplan.evaluate import Evaluation, Grader
+from hdh.modules.careplan.evaluate import Evaluation
 from hdh.modules.careplan.generate import (
     PlanDraft,
-    Selector,
+)
+from hdh.modules.careplan.graph import (
+    CarePlanState,
+    compile_pipeline,
+    node_index,
+    run_from,
+    thread_config,
+    to_draft,
 )
 from hdh.modules.careplan.graph import PlanServices as GraphServices
-from hdh.modules.careplan.graph import node_index, run_from, to_draft
 from hdh.modules.careplan.reconcile import ReconcileReport
 from hdh.modules.careplan.revise import RevisionLog
 from hdh.modules.careplan.rubric import Rubric
 from hdh.modules.careplan.stratify import RiskFlag, stratify
 from hdh.modules.careplan.triage import deferral_lines, triage
 
-
-@dataclass(frozen=True)
-class PlanServices:
-    """The collaborators a plan run depends on, injected together.
-
-    ``store`` and ``selector`` default to their live implementations when
-    omitted; ``grader`` stays None unless grading is wanted, because it
-    costs a call per dimension. Bundled rather than passed one by one so
-    that adding a fourth collaborator is a field rather than another
-    parameter on every caller.
-    """
-
-    store: object | None = None
-    selector: Selector | None = None
-    grader: Grader | None = None
-
-    def resolved(self, session) -> tuple[object, Selector, Grader | None]:
-        """Store, selector and grader, with the live defaults filled in.
-
-        Returns a tuple rather than another ``PlanServices`` so the two
-        that are now guaranteed present are typed as present — a caller
-        should not have to re-check what resolution just established.
-        """
-        store, selector = self.store, self.selector
-        if store is None:
-            from hdh.modules.careplan.retriever import build_store
-
-            store = build_store(session)
-        if selector is None:
-            from hdh.modules.careplan.generate import llm_selector
-
-            selector = llm_selector()
-        return store, selector, self.grader
+#: The collaborators a plan run depends on.
+#:
+#: Re-exported from :mod:`~hdh.modules.careplan.graph` rather than defined
+#: again here. There were briefly two of these — the nodes took one shape and
+#: the orchestrator another — and they drifted the moment a field was added to
+#: one of them. A collaborator bundle with two definitions is not a bundle.
+PlanServices = GraphServices
 
 
 @dataclass
@@ -93,6 +74,7 @@ def generate_plan(
     services: PlanServices | None = None,
     revise: bool = False,
     dry_run: bool = False,
+    thread_id: str | None = None,
 ) -> PlanResult:
     """Nodes 1-5 and 7, then validation.
 
@@ -101,7 +83,17 @@ def generate_plan(
     assessed and nothing was found, when what happened is that nothing
     could be supported.
     """
-    store, selector, grader = (services or PlanServices()).resolved(session)
+    services = (services or PlanServices()).resolved(session)
+    store, selector, grader = services.store, services.selecting, services.grader
+
+    # A run is durable when it has both a checkpointer and a thread to keep
+    # its state under. One without the other is not half-durable, it is
+    # neither, so they are decided together.
+    checkpointer = services.checkpointer
+    if checkpointer is not None and thread_id is None:
+        thread_id = f"careplan-{patient.mrn}-{uuid4().hex[:12]}"
+    if checkpointer is None:
+        thread_id = None
 
     context = build_context(session, patient)
     flags = stratify(context)
@@ -130,6 +122,8 @@ def generate_plan(
                 topics=tuple(topics),
                 selector=selector,
                 deferred=tuple(deferrals),
+                thread_id=thread_id or "",
+                checkpointer=checkpointer,
             ),
             grader,
         )
@@ -140,16 +134,18 @@ def generate_plan(
         # anything is written: reconciling after assembly would mean writing
         # rows only to delete them, and an audit trail that records a plan
         # proposing what it also forbade.
-        state = run_from(
-            {
-                "context": context,
-                "flags": flags,
-                "topics": topics,
-                "deferred": deferrals,
-            },
-            GraphServices(store=store, selector=selector),
-            node_index("concerns"),
-        )
+        seed: CarePlanState = {
+            "context": context,
+            "flags": flags,
+            "topics": topics,
+            "deferred": deferrals,
+        }
+        node_services = GraphServices(store=store, selector=selector)
+        if checkpointer is not None and thread_id:
+            graph = compile_pipeline(checkpointer)
+            state = graph.invoke(seed, thread_config(thread_id), context=node_services)
+        else:
+            state = run_from(seed, node_services, node_index("concerns"))
         draft = to_draft(state)
         reconciliation = state.get("reconciliation")
 
@@ -159,7 +155,7 @@ def generate_plan(
             report.errors.append("nothing retrievable supported a concern — no plan written")
         return PlanResult(None, context, flags, draft, report, reconciliation)
 
-    plan_id = assemble(session, patient, draft, _title(context, flags))
+    plan_id = assemble(session, patient, draft, _title(context, flags), thread_id or "")
     report = validate(session, plan_id)
     if not report.ok:
         # Structural validation failing means the graph is wrong, and a

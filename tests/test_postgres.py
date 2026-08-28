@@ -497,3 +497,91 @@ def test_every_condition_document_is_reachable_by_its_own_condition(pg_engine):
         )
     finally:
         session.close()
+
+
+def test_careplan_run_is_durable_and_resumable(pg_engine):
+    """Stages 2+3: a plan run survives the process that started it.
+
+    The point of merging those stages. A checkpointer that only lives in
+    memory is indistinguishable from none for the things the design wants
+    one for, so this asserts the durable claim specifically: state written
+    by one graph is read back by a *different* one, and re-entering a node
+    keeps what came before it.
+
+    It also pins the round trip. msgpack has no tuple, so a frozen dataclass
+    declared `tuple[str, ...]` used to come back holding a list — the type
+    survived, equality broke, and only resumed runs were affected.
+    """
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.checkpoints import build_checkpointer
+    from hdh.modules.careplan.context import CarePlanContext, ProblemView
+    from hdh.modules.careplan.graph import (
+        PlanServices,
+        compile_pipeline,
+        node_index,
+        resume_at,
+        thread_config,
+    )
+    from hdh.modules.careplan.knowledge import KnowledgeHit
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+
+        class _Store:
+            def search(self, query, corpus, k=5, filters=None):
+                return [
+                    KnowledgeHit(
+                        corpus="med_safety",
+                        doc_id="doc",
+                        chunk="Text of doc.",
+                        score=0.5,
+                        source="notes",
+                        license="MIT",
+                        metadata={},
+                    )
+                ][:k]
+
+        def _selector(task):
+            properties = task.schema["properties"]["selections"]["items"]["properties"]
+            item = {"statement": "A statement", "cites": ["med_safety/doc"]}
+            if "concern_type" in properties:
+                item["concern_type"] = "condition"
+            if "concern_index" in properties:
+                item["concern_index"] = 0
+                item["target_value"] = ""
+            if "goal_index" in properties:
+                item["goal_index"] = 0
+                item["intervention_type"] = "monitoring"
+                item["owner_role"] = "GP"
+            return {"selections": [item]}
+
+        context = CarePlanContext(
+            mrn="DURABLE01",
+            age=70,
+            sex="MALE",
+            problems=(ProblemView("E11.9", "Type 2 diabetes mellitus", False, None),),
+        )
+        services = PlanServices(store=_Store(), selector=_selector)
+        seed = {"context": context, "flags": [], "topics": [], "deferred": []}
+
+        saver = build_checkpointer(session)
+        config = thread_config("durable-test-thread")
+        first = compile_pipeline(saver).invoke(seed, config, context=services)
+        assert first["concerns"] and first["interventions"]
+
+        # A DIFFERENT graph object, and a fresh checkpointer on the same
+        # database: this is the claim, not just that one object remembers.
+        reopened = compile_pipeline(build_checkpointer(session))
+        restored = reopened.get_state(config).values
+        assert restored["concerns"] == first["concerns"], "state did not survive the round trip"
+        assert isinstance(restored["concerns"][0].evidence_refs, tuple), "tuples became lists"
+
+        resumed = resume_at(reopened, config, "goals", services, feedback="Goals were vague.")
+        assert resumed["concerns"] == first["concerns"], "re-entry discarded upstream work"
+        assert resumed["goals"], "re-entry produced nothing"
+        assert node_index("goals") > node_index("concerns")
+    finally:
+        session.close()
