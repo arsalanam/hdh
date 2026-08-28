@@ -39,6 +39,12 @@ def register_cli(subparsers) -> None:
     gen.add_argument("--dry-run", action="store_true", help="Propose it, write nothing")
     gen.add_argument("--model", help="Model override (default: HDH_AGENT_MODEL)")
     gen.add_argument("--evaluate", action="store_true", help="Grade the written plan against its rubric (§9)")
+    gen.add_argument(
+        "--revise",
+        action="store_true",
+        help="Grade, send low scores back to the node that caused them, and keep the best "
+        "attempt (implies --evaluate; costs a full regeneration per round)",
+    )
 
     grade = sub.add_parser("evaluate", help="Grade an existing plan against its rubric")
     grade.add_argument("--id", type=int, required=True, help="Care plan id")
@@ -358,7 +364,7 @@ def _cmd_generate(session, args) -> None:
     from hdh.core.models import Patient
     from hdh.modules.careplan.evaluate import llm_grader
     from hdh.modules.careplan.generate import llm_selector
-    from hdh.modules.careplan.plan import generate_plan
+    from hdh.modules.careplan.plan import PlanServices, generate_plan
 
     patient = session.query(Patient).filter(Patient.mrn == args.mrn).first()
     if patient is None:
@@ -370,8 +376,14 @@ def _cmd_generate(session, args) -> None:
         raise SystemExit("careplan generate needs the agent extra: pip install 'hdh[agent]'") from None
 
     try:
-        grader = llm_grader(model=args.model) if args.evaluate else None
-        result = generate_plan(session, patient, selector=selector, grader=grader, dry_run=args.dry_run)
+        grader = llm_grader(model=args.model) if (args.evaluate or args.revise) else None
+        result = generate_plan(
+            session,
+            patient,
+            services=PlanServices(selector=selector, grader=grader),
+            revise=args.revise,
+            dry_run=args.dry_run,
+        )
     except DatabaseFeatureError as err:
         raise SystemExit(f"hdh careplan generate: {err}") from None
 
@@ -419,6 +431,11 @@ def _cmd_generate(session, args) -> None:
             print(f"  refused: {error}")
         return
     print(f"  ✅ plan #{result.plan_id} written as ai_generated — not approved")
+    if result.revision is not None and result.rubric is not None:
+        print()
+        print(f"  {len(result.revision.rounds)} attempt(s):")
+        for line in result.revision.as_lines(result.rubric):
+            print(line)
     if result.evaluation is not None and result.rubric is not None:
         _print_evaluation(result.rubric, result.evaluation)
         print(f"     recorded as evaluation #{result.evaluation_id}")

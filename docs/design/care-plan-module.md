@@ -520,6 +520,32 @@ starting point set by us, not by clinicians. Every dimension records the
 source of its standard for that reason, and validating them is the ask
 that RFC #95 puts to practising clinicians.
 
+**Amended 2026-08-27 — M3c, and what it could not yet prove.**
+
+The loop routes by rubric declaration (each dimension names the node it
+revises), sends the earliest failing node every objection addressed to it,
+bounds at two rounds, and keeps the **best** round rather than the last —
+a revision must beat what it replaced, ties going to the earlier round, so
+a change that achieved nothing is not adopted. Rounds are graded as drafts
+and never written, so a worse round leaves no trace.
+
+Run live on a six-topic chart it behaved exactly as designed:
+
+    round 0                      fail,   mean 3.33, lowest traceability 2
+    round 1 revising concerns    fail,   mean 3.33, lowest feasibility 2
+    round 2 revising concerns    revise, mean 3.5,  lowest traceability 3   [kept]
+
+**But the effect size sits inside the noise.** The same chart, generated
+without revision on two earlier occasions, scored means of 3.5 and 3.67 —
+so run-to-run variance in generation is at least as large as the +0.17 the
+loop achieved. A single before-and-after cannot separate the two, and this
+one does not. What is demonstrated is that the loop terminates, routes,
+and prefers the better round; whether it *improves plans* is unproven and
+needs the eval-set harness (Phase 5, #100) to answer.
+
+The cost is not marginal either: three rounds is three full generations
+plus three gradings, so `--revise` is opt-in and stays that way.
+
 ## 10. Human-in-the-loop with checkpointing
 
 - The subgraph is compiled with a **LangGraph checkpointer** (SqliteSaver in
@@ -604,7 +630,7 @@ fixture and demo:
 | 2 | Subagent graph nodes 1–7 with fakes-first tests; CLI `generate/show` | constrained generation, section tools, traceability validation |
 | 3a | ✅ Rubric format + loader, archetype selection, deterministic facts, scoring/verdict, `PlanEvaluation` persistence; CLI `rubrics/facts` | the quality gate, grader injected — runs with no API key |
 | 3b | ✅ The grader itself: one schema-enforced call per dimension, facts injected, cited justification; CLI `evaluate` and `generate --evaluate` | judgement only where judgement is needed |
-| 3c | The bounded revise loop — max 2 rounds, advisory in both directions | feedback routing that terminates |
+| 3c | ✅ The bounded revise loop — rubric-declared routing, max 2 rounds, best round kept, advisory in both directions | feedback routing that terminates |
 | 4 | Checkpointer + interrupt + `review/resume/approve/edit/reject` | durable human-in-the-loop |
 | 5 | FHIR export + `/CarePlan` endpoint; agent-pipeline tool registration; vector-store extra; eval-set harness | end-to-end integration |
 

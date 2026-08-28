@@ -3,80 +3,119 @@
   "version": 1,
   "title": "General care plan",
   "match": {},
-  "scale": {"min": 1, "max": 5},
-  "thresholds": {"revise_below": 4, "fail_below": 2},
+  "scale": {
+    "min": 1,
+    "max": 5
+  },
+  "thresholds": {
+    "revise_below": 4,
+    "fail_below": 2
+  },
   "dimensions": [
     {
       "id": "completeness",
       "title": "Completeness",
       "question": "Does the plan address the problems this chart actually presents?",
       "source": "self-authored; the chart-vs-plan comparison the design calls for in §9",
-      "facts": ["problem_count", "uncontrolled_count", "problems_not_mentioned", "problems_deferred", "concern_count"],
+      "facts": [
+        "problem_count",
+        "uncontrolled_count",
+        "problems_not_mentioned",
+        "problems_deferred",
+        "concern_count"
+      ],
       "anchors": {
         "1": "The plan addresses none of the chart's significant problems, or addresses something the chart does not record.",
         "3": "The dominant problem is addressed; one or more significant problems are absent without explanation.",
         "5": "Every significant problem in the chart is addressed by at least one concern, or its omission is defensible from the chart."
-      }
+      },
+      "revises": "concerns"
     },
     {
       "id": "traceability",
       "title": "Traceability",
       "question": "Does every element trace to evidence a reader can check, and is the citation the right one?",
       "source": "self-authored; design §8's graph invariant, judged for quality rather than presence",
-      "facts": ["citations", "elements_without_evidence", "orphan_elements"],
+      "facts": [
+        "citations",
+        "elements_without_evidence",
+        "orphan_elements"
+      ],
       "anchors": {
         "1": "Elements cite nothing, or cite material that does not support them.",
         "3": "Every element cites something, but at least one citation is only loosely related to the claim it supports.",
         "5": "Every element cites material that genuinely supports it, and a reader following the citation would agree."
-      }
+      },
+      "revises": "concerns"
     },
     {
       "id": "guideline_concordance",
       "title": "Guideline concordance",
       "question": "Is what the plan proposes consistent with the guidance it cites?",
       "source": "self-authored; the med_safety corpus is the standard being compared against",
-      "facts": ["citations", "flags_fired"],
+      "facts": [
+        "citations",
+        "flags_fired"
+      ],
       "anchors": {
         "1": "The plan proposes something the cited guidance advises against.",
         "3": "The plan is broadly consistent with the guidance but adds recommendations the citations do not support.",
         "5": "Every recommendation follows from the cited guidance applied to this patient."
-      }
+      },
+      "revises": "interventions"
     },
     {
       "id": "safety",
       "title": "Safety",
       "question": "Does the plan answer the risks that were flagged, and avoid creating new ones?",
       "source": "self-authored; the stratify rules are the risks being checked against",
-      "facts": ["flags_fired", "flags_not_mentioned", "vetoed", "uncontrolled_count"],
+      "facts": [
+        "flags_fired",
+        "flags_not_mentioned",
+        "vetoed",
+        "uncontrolled_count"
+      ],
       "anchors": {
         "1": "The plan proposes something contraindicated for this patient, or ignores a flag that carries immediate risk.",
         "3": "The flags are acknowledged but at least one is answered only weakly.",
         "5": "Every flag is answered by a concrete intervention, and nothing proposed introduces a new hazard."
-      }
+      },
+      "revises": "interventions"
     },
     {
       "id": "goal_quality",
       "title": "Goal quality",
       "question": "Are the goals specific, measurable, and expressed as outcomes for the patient?",
       "source": "self-authored; design §7 node 4 requires an outcome, not a clinician action",
-      "facts": ["goal_count", "goals_with_target", "concern_count"],
+      "facts": [
+        "goal_count",
+        "goals_with_target",
+        "concern_count"
+      ],
       "anchors": {
         "1": "Goals restate the problem, or describe what the clinician will do rather than what changes for the patient.",
         "3": "Goals are patient-centred but vague — no target, or no timeframe.",
         "5": "Each goal names an outcome for the patient with something measurable attached."
-      }
+      },
+      "revises": "goals"
     },
     {
       "id": "feasibility_burden",
       "title": "Feasibility and burden",
       "question": "Could this patient actually carry out this plan?",
       "source": "self-authored; the burden count from design §7 node 6",
-      "facts": ["intervention_count", "burden_limit", "burden_flagged", "bare_goals"],
+      "facts": [
+        "intervention_count",
+        "burden_limit",
+        "burden_flagged",
+        "bare_goals"
+      ],
       "anchors": {
         "1": "The plan asks more of the patient than anyone could sustain, or asks for something their circumstances rule out.",
         "3": "The plan is achievable but heavy, with several items that could be combined or sequenced.",
         "5": "The plan asks a realistic amount of a patient in these circumstances, and says who is responsible for each part."
-      }
+      },
+      "revises": "interventions"
     }
   ]
 }
