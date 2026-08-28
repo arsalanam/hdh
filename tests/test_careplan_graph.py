@@ -20,6 +20,7 @@ from hdh.modules.careplan import graph
 from hdh.modules.careplan.context import CarePlanContext, ProblemView
 from hdh.modules.careplan.graph import (
     PIPELINE,
+    CarePlanState,
     MissingUpstream,
     NodeSpec,
     PlanServices,
@@ -83,10 +84,13 @@ def _seed():
 
 @pytest.fixture()
 def restore_pipeline():
-    """Tests that add a node must not leak it into the others."""
+    """Tests that add a node must not leak it — or its channel — into others."""
     saved = graph.PIPELINE
+    annotations = dict(CarePlanState.__annotations__)
     yield
     graph.PIPELINE = saved
+    CarePlanState.__annotations__.clear()
+    CarePlanState.__annotations__.update(annotations)
 
 
 # ── the pipeline runs, and produces what it used to ──────────────────────
@@ -187,6 +191,10 @@ def test_adding_a_node_needs_no_change_to_re_entry(restore_pipeline):
     def _summarise(state, _services):
         return {"summary": f"{len(state.get('interventions', []))} interventions"}
 
+    # Two edits, not one: the pipeline entry and the state channel. LangGraph
+    # drops undeclared keys silently, so the schema is not optional — see
+    # `test_a_node_writing_an_undeclared_key_fails_loudly`.
+    CarePlanState.__annotations__["summary"] = str
     graph.PIPELINE = (*PIPELINE, NodeSpec("summarise", _summarise, ("summary",), "deterministic"))
 
     state = run_from(_seed(), _services())
@@ -200,6 +208,24 @@ def test_adding_a_node_needs_no_change_to_re_entry(restore_pipeline):
     # And re-entering an earlier node regenerates it.
     again = run_from(state, _services(), graph.node_index("goals"))
     assert "summary" in again
+
+
+def test_a_node_writing_an_undeclared_key_fails_loudly(restore_pipeline):
+    """The footgun LangGraph brings, caught at compile time.
+
+    It discards keys that are not channels on the state schema — no error,
+    no warning, the value simply does not appear. A node added without its
+    keys would run, look fine, and produce nothing. That is the failure this
+    module spends most of its effort refusing, so it is made loud.
+    """
+    from hdh.modules.careplan.graph import UndeclaredChannel, compile_pipeline
+
+    def _orphan(state, _services):
+        return {"nowhere": "this vanishes"}
+
+    stray = NodeSpec("orphan", _orphan, ("nowhere",), "deterministic")
+    with pytest.raises(UndeclaredChannel, match="nowhere"):
+        compile_pipeline(pipeline=(*PIPELINE, stray))
 
 
 def test_removing_a_node_is_also_just_the_tuple(restore_pipeline):

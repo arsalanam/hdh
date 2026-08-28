@@ -186,7 +186,7 @@ def _cmd_eval_run(session, args, cohort, cases) -> None:
     print()
 
     def announce(measurement):
-        spread = f" +/-{measurement.spread}" if measurement.spread else ""
+        spread = f" sd {measurement.deviation}" if measurement.deviation else ""
         print(f"  {measurement.mrn:<14} {measurement.stratum:<10} mean {measurement.mean}{spread}")
 
     report = evalset.run(
@@ -200,7 +200,7 @@ def _cmd_eval_run(session, args, cohort, cases) -> None:
     print()
     print(
         f"  cohort mean {report.mean} across {len(report.measurements)} case(s), "
-        f"observed spread {report.noise}"
+        f"noise {report.noise} (pooled sd; widest observed range {report.widest})"
     )
 
     path = _baseline_path(cohort.name)

@@ -99,22 +99,58 @@ class ConcernDraft:
     evidence_refs: tuple[str, ...]
     basis: str = ""
 
+    def __post_init__(self) -> None:
+        # A checkpoint round-trip returns sequences as lists — msgpack has no
+        # tuple, so a frozen dataclass declared with `tuple[str, ...]` comes
+        # back holding a list. The type survives and the annotation lies,
+        # equality stops working, and the damage only appears after a resume.
+        # Coercing on construction makes the round trip faithful.
+        object.__setattr__(self, "evidence_refs", tuple(self.evidence_refs or ()))
+
 
 @dataclass(frozen=True)
 class GoalDraft:
+    """A proposed goal, bound to the concern it answers.
+
+    ``concern_index`` is assigned by the loop that generated it, never
+    chosen by the model — a goal cannot outlive its reason.
+    """
+
     statement: str
     concern_index: int
     target_value: str = ""
     evidence_refs: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # A checkpoint round-trip returns sequences as lists — msgpack has no
+        # tuple, so a frozen dataclass declared with `tuple[str, ...]` comes
+        # back holding a list. The type survives and the annotation lies,
+        # equality stops working, and the damage only appears after a resume.
+        # Coercing on construction makes the round trip faithful.
+        object.__setattr__(self, "evidence_refs", tuple(self.evidence_refs or ()))
+
 
 @dataclass(frozen=True)
 class InterventionDraft:
+    """A proposed action, bound to the goal it serves, with an owner.
+
+    ``goal_index`` is assigned by the loop, on the same principle as
+    :class:`GoalDraft`.
+    """
+
     statement: str
     goal_index: int
     intervention_type: str = "monitoring"
     owner_role: str = ""
     evidence_refs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # A checkpoint round-trip returns sequences as lists — msgpack has no
+        # tuple, so a frozen dataclass declared with `tuple[str, ...]` comes
+        # back holding a list. The type survives and the annotation lies,
+        # equality stops working, and the damage only appears after a resume.
+        # Coercing on construction makes the round trip faithful.
+        object.__setattr__(self, "evidence_refs", tuple(self.evidence_refs or ()))
 
 
 @dataclass

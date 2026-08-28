@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import pathlib
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -299,9 +299,28 @@ class Measurement:
 
     @property
     def spread(self) -> float:
-        """Observed range across repeats — the noise floor for this case."""
+        """Observed range across repeats. A diagnostic, not the judgement.
+
+        Kept because it is the number a reader intuits — "these runs landed
+        between here and here" — but never compared against, for the reason
+        in :attr:`deviation`.
+        """
         values = self.means()
         return round(max(values) - min(values), 3) if len(values) > 1 else 0.0
+
+    @property
+    def deviation(self) -> float:
+        """Standard deviation across repeats — what a delta is judged against.
+
+        The first version judged on the range, and that was backwards. Range
+        grows with sample size: the same four cases gave 0.50 at two repeats
+        and 0.67 at three, from the same process. Judging against it meant
+        **more measurement made a real change harder to detect**, which is
+        the opposite of what more measurement is for. Standard deviation is
+        stable across n.
+        """
+        values = self.means()
+        return round(statistics.stdev(values), 3) if len(values) > 1 else 0.0
 
 
 @dataclass
@@ -318,7 +337,26 @@ class Report:
 
     @property
     def noise(self) -> float:
-        """The largest per-case spread seen — what a delta must beat."""
+        """The pooled per-case standard deviation — what a delta must beat.
+
+        Pooled as a root-mean-square rather than taking the worst case: one
+        unusually variable chart should widen the band, not define it, and
+        the cohort mean this is compared against is an average over all of
+        them.
+        """
+        # Filtered on "was it measured", not on "was it non-zero". A case
+        # whose three runs agreed exactly has an observed deviation of zero
+        # and that is real information; a case run once also shows zero, and
+        # that is an absence. Treating them alike would either inflate the
+        # estimate or invent stability nobody measured.
+        deviations = [m.deviation for m in self.measurements if len(m.means()) > 1]
+        if not deviations:
+            return 0.0
+        return round((sum(d * d for d in deviations) / len(deviations)) ** 0.5, 3)
+
+    @property
+    def widest(self) -> float:
+        """The largest observed range, for reporting alongside the noise."""
         spreads = [m.spread for m in self.measurements]
         return round(max(spreads), 3) if spreads else 0.0
 
@@ -328,6 +366,7 @@ class Report:
             "cohort": self.cohort,
             "mean": self.mean,
             "noise": self.noise,
+            "widest": self.widest,
             "cases": [
                 {
                     "mrn": m.mrn,
@@ -335,6 +374,7 @@ class Report:
                     "rubric": m.rubric,
                     "mean": m.mean,
                     "spread": m.spread,
+                    "deviation": m.deviation,
                     "runs": m.runs,
                 }
                 for m in self.measurements
@@ -365,7 +405,7 @@ def compare(report: Report, baseline: dict) -> list[str]:
         lines.append(f"  {measurement.mrn:<14} {previous} -> {measurement.mean}  ({delta:+.2f})")
 
     delta = round(after - before, 3)
-    noise = max(report.noise, baseline.get("noise", 0.0))
+    noise = max(report.noise, baseline_noise(baseline))
     lines.append("")
     lines.append(f"  overall {before} -> {after}  ({delta:+.2f})")
     if noise and abs(delta) <= noise:
@@ -378,6 +418,25 @@ def compare(report: Report, baseline: dict) -> list[str]:
     else:
         lines.append("  no repeats were run, so there is no noise floor to compare against")
     return lines
+
+
+def baseline_noise(baseline: Mapping) -> float:
+    """The baseline's noise, recomputed rather than trusted.
+
+    A baseline written before the statistic changed carries a *range* in its
+    ``noise`` field, which is a different and larger number than the pooled
+    standard deviation used now. Recomputing from the per-run means it also
+    stored keeps old baselines comparable instead of quietly holding new
+    runs to a stale, wider bar.
+    """
+    deviations = []
+    for case in baseline.get("cases", []):
+        means = [run["mean"] for run in case.get("runs", []) if run.get("mean") is not None]
+        if len(means) > 1:
+            deviations.append(statistics.stdev(means))  # zero counts; it was measured
+    if deviations:
+        return round((sum(d * d for d in deviations) / len(deviations)) ** 0.5, 3)
+    return float(baseline.get("noise") or 0.0)
 
 
 def load_baseline(path: pathlib.Path) -> dict:
