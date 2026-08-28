@@ -157,6 +157,92 @@ CHILDHOOD_VACCINES = (
 _issued_mrns: set[str] = set()
 
 
+#: How long an ongoing prescription counts as current when it names no
+#: duration. Matches the window `caregaps` and `careplan` use, so the three
+#: cannot disagree about whether a patient is on a drug.
+ONGOING_WINDOW_DAYS = 365
+
+#: Classes where two concurrent drugs is normal practice rather than an
+#: error, so the duplicate check must not intervene.
+#:
+#: Only one entry, and it is a real one: dual antiplatelet therapy — aspirin
+#: with clopidogrel — is standard after a stent or an acute coronary
+#: syndrome. Everything else in the formulary that has two drugs in a class
+#: (statins, NSAIDs, PPIs, SSRIs, topical steroids) is a class where
+#: concurrent use is a prescribing error.
+CONCURRENT_CLASSES_OK = frozenset({"antiplatelet"})
+
+
+def _class_root(drug_class: str | None) -> str:
+    """The therapeutic class, without its qualifier.
+
+    The formulary spells one class two ways: ``hyperlipidemia`` prescribes
+    Atorvastatin as ``Statin`` and ``cad`` prescribes it as
+    ``Statin (high-intensity)``. Both are true — high-intensity is a real
+    distinction worth keeping in the data — but comparing the strings
+    exactly makes them different classes, and a patient ends up on two
+    statins because nothing recognised the second as a statin.
+
+    So the qualifier stays in the record and comes off for the comparison.
+    """
+    root = (drug_class or "").split("(")[0]
+    return root.strip().lower()
+
+
+def _prescription_is_current(started, rx: dict, as_of) -> bool:
+    """Is this prescription still running on ``as_of``?
+
+    A course with a stated duration ends when it ends — a five-day antibiotic
+    is not a current medication in month eleven, and treating it as one is
+    how "polypharmacy" comes to include things the patient finished last
+    spring. Only prescriptions with no duration fall back to the window.
+    """
+    from datetime import timedelta
+
+    days = rx.get("duration_days")
+    if days:
+        return started + timedelta(days=int(days)) >= as_of
+    return started >= as_of - timedelta(days=ONGOING_WINDOW_DAYS)
+
+
+def _current_medications(rx_stream: list[tuple], as_of) -> tuple[set[str], set[str]]:
+    """The classes and drug names running on ``as_of``, lowercased."""
+    classes: set[str] = set()
+    names: set[str] = set()
+    for started, rx in rx_stream:
+        if not _prescription_is_current(started, rx, as_of):
+            continue
+        klass = _class_root(rx.get("drug_class"))
+        if klass:
+            classes.add(klass)
+        name = (rx.get("drug_name") or "").strip().lower()
+        if name:
+            names.add(name)
+    return classes, names
+
+
+def _would_duplicate_a_class(rx_spec, rx_stream: list[tuple], as_of) -> bool:
+    """Would prescribing this start a second drug in a running class?
+
+    Nobody is on two statins. Before this check, 27 of 178 generated
+    patients (15%) were on a duplicated class — sixteen on two statins, five
+    on two NSAIDs, one on two SSRIs — because each condition picked its drugs
+    without ever looking at what the patient was already taking.
+
+    A **repeat of the same drug is not a duplicate**: renewing a statin is
+    the commonest event in primary care, and blocking it would leave a chart
+    showing one prescription years ago and nothing since, which reads as
+    having stopped.
+    """
+    klass = _class_root(getattr(rx_spec, "drug_class", None))
+    if not klass or klass in CONCURRENT_CLASSES_OK:
+        return False
+    classes, names = _current_medications(rx_stream, as_of)
+    if klass not in classes:
+        return False
+    return (getattr(rx_spec, "drug_name", "") or "").strip().lower() not in names
+
+
 def _random_mrn() -> str:
     """A unique MRN — 8 random digits re-drawn on collision (the birthday
     paradox makes collisions likely by ~10k patients)."""
@@ -971,6 +1057,11 @@ def _generate_one(
                     request_rows.append(
                         _row(_referral_request(patient, visit, rx_spec.drug_name), ServiceRequest)
                     )
+                    continue
+                # A patient already on a statin does not get a second one.
+                # Nothing here previously looked at the medication list, so
+                # each condition prescribed in ignorance of the others.
+                if _would_duplicate_a_class(rx_spec, rx_stream, visit.visit_date):
                     continue
                 rx = {
                     "visit_id": visit.id,
