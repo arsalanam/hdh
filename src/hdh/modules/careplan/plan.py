@@ -51,9 +51,9 @@ class PlanServices:
         """
         store, selector = self.store, self.selector
         if store is None:
-            from hdh.modules.careplan.knowledge import PgStore
+            from hdh.modules.careplan.retriever import build_store
 
-            store = PgStore(session)
+            store = build_store(session)
         if selector is None:
             from hdh.modules.careplan.generate import llm_selector
 

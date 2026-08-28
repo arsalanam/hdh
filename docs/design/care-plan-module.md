@@ -639,21 +639,79 @@ guide section; phases 1–2 are the minimum demonstrable slice.
 
 ## 15. Open questions
 
-1. **Embedding provider for the vector store** — local model (no API, heavier
-   install) vs API embeddings (simple, costs, another key)? The lexical
-   PostgreSQL store remains the default either way; likely resolve in
-   Phase 5.
-2. **Corpus depth vs breadth for v1** — propose: deep on T2DM-elderly +
-   SDOH (the fixture) rather than shallow across many conditions.
-3. **Seizure-action-plan-style sub-documents** (distinct structured artifacts
-   attached to a plan) — out of scope for v1, note as the epilepsy scenario's
-   distinctive requirement.
-4. **Multi-author collaboration** (patient/caregiver proposals as
-   `intent=proposal` rows) — v2; the `source` field and status model leave
-   room for it.
-5. **PlanDefinition/$apply fidelity** — our condition→template library is a
-   simplified analog; do we eventually encode applicability rules in a
-   CQL-like declarative form, or is that beyond educational scope?
+All five were answered on 2026-08-27. Kept as questions with their decisions
+attached rather than rewritten into prose, so the reasoning that was open
+stays visible next to what closed it.
+
+**1. Embedding provider for the vector store** — local model (no API, heavier
+install) vs API embeddings (simple, costs, another key)?
+
+> **Decided: API embeddings, and retrieval strategy becomes configuration
+> rather than a fixed choice.** Three modes:
+>
+> | mode | what it is | state |
+> |---|---|---|
+> | `lexical` | PostgreSQL full-text with a trigram fallback | ships, and is the default |
+> | `vector` | pgvector over API embeddings | planned (#100) |
+> | `vector+rerank` | the above, then a cross-encoder rerank | planned (#100) |
+>
+> `lexical` is the shipped default because it is the one that exists and the
+> one every eval-baseline number was measured against. Selection goes through
+> a **factory** (`retriever.py`), registered rather than hardcoded, so a
+> retriever can be added from a specialty module, an experiment or a test
+> without editing the selection logic. Set with `HDH_CAREPLAN_RETRIEVER`.
+>
+> Ingestion goes through the same factory, because a vector retriever needs
+> embeddings written at ingest time and a corpus loaded by one store but
+> searched by another returns nothing while looking fine.
+>
+> Which mode is *better* is a question for the eval harness, not for taste —
+> and the measured noise floor is 0.5, so a mode has to beat that before the
+> difference means anything.
+
+**2. Corpus depth vs breadth for v1** — deep on T2DM-elderly + SDOH, or
+shallow across many conditions?
+
+> **Decided: depth, with breadth as the floor.** The `condition_guidelines`
+> corpus was built breadth-first (14 conditions, one document each) and that
+> was the right first move for a different reason than depth-vs-breadth: with
+> four chunks the retrieval funnel could not *select* at all, and breadth is
+> what made retrieval start working. It is not the principle going forward.
+>
+> From here, new corpus work goes deep — several documents per condition,
+> starting with T2DM-elderly and SDOH — and the coverage gate stays as a
+> **floor**, asserting no condition is missing without capping how much any
+> one condition has. Depth is where the patterns for expanding the corpus
+> will come from.
+
+**3. Seizure-action-plan-style sub-documents** — distinct structured artifacts
+attached to a plan.
+
+> **Decided: out of scope for v1**, recorded as the epilepsy scenario's
+> distinctive requirement. Belongs with the specialty-module design
+> (`specialty-modules-and-benchmarks.md`) rather than here.
+
+**4. Multi-author collaboration** — patient/caregiver proposals as
+`intent=proposal` rows.
+
+> **Decided: v2, with room left in v1.** What v1 actually has is `source`
+> (`ai` | `human`) on concerns, goals and interventions, and `expressed_by`
+> (`patient` | `clinician`) on goals. That is a pair of binaries, not room:
+> there is no author identity and no `intent`, so v2 currently means a
+> breaking migration.
+>
+> Leaving genuine room is a small v1 addition — nullable `author_id` and
+> `intent` — and the decision arrives sooner than "v2" regardless, because
+> stage 4 of `careplan-state-and-graph.md` records human edits with
+> provenance and that is the first multi-author case.
+
+**5. PlanDefinition/$apply fidelity** — do applicability rules eventually
+become declarative?
+
+> **Decided: yes, eventually declarative.** Consistent with the direction the
+> module already takes — `stratify.RULES`, rubric dimensions and the
+> `revises` routing are all data rather than code — so this is a continuation
+> rather than a new commitment. Not scheduled.
 
 ## 16. References
 

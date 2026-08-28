@@ -56,6 +56,8 @@ def register_cli(subparsers) -> None:
 
     sub.add_parser("rubrics", help="The evaluation rubrics on disk, and what each dimension asks")
 
+    sub.add_parser("retrievers", help="Which retrieval strategies exist, and which one is configured")
+
     ev = sub.add_parser("eval", help="The fixed cohort: build it, check it, measure against it")
     ev_sub = ev.add_subparsers(dest="eval_cmd", required=True)
     ev_build = ev_sub.add_parser("build", help="Regenerate the cohort's patients from its pinned seed")
@@ -92,6 +94,7 @@ def run(session, args) -> None:
         "generate": lambda: _cmd_generate(session, args),
         "show": lambda: _cmd_show(session, args),
         "rubrics": lambda: _cmd_rubrics(),
+        "retrievers": lambda: _cmd_retrievers(),
         "facts": lambda: _cmd_facts(session, args),
         "evaluate": lambda: _cmd_evaluate(session, args),
         "eval": lambda: _cmd_eval(session, args),
@@ -309,6 +312,24 @@ def _cmd_evaluate(session, args) -> None:
     print(f"     recorded as evaluation #{evaluation_id}; plan status unchanged")
 
 
+def _cmd_retrievers() -> None:
+    """The retrieval menu, and what this environment asks for.
+
+    Worth a command because the choice is now configuration (§15.1), and a
+    setting nobody can inspect is a setting nobody trusts.
+    """
+    from hdh.modules.careplan.retriever import DEFAULT, ENV_VAR, catalogue, configured
+
+    chosen = configured()
+    print()
+    for name, (built, description) in catalogue().items():
+        mark = "->" if name == chosen else "  "
+        state = "" if built else "   (not implemented yet)"
+        print(f"  {mark} {name:<16} {description}{state}")
+    print()
+    print(f"  configured by {ENV_VAR} (default: {DEFAULT})")
+
+
 def _cmd_rubrics() -> None:
     """Every rubric on disk, validated by the act of listing them."""
     from hdh.modules.careplan.rubric import RubricError, load_rubrics
@@ -467,12 +488,12 @@ def _cmd_corpora(session) -> None:
 
 def _cmd_search(session, args) -> None:
     from hdh.core.dialect import DatabaseFeatureError
-    from hdh.modules.careplan.knowledge import PgStore
+    from hdh.modules.careplan.retriever import RetrieverError, build_store
 
     query = " ".join(args.query)
     try:
-        hits = PgStore(session).search(query, args.corpus, k=args.k)
-    except DatabaseFeatureError as err:
+        hits = build_store(session).search(query, args.corpus, k=args.k)
+    except (DatabaseFeatureError, RetrieverError) as err:
         raise SystemExit(f"hdh careplan search: {err}") from None
 
     if not hits:

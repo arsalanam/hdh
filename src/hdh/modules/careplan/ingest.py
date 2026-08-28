@@ -110,8 +110,14 @@ def read_corpus(name: str, root: pathlib.Path | None = None) -> tuple[dict, list
 
 
 def ingest_corpus(session, name: str, root: pathlib.Path | None = None) -> int:
-    """Read a corpus and replace it in the store; returns chunks written."""
-    from hdh.modules.careplan.knowledge import PgStore
+    """Read a corpus and replace it in the store; returns chunks written.
+
+    Goes through the retriever factory rather than naming a store, because
+    ingestion and retrieval have to agree: a vector retriever needs
+    embeddings written at ingest time, and a corpus loaded by one store and
+    searched by another would return nothing while looking fine.
+    """
+    from hdh.modules.careplan.retriever import build_store
 
     _manifest, documents = read_corpus(name, root)
-    return PgStore(session).ingest(name, documents)
+    return build_store(session).ingest(name, documents)
