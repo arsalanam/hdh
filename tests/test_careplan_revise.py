@@ -298,10 +298,18 @@ def test_the_log_says_when_no_revision_helped():
 
 
 def test_carrying_forward_a_later_node_needs_the_earlier_output():
-    """A guard against a future caller asking for a partial rebuild with
-    nothing to rebuild from."""
-    from hdh.modules.careplan.revise import _build
+    """A guard against a caller asking for a partial rebuild with nothing to
+    rebuild from.
 
-    inputs = PlanInputs(store=FakeStore(), context=_context(), flags=(), topics=(), selector=_selector())
-    with pytest.raises(AssertionError):
-        _build(inputs, node="goals", previous=None)
+    The old index ladder asserted this directly. The graph runner has to
+    state it generically — and without the guard it runs happily and returns
+    an *empty plan*, which is the worse failure: a plan reporting that nothing
+    was found, when what happened is that nobody asked.
+    """
+    from hdh.modules.careplan.graph import MissingUpstream, node_index, run_from
+    from hdh.modules.careplan.graph import PlanServices as GraphServices
+
+    services = GraphServices(store=FakeStore(), selector=_selector())
+    seed = {"context": _context(), "flags": [], "topics": [], "deferred": []}
+    with pytest.raises(MissingUpstream, match="concerns"):
+        run_from(seed, services, node_index("goals"))
