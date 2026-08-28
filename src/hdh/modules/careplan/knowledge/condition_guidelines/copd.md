@@ -1,5 +1,5 @@
 ---
-{"conditions": ["copd"], "icd10": ["J44.1"], "topic": "COPD"}
+{"conditions": ["copd"], "icd10": ["J44.9"], "topic": "COPD"}
 ---
 CONCERN — In COPD the events that matter are exacerbations: each one costs
 lung function that does not fully return, and the strongest predictor of the
