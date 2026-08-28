@@ -164,25 +164,10 @@ an ACE inhibitor the patient is already taking.
 A rule that reads a free-text field written in three places cannot be made
 reliable by improving the rule.
 
-```python
-class Medication:                      # the drug, once
-    id: int
-    name: str                          # "Atorvastatin"
-    drug_class: str                    # "Statin"
-    class_qualifier: str | None        # "high-intensity" — kept, not lost
-    rxcui: str | None
-    form: str | None
-```
-
-Prescriptions, statements and dispenses reference it by id. Class drift
-becomes impossible rather than guarded against, the qualifier survives as
-data instead of being parsed off a string at comparison time, and RxNorm
-coding has one home rather than three.
-
-**Sequencing:** this is not required for refills and should not block them.
-But it should land before a *third* table starts carrying a copy of the drug
-name, which is exactly what §4.2 proposes to add — so it is milestone A's
-first task, not a later cleanup.
+`ServiceRequest.end_date` is **not** a candidate for this: §7 Q2 settles
+it as the end of the *request's* life — closed, unactionable — rather than a
+clinical date. The two are independent: a script can expire while its order
+is still open, and an order can close while the script is still in date.
 
 ### 4.3 Refills become arithmetic
 
@@ -337,8 +322,7 @@ leaves every served request looking open.
 
 | | delivers | proves |
 |---|---|---|
-| **A0** | `Medication` reference table; existing rows migrated to reference it | class drift becomes impossible; the #116 guard stops depending on a free-text field |
-| **A** | `MedicationDispense`; `refills_authorised` and `valid_until` on the order; `is_open()`; the importer stamps `end_date` on fulfilment | the shape exists, served requests stop looking open, `Prescription` is untouched |
+| **A** | `refills_authorised`, `valid_until`, `dispensed_date`; `visit_id` nullable; `is_open()`; the importer stamps `end_date` on fulfilment; migration | the shape exists, served requests stop looking open, nothing else behaves differently |
 | **B** | `can_refill()` and its refusals, with tests | the question is answerable and every "no" says why |
 | **C** | agent tool: request a refill, record the fill or the refusal | `origin=AGENT` on a medication, end to end |
 | **D** | generator emits orders and fills (Q5) | the synthetic chart exercises the path it describes |
