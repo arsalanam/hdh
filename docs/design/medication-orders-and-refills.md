@@ -3,6 +3,8 @@
 **Status:** proposed, 2026-08-28
 **Extends:** `service-requests-and-interchange.md` §4, which specified the
 order↔prescription link that was never wired
+**Instance of:** `requests-and-read-models.md` — medications are one kind;
+that document states the principle for all five and should be read first
 **Prompted by:** the agent can amend the chart through orders, and a refill
 is the commonest medication decision in primary care. We cannot currently
 answer *"can this be refilled?"* at all.
