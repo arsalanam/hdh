@@ -100,8 +100,10 @@ eventually will.
 | `ServiceRequest` | `valid_until: date \| None` | scripts expire; without this a 2022 order is refillable forever |
 | `Prescription` | `dispensed_date: date \| None` | a refill has a date and **no visit** |
 
-`ServiceRequest.end_date` already exists and may be able to serve as
-`valid_until` — §7 Q2.
+`ServiceRequest.end_date` is **not** a candidate for this: §7 Q2 settles
+it as the end of the *request's* life — closed, unactionable — rather than a
+clinical date. The two are independent: a script can expire while its order
+is still open, and an order can close while the script is still in date.
 
 ### 4.2 The constraint that has to move
 
@@ -162,42 +164,89 @@ Named because the boundary is the design decision:
 - **No partial fills or quantity reconciliation.** One fill, one row.
 - **No refill *request* queue** unless §7 Q3 says otherwise.
 
-## 7. Open questions
+## 7. Open questions — answered 2026-08-28
+
+Kept as questions with their decisions attached, so the reasoning that was
+open stays next to what closed it.
 
 **Q1. Is `Prescription` the fill event, or does it gain a sibling?**
-Proposed: it is the fill. `service-requests-and-interchange.md` §4 already
-calls it "the dispense/administration record", so this follows that reading
-rather than introducing a competing one. The cost is that every existing row
-becomes a fill with no order, which is honest — they were generated before
-orders existed — and matches how `request_id IS NULL` is already documented.
 
-**Q2. Does `ServiceRequest.end_date` serve as the validity date, or does
-`valid_until` join it?** `end_date` currently means when the *therapy* is
-expected to end. A script's validity is a different date and usually
-shorter. Suggest a separate field, but this is a real call about whether the
-distinction earns a column.
+> **Decided: it is the fill.** Follows
+> `service-requests-and-interchange.md` §4, which already calls it "the
+> dispense/administration record". Existing rows become fills with no
+> order, which is honest — they were generated before orders existed.
 
-**Q3. Are refill *requests* modelled, or only outcomes?** A real EHR has a
-queue: pharmacy asks, clinician approves. Modelling the queue means a
-request row with its own status. Not modelling it means the agent simply
-acts and the fill records what happened. Suggest **outcomes only** for now —
-the queue is workflow, and the brief was realism without the workflow.
+**Q2. Does `ServiceRequest.end_date` serve as the validity date?**
 
-**Q4. When do monitoring gates arrive?** They need a drug→required-test
-link. `caregaps` and the LOINC module already hold the pieces. Worth its own
-milestone once refills exist to gate.
+> **Decided: no, and `end_date` means something stronger than this document
+> assumed.** It is not the therapy end and not the script validity. It is
+> the **end of the request's own life**:
+>
+> - a request with `end_date` set is **closed**
+> - a closed request **cannot be acted upon**
+> - **the chart may not be modified on the basis of one**
+> - it is stamped **when the request is served**, by the interchange that
+>   served it
+>
+> That makes `end_date` an authorisation boundary rather than a clinical
+> date, and it is the more useful reading: the agent amends the chart
+> *through* orders, so "may this order still be acted on" is a question
+> asked before every amendment. `valid_until` is therefore a separate
+> field — a script can expire while its order is still open, and an order
+> can close while the script is still in date.
+>
+> **Two gaps this exposes.** The column is written nowhere: 1,705 requests,
+> **0 with `end_date` set**. And `interchange.importer` sets
+> `status = COMPLETED` on fulfilment without stamping when — so a served
+> request is already indistinguishable from an open one by date, and will
+> stay that way until the importer closes it properly.
 
-**Q5. Should the generator start issuing orders?** Today it writes
-prescriptions directly. If it emitted a `MEDICATION` order per new therapy
-and a fill per issue, the synthetic chart would exercise the whole path —
-and the eval cohort would change again. Suggest yes, but in a later
-milestone, measured.
+**Q3. Are refill requests modelled, or only outcomes?**
+
+> **Decided: outcomes only.** A queue is workflow, and the brief was
+> realism without the workflow. The agent acts and the fill records what
+> happened.
+
+**Q4. When do monitoring gates arrive?**
+
+> **Decided: later, own milestone.** They need a drug→required-test link
+> that does not exist. Deferred, not rejected.
+
+**Q5. Should the generator issue orders?**
+
+> **Decided: yes, but last.** Milestone D. It changes the cohort and needs
+> a re-baseline, and #116 has just demonstrated what that costs — a
+> generator change makes the previous baseline incomparable rather than
+> merely stale.
+
+### 7.1 What Q2 adds to the model
+
+An open/closed test, and a rule that uses it:
+
+```python
+def is_open(request, as_of) -> bool:
+    """May this request still be acted upon?"""
+    return (
+        request.voided_at is None
+        and request.end_date is None
+        and request.status in {DRAFT, ACTIVE}
+    )
+```
+
+Nothing may amend the chart on the basis of a request that fails this, and
+the refusal names which clause failed. This is the same discipline as
+`can_refill` in §4.3 and for the same reason: a refusal without a cause is
+indistinguishable from a system that did not work.
+
+It also gives the interchange something to do on fulfilment — stamp
+`end_date`, not merely flip `status` — which closes the gap that today
+leaves every served request looking open.
 
 ## 8. Milestones
 
 | | delivers | proves |
 |---|---|---|
-| **A** | `refills_authorised`, `valid_until`, `dispensed_date`; `visit_id` nullable; migration | the shape exists, nothing behaves differently |
+| **A** | `refills_authorised`, `valid_until`, `dispensed_date`; `visit_id` nullable; `is_open()`; the importer stamps `end_date` on fulfilment; migration | the shape exists, served requests stop looking open, nothing else behaves differently |
 | **B** | `can_refill()` and its refusals, with tests | the question is answerable and every "no" says why |
 | **C** | agent tool: request a refill, record the fill or the refusal | `origin=AGENT` on a medication, end to end |
 | **D** | generator emits orders and fills (Q5) | the synthetic chart exercises the path it describes |
