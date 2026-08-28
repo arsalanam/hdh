@@ -319,6 +319,19 @@ class Visit(Base):
     visit_type: Mapped[VisitType] = mapped_column(SAEnum(VisitType))
     chief_complaint: Mapped[str | None] = mapped_column(String(200))
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    #: The FOLLOW_UP request this visit answers, when it answers one. Most
+    #: visits do not: people attend without being asked, and a nullable link
+    #: says both without inventing a request to point at.
+    #:
+    #: ``use_alter`` because this closes a cycle — a request names the visit
+    #: it was raised at, a visit names the request it answers, and a request
+    #: names the condition that motivated it, which names a visit. The cycle
+    #: is real rather than a modelling slip: each of those three facts is
+    #: worth recording. Adding the constraint after the tables exist is how
+    #: the schema keeps them all without an unorderable create.
+    request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_requests.id", use_alter=True, name="fk_visits_request_id")
+    )
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
     provider: Mapped["Provider | None"] = relationship()
@@ -332,7 +345,14 @@ class Visit(Base):
     )
     procedures: Mapped[list["Procedure"]] = relationship(back_populates="visit")
     notes: Mapped[list["VisitNote"]] = relationship(back_populates="visit", cascade="all, delete-orphan")
-    service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="visit")
+    # Two foreign keys now join these tables — a request may name the visit
+    # it was raised at, and a visit may name the FOLLOW_UP request it
+    # answers. Each relationship has to say which one it means.
+    service_requests: Mapped[list["ServiceRequest"]] = relationship(
+        back_populates="visit", foreign_keys="ServiceRequest.visit_id"
+    )
+    #: The request this visit fulfils, when it fulfils one.
+    request: Mapped["ServiceRequest | None"] = relationship(foreign_keys=[request_id])
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     @property
@@ -492,7 +512,7 @@ class ServiceRequest(Base):
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     patient: Mapped["Patient"] = relationship()
-    visit: Mapped["Visit | None"] = relationship(back_populates="service_requests")
+    visit: Mapped["Visit | None"] = relationship(back_populates="service_requests", foreign_keys=[visit_id])
     requester: Mapped["Provider | None"] = relationship()
     reason_condition: Mapped["Condition | None"] = relationship()
     # Fulfilment points BACK at the order, because one order can be
@@ -566,10 +586,93 @@ class Procedure(Base):
     description: Mapped[str] = mapped_column(String(200))
     performed_date: Mapped[date | None] = mapped_column(Date)
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    #: The request this fulfils. NULL means "happened without being ordered"
+    #: — historical rows, external imports, and things nobody asked for,
+    #: all of which a chart has to be able to say.
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("service_requests.id"))
 
     patient: Mapped["Patient"] = relationship(back_populates="procedures")
     visit: Mapped["Visit | None"] = relationship(back_populates="procedures")
     provider: Mapped["Provider | None"] = relationship()
+
+
+class Medication(Base):
+    """A drug, described once.
+
+    Drug identity used to be a string repeated on every row — name, class
+    and code on `prescriptions`, again on `medication_statements`, and about
+    to be repeated a third time on dispenses. Across 3,728 rows and 56
+    distinct drugs, five already disagreed with themselves:
+
+        Lisinopril      '', 'ACE inhibitor', 'ACE inhibitor (renoprotective)'
+        Amlodipine      '', 'Calcium channel blocker'
+        Atorvastatin    'Statin', 'Statin (high-intensity)'
+
+    That is not cosmetic. The duplicate-class guard in `generators` exists
+    because two spellings of "statin" put a patient on two of them, and the
+    blank ones defeat it outright — it returns early when the class is
+    empty, so a Lisinopril written with no class is never recognised as an
+    ACE inhibitor the patient already takes. A rule reading a free-text
+    field written in three places cannot be made reliable by improving the
+    rule.
+
+    `class_qualifier` keeps "high-intensity" as data rather than something
+    parsed off a string at comparison time and discarded.
+    """
+
+    __tablename__ = "medications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    drug_class: Mapped[str | None] = mapped_column(String(80))
+    class_qualifier: Mapped[str | None] = mapped_column(String(80))  # "high-intensity"
+    form: Mapped[str | None] = mapped_column(String(40))
+    code_system: Mapped[str | None] = mapped_column(String(20))  # "rxnorm"
+    code: Mapped[str | None] = mapped_column(String(40))
+
+    @property
+    def class_root(self) -> str:
+        """The therapeutic class for comparison, without its qualifier."""
+        return (self.drug_class or "").strip().lower()
+
+
+class MedicationDispense(Base):
+    """One supply event — evidence that a medication reached the patient.
+
+    The fulfilment half of `requests-and-read-models.md`: a
+    `ServiceRequest(MEDICATION)` authorises, a dispense records that it
+    happened, and only then does the medication list change. A refill is
+    simply the second dispense against one authorisation, which is why
+    refills remaining is a count here rather than a number stored on the
+    order and decremented in two places.
+
+    Anchored to the patient, not to a visit. A refill does not happen at an
+    encounter, and `Prescription` — which has no `patient_id` and is
+    reachable only through a visit — is the wrong shape to record one.
+    """
+
+    __tablename__ = "medication_dispenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("service_requests.id"))
+    medication_id: Mapped[int | None] = mapped_column(ForeignKey("medications.id"))
+    #: Kept alongside the reference so a dispense still reads on its own,
+    #: and so rows survive a medication being renamed.
+    drug_name: Mapped[str] = mapped_column(String(100))
+    dispensed_date: Mapped[date] = mapped_column(Date)
+    quantity: Mapped[float | None] = mapped_column(Float)
+    days_supply: Mapped[int | None] = mapped_column(Integer)
+    #: Who caused this supply. The same enum the requests use, so an
+    #: agent-issued fill stays distinguishable from a clinician's for as
+    #: long as the row exists.
+    origin: Mapped[str] = mapped_column(String(13), default="GENERATED")
+    visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"))
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    patient: Mapped["Patient"] = relationship()
+    request: Mapped["ServiceRequest | None"] = relationship()
+    medication: Mapped["Medication | None"] = relationship()
 
 
 class Immunization(Base):

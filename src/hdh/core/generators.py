@@ -14,9 +14,11 @@ import string
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import NamedTuple
 
 from faker import Faker
 from sqlalchemy import insert as sa_insert
+from sqlalchemy import update as sa_update
 
 from .conditions import ConditionCatalog, LabSpec, RxKind, SamplingContext, Stage, default_catalog
 from .models import (
@@ -29,6 +31,7 @@ from .models import (
     Immunization,
     LabResult,
     LabStatus,
+    MedicationDispense,
     MedicationStatement,
     MedicationStatus,
     NoteType,
@@ -952,6 +955,35 @@ def _referral_request(patient, visit, target: str):
     )
 
 
+def _served_request(patient, visit, kind, display, *, code_system=None, code=None) -> dict:
+    """An order that was placed and served in the same encounter.
+
+    The generator writes charts for events that already happened, so most of
+    its requests are raised and answered at once — a lab drawn at the visit,
+    a procedure performed during it. That is still a request followed by a
+    fulfilment rather than a fact appearing from nowhere
+    (`requests-and-read-models.md`), and it is what gives the result
+    something to point at.
+
+    `status` and `end_date` are set together, because a served request that
+    does not say *when* it closed looks open to everything that reads dates.
+    """
+    return {
+        "patient_id": patient.id,
+        "visit_id": visit.id,
+        "requester_id": visit.provider_id,
+        "kind": ServiceKind.LAB if kind == "LAB" else getattr(ServiceKind, kind),
+        "status": RequestStatus.COMPLETED,
+        "origin": RequestOrigin.GENERATED,
+        "display": display[:200],
+        "code_system": code_system,
+        "code": code,
+        "requested_date": visit.visit_date,
+        "occurrence_date": visit.visit_date,
+        "end_date": visit.visit_date,
+    }
+
+
 def _follow_up_request(patient, visit, days: int):
     """The generated order behind "return in N days" (issue #59).
 
@@ -984,6 +1016,176 @@ class NoteFacts:
 
     allergies: tuple[str, ...] = ()
     family_lines: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OrderBuffers:
+    """The row accumulators prescribing writes into, passed as one thing.
+
+    They travel together because they are one transaction seen from four
+    sides: the order, the authorisation, the supply that answers it, and the
+    running medication list the duplicate-class guard reads. Splitting them
+    across a parameter list invites a caller to pass three of the four.
+    """
+
+    requests: list[dict]
+    prescriptions: list[dict]
+    dispenses: list[dict]
+    history: list[tuple]
+
+
+class VisitOrders(NamedTuple):
+    """What a visit's formulary picks turned into.
+
+    Three different things come out of one list, and only one of them is a
+    medication (#49): a referral becomes an order, and advice belongs in the
+    note and NOWHERE in the chart — charting it made the record claim the
+    patient had been prescribed "Rest & fluids".
+    """
+
+    prescriptions: list[dict]
+    referrals: list[str]
+    advice: list[str]
+
+
+def _prescribe_at_visit(
+    patient,
+    visit,
+    cprofile,
+    *,
+    is_chronic: bool,
+    buffers: OrderBuffers,
+) -> VisitOrders:
+    """Decide what this visit prescribes, and what answers each order.
+
+    Appends to the caller's accumulators rather than returning rows: the
+    `_request` index a read model carries is the position a request will
+    occupy, so the request list has to be the shared one.
+    """
+    orders = VisitOrders([], [], [])
+    if not cprofile.rx_options:
+        return orders
+
+    if cprofile.rx_pick_all:
+        rx_list = cprofile.rx_options
+    else:
+        n_rx = random.choices([1, 2], weights=[75, 25], k=1)[0]
+        rx_list = random.sample(cprofile.rx_options, k=min(n_rx, len(cprofile.rx_options)))
+
+    for rx_spec in rx_list:
+        if rx_spec.kind is RxKind.ADVICE:
+            orders.advice.append(rx_spec.drug_name)
+            continue
+        if rx_spec.kind is RxKind.REFERRAL:
+            orders.referrals.append(rx_spec.drug_name)
+            buffers.requests.append(
+                _row(_referral_request(patient, visit, rx_spec.drug_name), ServiceRequest)
+            )
+            continue
+        # A patient already on a statin does not get a second one. Nothing
+        # here previously looked at the medication list, so each condition
+        # prescribed in ignorance of the others.
+        if _would_duplicate_a_class(rx_spec, buffers.history, visit.visit_date):
+            continue
+        rx = {
+            "visit_id": visit.id,
+            "drug_name": rx_spec.drug_name,
+            "drug_class": rx_spec.drug_class,
+            "dose": rx_spec.dose,
+            "frequency": rx_spec.frequency,
+            "duration_days": rx_spec.duration_days,
+            "refills": rx_spec.refills,
+            "is_new": not is_chronic or random.random() > 0.5,
+            # a formulary entry that knows its drug passes the code on
+            "code_system": "rxnorm" if rx_spec.rxcui else None,
+            "code": rx_spec.rxcui,
+        }
+        # The authorisation, and the supply that answers it. The prescription
+        # stays exactly what it was — the line written at this encounter —
+        # while the dispense is what says the medication actually reached the
+        # patient.
+        rx["_request"] = len(buffers.requests)
+        buffers.requests.append(
+            _served_request(
+                patient,
+                visit,
+                "MEDICATION",
+                rx_spec.drug_name,
+                code_system="rxnorm" if rx_spec.rxcui else None,
+                code=rx_spec.rxcui,
+            )
+        )
+        buffers.dispenses.append(
+            {
+                "_request": rx["_request"],
+                "patient_id": patient.id,
+                "drug_name": rx_spec.drug_name,
+                "dispensed_date": visit.visit_date,
+                "days_supply": rx_spec.duration_days,
+                "origin": "GENERATED",
+                "visit_id": visit.id,
+            }
+        )
+        buffers.prescriptions.append(rx)
+        orders.prescriptions.append(rx)
+        buffers.history.append((visit.visit_date, rx))
+
+    return orders
+
+
+def _place_requests(
+    session,
+    request_rows: list[dict],
+    read_models: tuple[list[dict], ...],
+    follow_ups: list[tuple],
+    visits: list,
+) -> None:
+    """Insert the intents, then point the facts at them.
+
+    Requests go in **first**. A read model is written only as the outcome of
+    a fulfilment (`requests-and-read-models.md`), so an intent has to exist —
+    and have an id — before the fact that answers it. Rows carry a temporary
+    `_request` index rather than an id, because ids do not exist until this
+    call; `sort_by_parameter_order` is what makes the returned ids line up
+    with the rows that asked for them.
+    """
+    if not request_rows:
+        return
+
+    request_ids = list(
+        session.execute(
+            sa_insert(ServiceRequest).returning(ServiceRequest.id, sort_by_parameter_order=True),
+            request_rows,
+        ).scalars()
+    )
+    for rows in read_models:
+        for pending in rows:
+            index = pending.pop("_request", None)
+            if index is not None:
+                pending["request_id"] = request_ids[index]
+
+    # A follow-up is answered by the next visit on or after the date it asked
+    # for. Attending is the evidence, so the visit carries the link and the
+    # request closes on the day it happened. A follow-up nobody returned for
+    # stays open, which is the truth about it.
+    later = sorted(visits, key=lambda v: v.visit_date)
+    for index, asked_on, days in follow_ups:
+        due = asked_on + timedelta(days=days)
+        answered = next((v for v in later if v.visit_date >= due and v.request_id is None), None)
+        if answered is None:
+            # Either nobody came back, or the visit that would have answered
+            # this is already recorded as answering another follow-up. A
+            # visit can genuinely answer several, and `Visit.request_id` can
+            # name one — so the rest stay open rather than being marked
+            # fulfilled with no evidence to point at. Claiming a fulfilment
+            # the chart cannot show is the thing this layer exists to stop.
+            continue
+        answered.request_id = request_ids[index]
+        session.execute(
+            sa_update(ServiceRequest)
+            .where(ServiceRequest.id == request_ids[index])
+            .values(status=RequestStatus.COMPLETED, end_date=answered.visit_date)
+        )
 
 
 def _generate_one(
@@ -1022,6 +1224,11 @@ def _generate_one(
     note_rows: list[dict] = []
     request_rows: list[dict] = []
     rx_stream: list[tuple] = []
+    dispense_rows: list[dict] = []
+    # One handle on the four lists prescribing writes into; they are the same
+    # objects, so everything downstream still reads them directly.
+    buffers = OrderBuffers(request_rows, rx_rows, dispense_rows, rx_stream)
+    follow_ups: list[tuple] = []
     sex_word = "male" if str(patient.sex).endswith("M") else "female"
 
     for visit, cprofile, cname in visit_tuples:
@@ -1029,62 +1236,39 @@ def _generate_one(
         vital_rows.append(_row(vital, Vital))
 
         if cprofile.follow_up_days:
+            # Remembered so the visit that answers it can point back. A
+            # follow-up is the one kind whose fulfilment is an event we also
+            # generate, so the link is knowable rather than guessed.
+            follow_ups.append((len(request_rows), visit.visit_date, cprofile.follow_up_days))
             request_rows.append(
                 _row(_follow_up_request(patient, visit, cprofile.follow_up_days), ServiceRequest)
             )
 
         _emit_conditions(session, patient, visit, cprofile, chronic_seen, history)
 
-        visit_rx: list[dict] = []
-        visit_referrals: list[str] = []
-        visit_advice: list[str] = []
-        if cprofile.rx_options:
-            if cprofile.rx_pick_all:
-                rx_list = cprofile.rx_options
-            else:
-                n_rx = random.choices([1, 2], weights=[75, 25], k=1)[0]
-                rx_list = random.sample(cprofile.rx_options, k=min(n_rx, len(cprofile.rx_options)))
-            for rx_spec in rx_list:
-                # A formulary entry is not always a drug (#49). A referral
-                # becomes an order; advice belongs in the note and NOWHERE
-                # in the chart — charting it made the record claim the
-                # patient had been prescribed "Rest & fluids".
-                if rx_spec.kind is RxKind.ADVICE:
-                    visit_advice.append(rx_spec.drug_name)
-                    continue
-                if rx_spec.kind is RxKind.REFERRAL:
-                    visit_referrals.append(rx_spec.drug_name)
-                    request_rows.append(
-                        _row(_referral_request(patient, visit, rx_spec.drug_name), ServiceRequest)
-                    )
-                    continue
-                # A patient already on a statin does not get a second one.
-                # Nothing here previously looked at the medication list, so
-                # each condition prescribed in ignorance of the others.
-                if _would_duplicate_a_class(rx_spec, rx_stream, visit.visit_date):
-                    continue
-                rx = {
-                    "visit_id": visit.id,
-                    "drug_name": rx_spec.drug_name,
-                    "drug_class": rx_spec.drug_class,
-                    "dose": rx_spec.dose,
-                    "frequency": rx_spec.frequency,
-                    "duration_days": rx_spec.duration_days,
-                    "refills": rx_spec.refills,
-                    "is_new": cname not in final_chronic or random.random() > 0.5,
-                    # a formulary entry that knows its drug passes the code on
-                    "code_system": "rxnorm" if rx_spec.rxcui else None,
-                    "code": rx_spec.rxcui,
-                }
-                rx_rows.append(rx)
-                visit_rx.append(rx)
-                rx_stream.append((visit.visit_date, rx))
+        visit_rx, visit_referrals, visit_advice = _prescribe_at_visit(
+            patient,
+            visit,
+            cprofile,
+            is_chronic=cname in final_chronic,
+            buffers=buffers,
+        )
 
         visit_labs = [generate_lab(visit.id, spec, has_condition=True) for spec in cprofile.labs]
-        lab_rows.extend(_row(lab, LabResult) for lab in visit_labs)
+        for lab in visit_labs:
+            lab_row = _row(lab, LabResult)
+            # The order this result answers. Index rather than id: requests
+            # are inserted first and their ids stamped on afterwards, because
+            # a read model may not be written without the request it fulfils.
+            lab_row["_request"] = len(request_rows)
+            request_rows.append(_served_request(patient, visit, "LAB", f"{lab.test_name}", code_system=None))
+            lab_rows.append(lab_row)
 
         procedures = _procedures_for(patient, visit, cname)
-        proc_rows.extend(procedures)
+        for procedure_row in procedures:
+            procedure_row["_request"] = len(request_rows)
+            request_rows.append(_served_request(patient, visit, "PROCEDURE", procedure_row["description"]))
+            proc_rows.append(procedure_row)
 
         note_rows.append(
             {
@@ -1115,13 +1299,21 @@ def _generate_one(
             }
         )
 
+    _place_requests(
+        session,
+        request_rows,
+        (lab_rows, proc_rows, rx_rows, dispense_rows),
+        follow_ups,
+        [v for v, _c, _n in visit_tuples],
+    )
+
     for model, rows in (
         (Vital, vital_rows),
         (Prescription, rx_rows),
         (LabResult, lab_rows),
         (Procedure, proc_rows),
+        (MedicationDispense, dispense_rows),
         (VisitNote, note_rows),
-        (ServiceRequest, request_rows),
     ):
         if rows:
             session.execute(sa_insert(model), rows)

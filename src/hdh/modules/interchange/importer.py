@@ -16,7 +16,7 @@ beside the pipeline's and the agent's.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from hdh.modules.interchange.bundles import read_bundles, read_result_bundle
@@ -50,6 +50,16 @@ def _actor(partner: str):
     # surface performed the write. A partner import is performed by the
     # pipeline on the partner's behalf, and the actor name carries who.
     return Actor(name=f"partner:{partner}", source=EditSource.PIPELINE)
+
+
+def _reported_on(request) -> date:
+    """When the result came back.
+
+    The request's own occurrence date when it has one, else today. A
+    fulfilment date invented as "now" for a backdated import would make the
+    chart claim the result arrived when the file was read.
+    """
+    return getattr(request, "occurrence_date", None) or date.today()
 
 
 def rejected_table():
@@ -129,7 +139,7 @@ def _file_dispense(session, request, item: InboundResult):
 def import_results(session, inbox: Path, dry_run: bool = False) -> ImportOutcome:
     """Read every result bundle in ``inbox`` and chart what is safe to."""
     from hdh.core.chartedit import record_creation
-    from hdh.core.models import RequestStatus, ServiceRequest
+    from hdh.core.models import ServiceRequest
 
     outcome = ImportOutcome()
     for path, payload in read_bundles(inbox):
@@ -207,10 +217,18 @@ def import_results(session, inbox: Path, dry_run: bool = False) -> ImportOutcome
 
     # An order whose results have arrived is finished. Done last so a
     # partial bundle does not close an order that still owes results.
+    #
+    # Through `fulfil` rather than by setting the status here: the status and
+    # the date have to move together. This previously set COMPLETED without
+    # stamping `end_date`, which left every served request looking open to
+    # anything reading dates — and `end_date` is what says a request may no
+    # longer be acted upon (requests-and-read-models.md).
+    from hdh.core.fulfilment import fulfil
+
     for request_id in sorted(outcome.completed_requests):
         request = session.get(ServiceRequest, request_id)
         if request is not None:
-            request.status = RequestStatus.COMPLETED
+            fulfil(session, request, _reported_on(request), note="results imported")
 
     if dry_run:
         session.rollback()
