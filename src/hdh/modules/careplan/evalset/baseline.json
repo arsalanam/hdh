@@ -1,0 +1,147 @@
+{
+  "cohort": "default",
+  "mean": 3.897,
+  "noise": 0.5,
+  "cases": [
+    {
+      "mrn": "MRN02872878",
+      "stratum": "single",
+      "rubric": "default",
+      "mean": 3.92,
+      "spread": 0.5,
+      "runs": [
+        {
+          "mean": 4.17,
+          "verdict": "revise",
+          "interventions": 2,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 5,
+            "safety": 5,
+            "goal_quality": 3,
+            "feasibility_burden": 4
+          }
+        },
+        {
+          "mean": 3.67,
+          "verdict": "revise",
+          "interventions": 2,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 3,
+            "safety": 3,
+            "goal_quality": 3,
+            "feasibility_burden": 5
+          }
+        }
+      ]
+    },
+    {
+      "mrn": "MRN03139607",
+      "stratum": "single",
+      "rubric": "default",
+      "mean": 3.92,
+      "spread": 0.5,
+      "runs": [
+        {
+          "mean": 3.67,
+          "verdict": "revise",
+          "interventions": 2,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 4,
+            "safety": 3,
+            "goal_quality": 3,
+            "feasibility_burden": 4
+          }
+        },
+        {
+          "mean": 4.17,
+          "verdict": "revise",
+          "interventions": 2,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 5,
+            "safety": 4,
+            "goal_quality": 3,
+            "feasibility_burden": 5
+          }
+        }
+      ]
+    },
+    {
+      "mrn": "MRN20147121",
+      "stratum": "typical",
+      "rubric": "default",
+      "mean": 3.92,
+      "spread": 0.5,
+      "runs": [
+        {
+          "mean": 3.67,
+          "verdict": "revise",
+          "interventions": 8,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 3,
+            "safety": 5,
+            "goal_quality": 3,
+            "feasibility_burden": 3
+          }
+        },
+        {
+          "mean": 4.17,
+          "verdict": "revise",
+          "interventions": 7,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 5,
+            "safety": 5,
+            "goal_quality": 3,
+            "feasibility_burden": 4
+          }
+        }
+      ]
+    },
+    {
+      "mrn": "MRN32285800",
+      "stratum": "typical",
+      "rubric": "default",
+      "mean": 3.83,
+      "spread": 0.0,
+      "runs": [
+        {
+          "mean": 3.83,
+          "verdict": "revise",
+          "interventions": 6,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 3,
+            "safety": 5,
+            "goal_quality": 3,
+            "feasibility_burden": 4
+          }
+        },
+        {
+          "mean": 3.83,
+          "verdict": "revise",
+          "interventions": 7,
+          "scores": {
+            "completeness": 5,
+            "traceability": 3,
+            "guideline_concordance": 3,
+            "safety": 5,
+            "goal_quality": 3,
+            "feasibility_burden": 4
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -56,6 +56,24 @@ def register_cli(subparsers) -> None:
 
     sub.add_parser("rubrics", help="The evaluation rubrics on disk, and what each dimension asks")
 
+    ev = sub.add_parser("eval", help="The fixed cohort: build it, check it, measure against it")
+    ev_sub = ev.add_subparsers(dest="eval_cmd", required=True)
+    ev_build = ev_sub.add_parser("build", help="Regenerate the cohort's patients from its pinned seed")
+    ev_build.add_argument("--cohort", default="default")
+    ev_cases = ev_sub.add_parser("cases", help="The selected cases and their shape (no generation)")
+    ev_cases.add_argument("--cohort", default="default")
+    ev_check = ev_sub.add_parser(
+        "check", help="Deterministic checks over every case — no LLM, and these are assertions"
+    )
+    ev_check.add_argument("--cohort", default="default")
+    ev_run = ev_sub.add_parser("run", help="Generate and grade every case; compare to the baseline")
+    ev_run.add_argument("--cohort", default="default")
+    ev_run.add_argument("--repeat", type=int, default=1, help="Runs per case — 2+ measures the noise floor")
+    ev_run.add_argument("--revise", action="store_true", help="Use the revise loop for each plan")
+    ev_run.add_argument("--limit", type=int, help="Only the first N cases (cost control)")
+    ev_run.add_argument("--model", help="Model override (default: HDH_AGENT_MODEL)")
+    ev_run.add_argument("--save", action="store_true", help="Write this run as the new baseline")
+
     facts_p = sub.add_parser(
         "facts", help="What the grader would be TOLD about a plan, before anything is scored"
     )
@@ -76,7 +94,125 @@ def run(session, args) -> None:
         "rubrics": lambda: _cmd_rubrics(),
         "facts": lambda: _cmd_facts(session, args),
         "evaluate": lambda: _cmd_evaluate(session, args),
+        "eval": lambda: _cmd_eval(session, args),
     }[args.careplan_cmd]()
+
+
+def _baseline_path(cohort: str):
+    from hdh.modules.careplan import evalset
+
+    return evalset.HERE / (f"baseline-{cohort}.json" if cohort != "default" else "baseline.json")
+
+
+def _cmd_eval(session, args) -> None:
+    """`hdh careplan eval` — build, inspect, check, or measure."""
+    from hdh.modules.careplan import evalset
+
+    try:
+        cohort = evalset.load_cohort(args.cohort)
+    except evalset.EvalError as err:
+        raise SystemExit(f"hdh careplan eval: {err}") from None
+
+    if args.eval_cmd == "build":
+        written = evalset.build_cohort(session, cohort)
+        print(f"\n  generated {written} patients from seed {cohort.seed}")
+        print("  (deterministic — the same seed rebuilds the same charts)")
+        return
+
+    cases = evalset.select_cases(session, cohort)
+    if not cases:
+        raise SystemExit(
+            f"hdh careplan eval: no cases — run `hdh careplan eval build` first, "
+            f"or point HDH_DB_URL at the database holding cohort {cohort.name!r}"
+        )
+
+    if args.eval_cmd == "cases":
+        print(
+            f"\n  cohort {cohort.name}@{cohort.version}, seed {cohort.seed}, "
+            f"{len(cases)}/{cohort.case_count} cases selected\n"
+        )
+        print(
+            f"  {'stratum':<10}{'mrn':<14}{'age':>4}{'probs':>7}{'meds':>6}"
+            f"{'flags':>7}{'topics':>8}{'defer':>7}  rubric"
+        )
+        for case in cases:
+            print(
+                f"  {case.stratum:<10}{case.mrn:<14}{case.age:>4}{case.problems:>7}"
+                f"{case.medications:>6}{case.flags:>7}{case.topics:>8}{case.deferred:>7}"
+                f"  {case.rubric}"
+            )
+        return
+
+    if args.eval_cmd == "check":
+        failures = 0
+        print()
+        for case in cases:
+            result = evalset.check_case(session, case.mrn)
+            mark = "ok" if result.ok else "FAIL"
+            print(f"  [{mark:>4}] {case.mrn}  ({case.stratum}, {case.topics} topics)")
+            for line in result.failures:
+                print(f"         {line}")
+            failures += 0 if result.ok else 1
+        print()
+        if failures:
+            raise SystemExit(f"{failures}/{len(cases)} case(s) failed the deterministic checks")
+        print(f"  all {len(cases)} cases pass the deterministic checks")
+        return
+
+    _cmd_eval_run(session, args, cohort, cases)
+
+
+def _cmd_eval_run(session, args, cohort, cases) -> None:
+    """Generate and grade every case, then say whether anything moved."""
+    from hdh.modules.careplan import evalset
+    from hdh.modules.careplan.evaluate import llm_grader
+    from hdh.modules.careplan.generate import llm_selector
+    from hdh.modules.careplan.plan import PlanServices
+
+    if args.limit:
+        cases = cases[: args.limit]
+    try:
+        services = PlanServices(selector=llm_selector(model=args.model), grader=llm_grader(model=args.model))
+    except ImportError:
+        raise SystemExit("careplan eval needs the agent extra: pip install 'hdh[agent]'") from None
+
+    total = len(cases) * args.repeat
+    print(f"\n  {len(cases)} case(s) x {args.repeat} run(s) = {total} plans, each generated and graded")
+    if args.repeat < 2:
+        print("  (one run per case measures no noise floor — use --repeat 2 to get one)")
+    print()
+
+    def announce(measurement):
+        spread = f" +/-{measurement.spread}" if measurement.spread else ""
+        print(f"  {measurement.mrn:<14} {measurement.stratum:<10} mean {measurement.mean}{spread}")
+
+    report = evalset.run(
+        session,
+        cases,
+        services,
+        evalset.RunSettings(repeat=args.repeat, revise=args.revise, cohort=cohort.name),
+        on_case=announce,
+    )
+
+    print()
+    print(
+        f"  cohort mean {report.mean} across {len(report.measurements)} case(s), "
+        f"observed spread {report.noise}"
+    )
+
+    path = _baseline_path(cohort.name)
+    if path.is_file():
+        print()
+        print("  against the baseline:")
+        for line in evalset.compare(report, evalset.load_baseline(path)):
+            print(line)
+    else:
+        print(f"  no baseline yet at {path.name}")
+
+    if args.save:
+        evalset.save_baseline(path, report)
+        print()
+        print(f"  written as the baseline: {path}")
 
 
 def _print_evaluation(rubric, evaluation) -> None:
