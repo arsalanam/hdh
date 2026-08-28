@@ -279,3 +279,41 @@ def test_a_partially_overlapping_cohort_still_compares():
     }
     lines = compare(report, baseline)
     assert any("overall" in line for line in lines)
+
+
+# ── a cohort version is part of what a baseline means ────────────────────
+
+
+def test_compare_refuses_across_cohort_versions():
+    """The MRN guard cannot catch a regenerated cohort on its own.
+
+    The generator draws the same number of times either way, so the same
+    patients come back under the same MRNs with different charts — and every
+    per-case delta reads as a care-plan change when the patient is what
+    changed. Only the version can say so.
+    """
+    from hdh.modules.careplan import evalset
+
+    report = evalset.Report(cohort="default", version=2)
+    report.measurements.append(
+        evalset.Measurement(mrn="MRN02128330", stratum="single", rubric="default", runs=[])
+    )
+    lines = evalset.compare(report, {"cohort": "default", "version": 1, "mean": 4.0, "cases": []})
+    assert any("not a comparison" in line for line in lines)
+    assert any("version 1" in line for line in lines)
+
+
+def test_a_baseline_with_no_version_cannot_vouch_for_its_charts():
+    """Every baseline written before the version existed predates the
+    determinism fix, so it describes charts that cannot be rebuilt."""
+    from hdh.modules.careplan import evalset
+
+    report = evalset.Report(cohort="default", version=2)
+    lines = evalset.compare(report, {"cohort": "default", "mean": 4.0, "cases": []})
+    assert any("no version" in line for line in lines)
+
+
+def test_the_version_is_recorded_in_the_baseline():
+    from hdh.modules.careplan import evalset
+
+    assert evalset.Report(cohort="default", version=2).as_dict()["version"] == 2

@@ -328,6 +328,11 @@ class Report:
     """Every case, and what the run as a whole says."""
 
     cohort: str
+    #: The cohort version these measurements were taken under. A name alone
+    #: does not identify a set of charts: the patients are regenerated from
+    #: a seed, so a generator change moves what "default" means while the
+    #: name and the MRNs stay put. The version is what says so.
+    version: int = 0
     measurements: list[Measurement] = field(default_factory=list)
 
     @property
@@ -364,6 +369,7 @@ class Report:
         """The whole run as JSON — this is the baseline format."""
         return {
             "cohort": self.cohort,
+            "version": self.version,
             "mean": self.mean,
             "noise": self.noise,
             "widest": self.widest,
@@ -390,6 +396,21 @@ def compare(report: Report, baseline: dict) -> list[str]:
     is the same number twice, and saying so is more useful than a arrow
     pointing the way somebody hoped.
     """
+    # A version bump means the charts moved underneath the cohort. The MRN
+    # guard below cannot catch that on its own: the RNG draws the same
+    # number of times either way, so the same patients come back with the
+    # same MRNs and different charts, and every per-case delta would read as
+    # a care-plan change when the patient is what changed. A baseline with
+    # no version predates this record and cannot vouch for its own charts.
+    before_version = baseline.get("version")
+    if (report.version or before_version is not None) and before_version != report.version:
+        held = "no version" if before_version is None else f"version {before_version}"
+        return [
+            f"  not a comparison — the baseline holds {held}, this run is version {report.version}.",
+            "  The cohort was regenerated, so these are different charts under the same",
+            "  MRNs. Save this run as the new baseline rather than reading a delta.",
+        ]
+
     lines = []
     before, after = baseline.get("mean"), report.mean
     if before is None or after is None:
@@ -497,6 +518,7 @@ class RunSettings:
     repeat: int = 1
     revise: bool = False
     cohort: str = DEFAULT_COHORT
+    version: int = 0
 
     @property
     def measures_noise(self) -> bool:
@@ -506,7 +528,7 @@ class RunSettings:
 
 def run(session, cases: Sequence[Case], services, settings: RunSettings, on_case=None) -> Report:
     """Measure every case. Returns the report; writes no baseline."""
-    report = Report(cohort=settings.cohort)
+    report = Report(cohort=settings.cohort, version=settings.version)
     for case in cases:
         measurement = measure_case(session, case, services, repeat=settings.repeat, revise=settings.revise)
         report.measurements.append(measurement)

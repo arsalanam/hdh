@@ -463,7 +463,7 @@ def hereditary_from_patients(
     """Derive a child's hereditary-risk flags from parents' ACTUAL conditions."""
     flags: dict[str, bool] = {}
     for parent in parents:
-        for cname in parent_conditions.get(parent.id, set()):
+        for cname in sorted(parent_conditions.get(parent.id, set())):
             onset = catalog.get(cname).onset
             if onset is not None and onset.hereditary_key:
                 flags[onset.hereditary_key] = True
@@ -482,7 +482,10 @@ def record_parent_history(
     lines: list[str] = []
     for parent in parents:
         rel = "mother" if str(parent.sex).endswith("F") else "father"
-        for cname in parent_conditions.get(parent.id, set()):
+        # Sorted for the same reason as `onset_dates`: this loop both draws
+        # from the RNG and appends the lines a note renders, so hash order
+        # made a child's family history read differently run to run.
+        for cname in sorted(parent_conditions.get(parent.id, set())):
             profile = catalog.get(cname)
             if profile:
                 session.add(
@@ -638,9 +641,14 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, scope: 
         )
 
     established = {profile.name for profile in scope.catalog.seed_chronic(ctx(patient.age, 1, frozenset()))}
+    # `sorted`, not `established`, every time the order reaches an output or
+    # the RNG. A set of strings iterates in hash order, and Python randomises
+    # string hashing per process — so the same seed drew a different onset
+    # date for each condition on every run, and the chart the eval cohort
+    # claims to rebuild from seed 4242 was not the same chart twice.
     stage_index: dict[str, int] = {
         name: staging.start_index
-        for name in established
+        for name in sorted(established)
         if (staging := scope.catalog.get(name).staging) is not None
     }
 
@@ -650,7 +658,7 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, scope: 
     # visit merely records them) — this is what keeps rolled onsets like
     # CKD chronologically AFTER their drivers.
     onset_dates: dict[str, date] = {
-        name: start_date - timedelta(days=scope.rng.randint(180, 365 * 6)) for name in established
+        name: start_date - timedelta(days=scope.rng.randint(180, 365 * 6)) for name in sorted(established)
     }
     all_visits = []
 

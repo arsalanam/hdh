@@ -1,14 +1,34 @@
 {
   "name": "default",
-  "version": 1,
+  "version": 2,
   "seed": 4242,
   "patients": 80,
   "years_of_history": 4,
-  "description": "A fixed cohort for measuring care-plan changes. Patients are regenerated from the seed rather than committed, because generation is deterministic under one and a 80-patient dump is not a thing to keep in git. Cases are selected by topic count so the strata span what triage actually produces, and by MRN order within a stratum so nobody picks the flattering chart.",
+  "description": "A fixed cohort for measuring care-plan changes. Patients are regenerated from the seed rather than committed, because generation is deterministic under one \u2014 a property tests/test_generator_determinism.py now checks in a separate process, because it was not true until version 2 (two sites iterated a set of strings while drawing from the RNG, so hash randomisation moved onset dates and family history run to run). Cases are selected by topic count so the strata span what triage actually produces, and by MRN order within a stratum so nobody picks the flattering chart. Bump `version` whenever the generator changes what the seed produces: the MRNs stay the same across such a change, so the version is the only thing that can tell a reader the charts did not.",
   "strata": [
-    {"name": "single", "min_topics": 1, "max_topics": 2, "take": 2},
-    {"name": "typical", "min_topics": 3, "max_topics": 4, "take": 2},
-    {"name": "multi", "min_topics": 5, "max_topics": 6, "take": 2},
-    {"name": "complex", "min_topics": 7, "max_topics": 999, "take": 2}
+    {
+      "name": "single",
+      "min_topics": 1,
+      "max_topics": 2,
+      "take": 2
+    },
+    {
+      "name": "typical",
+      "min_topics": 3,
+      "max_topics": 4,
+      "take": 2
+    },
+    {
+      "name": "multi",
+      "min_topics": 5,
+      "max_topics": 6,
+      "take": 2
+    },
+    {
+      "name": "complex",
+      "min_topics": 7,
+      "max_topics": 999,
+      "take": 2
+    }
   ]
 }
