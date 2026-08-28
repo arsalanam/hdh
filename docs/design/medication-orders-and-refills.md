@@ -135,6 +135,53 @@ One row per supply event. A refill is simply the second one.
 attributable and distinguishable from a clinician's without a second
 mechanism.
 
+### 4.2b Drug identity belongs in one place
+
+New tables are no longer being economised on — the core module is not in
+final shape — and this is the one the evidence asks for loudest.
+
+Drug identity is currently a **string repeated on every row**: `drug_name`,
+`drug_class` and the code live on `prescriptions`, on
+`medication_statements`, and would live again on dispenses. Across 3,728
+rows and 56 distinct drugs, **five already disagree with themselves**:
+
+| drug | class strings in use |
+|---|---|
+| Lisinopril | `''`, `ACE inhibitor`, `ACE inhibitor (renoprotective)` |
+| Amlodipine | `''`, `Calcium channel blocker` |
+| Levothyroxine | `''`, `Thyroid hormone replacement` |
+| Atorvastatin | `Statin`, `Statin (high-intensity)` |
+| Acetaminophen | `Analgesic`, `Analgesic/Antipyretic` |
+
+This is not cosmetic. The duplicate-class guard added in #116 exists because
+two spellings of "statin" let a patient onto two of them, and it is
+**already defeated by the blank ones**: the guard returns early when a class
+is empty, so a Lisinopril written with no class would never be recognised as
+an ACE inhibitor the patient is already taking.
+
+A rule that reads a free-text field written in three places cannot be made
+reliable by improving the rule.
+
+```python
+class Medication:                      # the drug, once
+    id: int
+    name: str                          # "Atorvastatin"
+    drug_class: str                    # "Statin"
+    class_qualifier: str | None        # "high-intensity" — kept, not lost
+    rxcui: str | None
+    form: str | None
+```
+
+Prescriptions, statements and dispenses reference it by id. Class drift
+becomes impossible rather than guarded against, the qualifier survives as
+data instead of being parsed off a string at comparison time, and RxNorm
+coding has one home rather than three.
+
+**Sequencing:** this is not required for refills and should not block them.
+But it should land before a *third* table starts carrying a copy of the drug
+name, which is exactly what §4.2 proposes to add — so it is milestone A's
+first task, not a later cleanup.
+
 ### 4.3 Refills become arithmetic
 
 ```
@@ -170,11 +217,15 @@ argued with.
 
 ### 4.5 What this costs
 
-One table and two columns, against the previous version's zero tables and a
-weakened constraint. The extra table is the cheaper of the two — a new
-entity is additive and inspectable, whereas a nullable `visit_id` would have
-been invisible to the eight modules that reach prescriptions through visits
-(§9) and would have left orphan rows in the most-read table in the chart.
+Two tables and two columns, against the previous version's zero tables and
+a weakened constraint. The tables are the cheaper of the two — a new entity
+is additive and inspectable, whereas a nullable `visit_id` would have been
+invisible to the eight modules that reach prescriptions through visits (§9)
+and would have left orphan rows in the most-read table in the chart.
+
+The count itself is no longer a consideration. "No new tables" was the
+constraint that produced the first version's mistake, and the core module is
+not in a shape where table economy is worth a wrong boundary.
 
 ## 5. What this demonstrates
 
@@ -284,7 +335,8 @@ leaves every served request looking open.
 
 | | delivers | proves |
 |---|---|---|
-| **A** | `MedicationDispense`; `refills_authorised` and `valid_until` on the order; `is_open()`; the importer stamps `end_date` on fulfilment; migration | the shape exists, served requests stop looking open, `Prescription` is untouched |
+| **A0** | `Medication` reference table; existing rows migrated to reference it | class drift becomes impossible; the #116 guard stops depending on a free-text field |
+| **A** | `MedicationDispense`; `refills_authorised` and `valid_until` on the order; `is_open()`; the importer stamps `end_date` on fulfilment | the shape exists, served requests stop looking open, `Prescription` is untouched |
 | **B** | `can_refill()` and its refusals, with tests | the question is answerable and every "no" says why |
 | **C** | agent tool: request a refill, record the fill or the refusal | `origin=AGENT` on a medication, end to end |
 | **D** | generator emits orders and fills (Q5) | the synthetic chart exercises the path it describes |
