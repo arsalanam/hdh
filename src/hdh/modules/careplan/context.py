@@ -89,6 +89,13 @@ class CarePlanContext:
     risk_score: float | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
 
+    def __post_init__(self) -> None:
+        # See the note in `generate.ConcernDraft`: a checkpoint round-trip
+        # returns these as lists, and the whole chart would quietly change
+        # shape on resume.
+        for name in ("problems", "medications", "notes"):
+            object.__setattr__(self, name, tuple(getattr(self, name) or ()))
+
     def medications_in_class(self, *needles: str) -> tuple[MedicationView, ...]:
         """Active medications whose class matches any of ``needles``."""
         return tuple(m for m in self.medications if m.is_class(*needles))

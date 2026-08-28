@@ -40,8 +40,11 @@ from hdh.modules.careplan.facts import evidence_from_draft
 from hdh.modules.careplan.generate import PlanDraft, Selector
 from hdh.modules.careplan.graph import (
     CarePlanState,
+    compile_pipeline,
     node_index,
+    resume_at,
     run_from,
+    thread_config,
     to_draft,
 )
 from hdh.modules.careplan.graph import (
@@ -77,6 +80,13 @@ class PlanInputs:
     topics: tuple[Topic, ...]
     selector: Selector
     deferred: tuple[str, ...] = ()
+
+    #: The thread this run's checkpoints belong to. Empty means "no thread":
+    #: an ephemeral in-memory graph, which is what tests and one-shot runs
+    #: want. A durable run supplies one and can be resumed against it.
+    thread_id: str = ""
+    #: A LangGraph checkpointer. ``None`` pairs with an empty thread_id.
+    checkpointer: object | None = None
 
     def seed(self) -> CarePlanState:
         """The state a run begins with, before any node has run."""
@@ -193,13 +203,26 @@ def revise_plan(
     node: str = "concerns"
     notes: list[str] = []
     services = inputs.services()
+
+    # One compiled graph for the whole loop. With a checkpointer and a
+    # thread, each round is a *resume* rather than a re-run: LangGraph keeps
+    # the state between invocations, so re-entering at a node replays only
+    # that node onward. Without one, every round is an independent pass over
+    # a state we carry ourselves — same results, nothing to come back to.
+    graph = compile_pipeline(inputs.checkpointer)
+    config = thread_config(inputs.thread_id) if inputs.thread_id else None
     state: CarePlanState = inputs.seed()
+
     for number in range(max_rounds + 1):
-        # Re-entry, not reconstruction. `run_from` clears whatever the nodes
-        # at or after this one wrote and regenerates it; everything earlier
-        # is carried forward untouched. Which node that is comes from the
-        # rubric, so a new node needs no change here.
-        state = run_from(state, services, node_index(node), feedback=JOIN.join(notes))
+        feedback = JOIN.join(notes)
+        if config is None:
+            state = run_from(state, services, node_index(node), feedback=feedback)
+        elif number == 0:
+            state = graph.invoke(inputs.seed(), config, context=services)
+        else:
+            # Re-entry, not reconstruction. Which node comes from the rubric,
+            # so a new node needs no change here.
+            state = resume_at(graph, config, node, services, feedback=feedback)
         draft = to_draft(state)
         reconciliation = state.get("reconciliation")
         evidence = evidence_from_draft(inputs.context, draft, inputs.flags, reconciliation, inputs.deferred)

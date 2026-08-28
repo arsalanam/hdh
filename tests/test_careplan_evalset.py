@@ -127,14 +127,54 @@ def test_a_run_with_no_repeats_says_it_has_no_noise_floor():
     assert any("no noise floor" in line for line in lines)
 
 
-def test_the_noise_floor_is_the_worst_case_not_the_average():
-    """A delta has to beat the noisiest case, because that is the case that
-    could have produced it by itself."""
+def test_noise_is_a_standard_deviation_not_a_range():
+    """The correction that matters most in this module.
+
+    The first version judged a delta against the observed *range*, and range
+    grows with sample size: the same four cases gave 0.50 at two repeats and
+    0.67 at three, from an unchanged process. Judging against it meant **more
+    measurement made a real change harder to detect** — the opposite of what
+    more measurement is for. Standard deviation is stable across n.
+    """
+    wide = _measurement("A", [3.5, 4.5])
+    assert wide.spread == pytest.approx(1.0), "range is still reported"
+    assert wide.deviation == pytest.approx(0.707, abs=0.001), "but judged on sd"
+
+    # Adding a repeat in the middle cannot widen a standard deviation the way
+    # it can widen a range.
+    wider_sample = _measurement("A", [3.5, 4.0, 4.5])
+    assert wider_sample.spread == wide.spread
+    assert wider_sample.deviation < wide.deviation
+
+
+def test_the_noise_floor_pools_the_cases_rather_than_taking_the_worst():
+    """One unusually variable chart should widen the band, not define it —
+    the cohort mean being compared is an average over all of them."""
     report = Report(
         cohort="default",
         measurements=[_measurement("A", [4.0, 4.0]), _measurement("B", [3.0, 4.0])],
     )
-    assert report.noise == pytest.approx(1.0)
+    assert report.noise == pytest.approx(0.5, abs=0.01)
+    assert report.widest == pytest.approx(1.0), "the range is still reported alongside"
+
+
+def test_a_baseline_written_under_the_old_statistic_is_reinterpreted():
+    """An old baseline carries a range in its `noise` field, which is larger
+    than the pooled sd used now. Trusting it would hold new runs to a stale,
+    wider bar, so it is recomputed from the per-run means it also stored."""
+    from hdh.modules.careplan.evalset import baseline_noise
+
+    stale = {
+        "noise": 0.67,  # a range, from the old statistic
+        "cases": [{"mrn": "A", "mean": 3.9, "runs": [{"mean": 3.5}, {"mean": 4.17}, {"mean": 4.0}]}],
+    }
+    assert baseline_noise(stale) < 0.67
+
+
+def test_a_baseline_with_no_per_run_detail_falls_back_to_what_it_stored():
+    from hdh.modules.careplan.evalset import baseline_noise
+
+    assert baseline_noise({"noise": 0.4, "cases": []}) == pytest.approx(0.4)
 
 
 def test_a_case_with_no_baseline_is_reported_rather_than_dropped():

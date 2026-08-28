@@ -38,6 +38,9 @@ agent = [
     "rich>=13.0",
     "prompt_toolkit>=3.0",
     "langgraph>=1.2.10",
+    # Durable checkpoints for the care-plan graph. A separate distribution
+    # from langgraph itself, which ships only the in-memory saver.
+    "langgraph-checkpoint-postgres>=2.0",
 ]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 docs = ["python-docx>=1.1"]

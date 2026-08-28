@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
 from hdh.modules.careplan.context import CarePlanContext
+from hdh.modules.careplan.evaluate import Grader
 from hdh.modules.careplan.generate import (
     ConcernDraft,
     GoalDraft,
@@ -98,7 +99,14 @@ class PlanServices:
 
     store: object | None = None
     selector: Selector | None = None
-    grader: object | None = None
+    grader: Grader | None = None
+    #: A LangGraph checkpointer, or None for an ephemeral run.
+    #:
+    #: Not built by :meth:`resolved`, deliberately: the durable saver opens
+    #: its own database connection, and a factory that did that as a side
+    #: effect of a default would open one per plan. The caller builds it
+    #: once per session and passes it down.
+    checkpointer: object | None = None
 
     @property
     def selecting(self) -> Selector:
@@ -122,7 +130,12 @@ class PlanServices:
             from hdh.modules.careplan.generate import llm_selector
 
             selector = llm_selector()
-        return PlanServices(store=store, selector=selector, grader=self.grader)
+        return PlanServices(
+            store=store,
+            selector=selector,
+            grader=self.grader,
+            checkpointer=self.checkpointer,
+        )
 
 
 Node = Callable[[CarePlanState, PlanServices], Mapping[str, Any]]
@@ -268,19 +281,22 @@ def run_from(
     feedback: str = "",
     stop: int | None = None,
 ) -> CarePlanState:
-    """Run the pipeline from ``start``, merging each node's partial state.
+    """Run the pipeline from ``start`` and return the resulting state.
 
-    ``feedback`` reaches only the node it starts at. A critique of the goals
-    handed on to the interventions node would be answered by the wrong step.
+    An ephemeral compiled graph with no checkpointer — for a caller that
+    wants one pass and has nowhere to resume from: tests, and the
+    non-durable path. Durable runs go through :func:`compile_pipeline` with
+    a real checkpointer and address a thread instead.
+
+    Kept as one runner rather than two implementations of the same walk.
+    ``stop`` compiles a truncated pipeline, which is why it stays cheap.
     """
     require_upstream(state, start)
-    current: CarePlanState = dict(invalidate_from(state, start))  # type: ignore[assignment]
+    seed: CarePlanState = dict(invalidate_from(state, start))  # type: ignore[assignment]
     if feedback:
-        current["feedback"] = feedback
-    for spec in PIPELINE[start:stop]:
-        current.update(spec.run(current, services))  # type: ignore[typeddict-item]
-        current.pop("feedback", None)
-    return current
+        seed["feedback"] = feedback
+    graph = compile_pipeline(pipeline=PIPELINE[start:stop])
+    return graph.invoke(seed, context=services)
 
 
 def dropped(state: CarePlanState) -> list[str]:
@@ -330,3 +346,101 @@ def unserialisable_keys(state: CarePlanState | Iterable[str]) -> list[str]:
     """Which keys in ``state`` still need an encoder before stage 3."""
     present: Sequence[str] = list(state)
     return [key for key in UNSERIALISABLE if key in present]
+
+
+# ── the graph ────────────────────────────────────────────────────────────
+
+
+def _as_graph_node(spec: NodeSpec):
+    """Wrap a ``(state, services)`` node as LangGraph's ``(state, runtime)``.
+
+    The node functions never learn they are in a graph. Services arrive as
+    the runtime *context* rather than as state, because state is checkpointed
+    and a live database session cannot be.
+
+    Every node also clears ``feedback``. A critique is addressed to one node,
+    and LangGraph merges rather than replaces — so without this the objection
+    would travel down the rest of the pipeline and be answered by the wrong
+    step. Whichever node runs first consumes it.
+    """
+
+    def node(state: CarePlanState, runtime) -> Mapping[str, Any]:
+        produced = dict(spec.run(state, runtime.context))
+        produced.setdefault("feedback", "")
+        return produced
+
+    node.__name__ = spec.name
+    return node
+
+
+class UndeclaredChannel(RuntimeError):
+    """A node writes a state key the schema does not declare."""
+
+
+def require_declared(specs: Sequence[NodeSpec]) -> None:
+    """Every declared write must exist on :class:`CarePlanState`.
+
+    LangGraph **silently discards** keys that are not channels on the state
+    schema — no error, no warning, the value simply does not appear. A node
+    added without its keys would run, look fine, and produce nothing, which
+    is the failure mode this module spends most of its effort refusing.
+
+    So adding a node is two edits, not one: the ``PIPELINE`` entry and its
+    keys on ``CarePlanState``. This makes forgetting the second loud.
+    """
+    declared = set(CarePlanState.__annotations__)
+    undeclared = sorted({key for spec in specs for key in spec.writes if key not in declared})
+    if undeclared:
+        raise UndeclaredChannel(
+            f"{', '.join(undeclared)} not declared on CarePlanState — LangGraph would "
+            "drop these silently. Add them to the TypedDict alongside the PIPELINE entry."
+        )
+
+
+def compile_pipeline(checkpointer=None, pipeline: Sequence[NodeSpec] | None = None):
+    """A compiled StateGraph over ``PIPELINE``, in declared order.
+
+    Built *from* the declarations rather than replacing them: adding a node
+    is still one tuple entry, and the graph is a runner rather than a second
+    definition of the pipeline.
+    """
+    from langgraph.graph import END, START, StateGraph
+
+    specs = tuple(pipeline if pipeline is not None else PIPELINE)
+    if not specs:
+        raise ValueError("cannot compile an empty pipeline")
+    require_declared(specs)
+
+    builder = StateGraph(CarePlanState, context_schema=PlanServices)
+    for spec in specs:
+        builder.add_node(spec.name, _as_graph_node(spec))
+    builder.add_edge(START, specs[0].name)
+    for earlier, later in zip(specs, specs[1:], strict=False):
+        builder.add_edge(earlier.name, later.name)
+    builder.add_edge(specs[-1].name, END)
+    return builder.compile(checkpointer=checkpointer)
+
+
+def thread_config(thread_id: str) -> dict:
+    """The config a checkpointed run is addressed by."""
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def resume_at(graph, config: dict, node: str, services: PlanServices, *, feedback: str = ""):
+    """Re-run ``node`` and everything after it, keeping what came before.
+
+    LangGraph resumes at the *successors* of ``as_node``, so re-running a
+    node means writing state as though its predecessor had just finished.
+    Starting at the first node has no predecessor, so it is a fresh run of
+    the whole pipeline against the state already in the thread.
+    """
+    index = node_index(node)
+    snapshot = graph.get_state(config)
+    require_upstream(snapshot.values, index)
+
+    update = {"feedback": feedback} if feedback else {}
+    if index == 0:
+        graph.update_state(config, update)
+    else:
+        graph.update_state(config, update, as_node=PIPELINE[index - 1].name)
+    return graph.invoke(None, config, context=services)
