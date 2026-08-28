@@ -3,6 +3,8 @@
 **Status:** proposed, 2026-08-28
 **Extends:** `service-requests-and-interchange.md` §4, which specified the
 order↔prescription link that was never wired
+**Instance of:** `requests-and-read-models.md` — medications are one kind;
+that document states the principle for all five and should be read first
 **Prompted by:** the agent can amend the chart through orders, and a refill
 is the commonest medication decision in primary care. We cannot currently
 answer *"can this be refilled?"* at all.
@@ -64,60 +66,123 @@ Beyond the three above:
   three; `Prescription` carries none
 - **pharmacy or destination** — absent, and deliberately stays absent (§6)
 
-## 4. Proposed model
+## 4. Proposed model — revised 2026-08-28
 
-No new tables. Three roles that already exist, finally connected.
+The first version of this section optimised for **"no new tables"** and let
+that push it into making `Prescription.visit_id` nullable. That was the
+wrong trade, and the reason is visible in the schema:
+
+> **`prescriptions` has no `patient_id`.** It is reachable only through a
+> visit. A nullable `visit_id` would not merely be loose — it would create
+> rows belonging to nobody, reachable from nothing.
+
+The deeper fault was conflating **the requesting mechanism** with **the
+medications a patient ever had**. They are different questions with
+different anchors, and the schema already knows it:
+
+| table | anchor | rows | what it is |
+|---|---|---|---|
+| `prescriptions` | visit **NOT NULL**, no `patient_id` | 2,175 | a line written **at an encounter** |
+| `medication_statements` | `patient_id`, **no `visit_id` at all** | 1,553 | what the patient **is / was on** |
+| `service_requests` | `patient_id`, `visit_id` **nullable** | 1,705 | the **requesting** layer |
+
+Two of the three sides are already right and already populated. Only one
+thing is genuinely missing, and it is not a column — it is **supply**.
+
+### 4.1 Four roles, each keeping the constraint that is true for it
 
 ```
-ServiceRequest(kind=MEDICATION)          the AUTHORISATION
-    status, origin, requester_id,        what is allowed, by whom,
-    valid_until, refills_authorised      until when, how many times
+ServiceRequest(kind=MEDICATION)        REQUESTING — the authorisation
+  patient_id, visit_id nullable        what is allowed, by whom, until when
+  + refills_authorised, valid_until    end_date = closed (§7 Q2)
         │
-        │  request_id  (the FK that already exists)
+        │  authorises
         ▼
-Prescription                             each FILL
-    one row per issue                    what was actually handed over
+MedicationDispense            (new)    SUPPLY — each fill
+  patient_id, request_id               a date, a quantity, NO visit needed
+  dispensed_date, quantity
         │
+        │  updates
         ▼
-MedicationStatement                      the CURRENT LIST
-    ACTIVE | COMPLETED | STOPPED         what the patient is on
+MedicationStatement                    HAVING — what the patient is on
+  patient_id, no visit_id              ACTIVE | COMPLETED | STOPPED
+  status, start_date, end_date         already visit-free, already populated
+
+Prescription                           ENCOUNTER — unchanged
+  visit_id NOT NULL                    what was written at this visit
 ```
 
-**Refills remaining becomes a count, not a stored number.**
+**`Prescription` is left exactly alone.** Its `NOT NULL` is correct and
+says something true: this is a line on an encounter. It is not the
+medication history, and it was never asked to be until this document asked
+it to.
 
+### 4.2 The one new table
+
+```python
+class MedicationDispense:
+    patient_id: int                    # anchored to the person, not the visit
+    request_id: int | None             # the authorisation it draws on
+    drug_name: str
+    dispensed_date: date
+    quantity: float | None
+    days_supply: int | None
+    origin: RequestOrigin              # GENERATED | AGENT | CLINICIAN | EXTERNAL
+    visit_id: int | None               # usually null; set when it happened at one
 ```
-remaining = refills_authorised − (fills − 1)      # the first issue is not a refill
-```
 
-A derived count cannot drift. A stored counter decremented in two places
-eventually will.
+One row per supply event. A refill is simply the second one.
 
-### 4.1 What gets added
+`origin` carries the same enum the requests use, so an agent-issued fill is
+attributable and distinguishable from a clinician's without a second
+mechanism.
 
-| where | field | why |
-|---|---|---|
-| `ServiceRequest` | `refills_authorised: int \| None` | the count belongs with the authorisation, next to `status` and the dates |
-| `ServiceRequest` | `valid_until: date \| None` | scripts expire; without this a 2022 order is refillable forever |
-| `Prescription` | `dispensed_date: date \| None` | a refill has a date and **no visit** |
+### 4.2b Drug identity belongs in one place
+
+New tables are no longer being economised on — the core module is not in
+final shape — and this is the one the evidence asks for loudest.
+
+Drug identity is currently a **string repeated on every row**: `drug_name`,
+`drug_class` and the code live on `prescriptions`, on
+`medication_statements`, and would live again on dispenses. Across 3,728
+rows and 56 distinct drugs, **five already disagree with themselves**:
+
+| drug | class strings in use |
+|---|---|
+| Lisinopril | `''`, `ACE inhibitor`, `ACE inhibitor (renoprotective)` |
+| Amlodipine | `''`, `Calcium channel blocker` |
+| Levothyroxine | `''`, `Thyroid hormone replacement` |
+| Atorvastatin | `Statin`, `Statin (high-intensity)` |
+| Acetaminophen | `Analgesic`, `Analgesic/Antipyretic` |
+
+This is not cosmetic. The duplicate-class guard added in #116 exists because
+two spellings of "statin" let a patient onto two of them, and it is
+**already defeated by the blank ones**: the guard returns early when a class
+is empty, so a Lisinopril written with no class would never be recognised as
+an ACE inhibitor the patient is already taking.
+
+A rule that reads a free-text field written in three places cannot be made
+reliable by improving the rule.
 
 `ServiceRequest.end_date` is **not** a candidate for this: §7 Q2 settles
 it as the end of the *request's* life — closed, unactionable — rather than a
 clinical date. The two are independent: a script can expire while its order
 is still open, and an order can close while the script is still in date.
 
-### 4.2 The constraint that has to move
+### 4.3 Refills become arithmetic
 
-**`Prescription.visit_id` is `NOT NULL`.** A refill does not happen at a
-visit, so either the column becomes nullable or fills need their own table.
+```
+issued    = count(dispenses for this order)
+remaining = refills_authorised − (issued − 1)      # the first issue is not a refill
+```
 
-Nullable is the truer statement: plenty of real prescribing events have no
-encounter behind them, and a synthetic visit invented to hold a refill is a
-lie in the chart that every downstream count would then believe. It is also
-additive rather than a new entity.
+Derived, not stored. A counter decremented in two places drifts, and
+`Prescription.refills` already demonstrates the failure — it records what
+was authorised, never moves, and therefore reads as current when it is not.
 
-### 4.3 The decision, and the refusal
+### 4.4 The decision, and the refusal
 
-`can_refill(order, as_of) -> Decision` — deterministic, no model involved:
+`can_refill(order, as_of) -> Decision`, deterministic, no model involved:
 
 ```python
 @dataclass(frozen=True)
@@ -127,16 +192,27 @@ class Decision:
     remaining: int | None
 ```
 
-Each refusal names its own cause: *revoked*, *expired on 2026-03-01*,
-*no refills remaining (3 of 3 used)*, *no authorising order on record*.
-A refill refused without a reason is indistinguishable from a system that
-did not work, which is exactly the failure the care-plan module spends its
-effort avoiding.
+It composes with the §7.1 `is_open()` test rather than restating it: an
+order that is closed, revoked or expired fails before refills are counted.
+Each refusal names its own cause — *closed on 2026-03-01*, *expired*,
+*no refills remaining (3 of 3 issued)*, *no authorising order on record*.
 
 The **agent does not decide** whether a refill is allowed. It asks, and it
 records the outcome. The check is arithmetic over the chart and belongs in
 code for the same reason `stratify` does: it can be re-derived tomorrow and
 argued with.
+
+### 4.5 What this costs
+
+Two tables and two columns, against the previous version's zero tables and
+a weakened constraint. The tables are the cheaper of the two — a new entity
+is additive and inspectable, whereas a nullable `visit_id` would have been
+invisible to the eight modules that reach prescriptions through visits (§9)
+and would have left orphan rows in the most-read table in the chart.
+
+The count itself is no longer a consideration. "No new tables" was the
+constraint that produced the first version's mistake, and the core module is
+not in a shape where table economy is worth a wrong boundary.
 
 ## 5. What this demonstrates
 
@@ -259,15 +335,22 @@ and needs a re-baseline, so it goes last.
 - No measurement of how often a refill decision would be *wrong* under the
   proposed rules, because there is nothing to measure against yet.
 - No clinician review of what refusal reasons should say. #95 is the channel.
-- The claim that `visit_id` can be nullable without breaking downstream
-  counts is **unverified, and the blast radius is measured**: eight modules
-  reach prescriptions by walking `visit.prescriptions` —
+- **Which readers need to learn about dispenses is unmeasured.** Eight
+  modules reach medications by walking `visit.prescriptions` —
 
       core/exporters.py        core/fhir/emitters.py    core/models.py
       core/notes.py            modules/billing          careplan/context.py
       comprehension/applier    comprehension/evaluate
 
-  A visit-less fill is invisible to every one of them. Milestone A's real
-  work is not the migration; it is deciding whether those become
-  patient-level queries or whether fills stay attached to a visit after all.
-  That question is worth settling before the column moves.
+  With `Prescription` left alone none of them *break*, which is the point of
+  the revision. But a patient whose only recent supply was a refill now has
+  a medication the encounter view cannot see, so each reader has to be
+  asked whether it wants encounter lines or the medication list. Most
+  probably want `MedicationStatement`, which is already visit-free and
+  already populated — `careplan.context` in particular reconstructs a
+  medication list by walking visits, which is the long way round to
+  something that exists.
+
+- **`MedicationStatement` is 1,553 rows and no consumer reads it.** If it
+  is the right answer for those eight readers, that should be checked
+  before a ninth is written against visits.
