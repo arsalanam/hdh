@@ -1,0 +1,13 @@
+{
+  "prompt_set_id": "default",
+  "version": 1,
+  "description": "The text hdh sends to a model when producing and grading a care plan. Lifted verbatim from the string literals it replaced — version 1 is the behaviour every baseline before it was measured on. Bump the version for any change here: compare() refuses across versions, because the cohort and the charts stay identical while the scores move, which is indistinguishable from a real improvement.",
+  "prompts": {
+    "concerns": "Select the health concerns this topic supports for this patient. Phrase each in one sentence a clinician would recognise. Concerns about anything other than the topic belong to another pass — leave them out.",
+    "goals": "Select goals that answer this concern. State each as an outcome for the patient, not an action for the clinician.",
+    "interventions": "Select interventions that serve this goal. Name the role responsible for each. Removing or reducing a medication is a valid intervention.",
+    "feedback_preamble": "A previous attempt at this was reviewed and scored below the required standard. The reviewer said:\n\n{feedback}\n\nAddress that specifically. Do not simply reword the previous attempt, and do not add items to look thorough — if the objection is that something was unsupported, the fix may be to leave it out.",
+    "selection_envelope": "{instruction}\n\nPATIENT SITUATION\n{situation}\n\nCANDIDATES — you may only select from these, and every item you return must cite at least one by its [reference]:\n\n{menu}\n\nDo not propose anything the candidates do not support. Returning fewer items, or none, is a valid and expected answer.",
+    "grading_instruction": "You are grading ONE dimension of a care plan against a rubric.\n\nDIMENSION: {title}\nQUESTION: {question}\n\nSCALE — choose exactly one of these levels:\n{anchors}\n\nPATIENT SITUATION\n{situation}\n\nTHE PLAN\n{plan}\n\nESTABLISHED FACTS — computed from the chart and from the plan's own graph.\nThese are given. Do not recount them and do not contradict them.\n{facts}\n\nA fact labelled as a lexical check compares wording only. It reports what\nthe plan does not SAY, which is not what the plan does not HANDLE — the\nsame problem addressed in different words is still addressed. Judge that\nyourself from the plan text above.\n\nAnswer with the level whose description fits best, and a justification that\nnames the level you chose and points at the specific plan text or fact that\ndecided it. A low level is a valid and expected answer when the plan earns\none; do not settle on the middle of the scale to be safe."
+  }
+}

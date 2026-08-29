@@ -55,6 +55,8 @@ def assemble(session, patient, draft: PlanDraft, title: str, thread_id: str = ""
     """
     from sqlalchemy import insert
 
+    from hdh.modules.careplan.prompts import prompt_set
+
     plans, concerns_t, goals_t, interventions_t = _tables()
     now = datetime.utcnow()
 
@@ -74,6 +76,11 @@ def assemble(session, patient, draft: PlanDraft, title: str, thread_id: str = ""
                 # reviewer can resume the run that produced the plan — the
                 # column has existed since milestone 1 and been empty since.
                 "checkpoint_thread_id": thread_id or None,
+                # Which wording produced this plan. Two plans for the same
+                # patient from the same chart can differ entirely because
+                # the prompt changed between them, and without this the
+                # record cannot say which one it is.
+                "prompt_set": prompt_set().stamp,
                 "created_at": now,
                 "updated_at": now,
             }

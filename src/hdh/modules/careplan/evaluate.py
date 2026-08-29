@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from hdh.modules.careplan.facts import PlanEvidence, PlanFacts, compute_facts
+from hdh.modules.careplan.prompts import prompt_set
 from hdh.modules.careplan.rubric import Dimension, Rubric, select_rubric
 
 #: Verdicts, matching the ``plan_evaluations.verdict`` enum.
@@ -315,44 +316,25 @@ def evaluate(
 #: middle of any scale. It is the same move the selector makes with
 #: "returning fewer items, or none, is a valid and expected answer", and for
 #: the same reason: without it the safe answer is always a 4.
-GRADING_INSTRUCTION = """You are grading ONE dimension of a care plan against a rubric.
-
-DIMENSION: {title}
-QUESTION: {question}
-
-SCALE — choose exactly one of these levels:
-{anchors}
-
-PATIENT SITUATION
-{situation}
-
-THE PLAN
-{plan}
-
-ESTABLISHED FACTS — computed from the chart and from the plan's own graph.
-These are given. Do not recount them and do not contradict them.
-{facts}
-
-A fact labelled as a lexical check compares wording only. It reports what
-the plan does not SAY, which is not what the plan does not HANDLE — the
-same problem addressed in different words is still addressed. Judge that
-yourself from the plan text above.
-
-Answer with the level whose description fits best, and a justification that
-names the level you chose and points at the specific plan text or fact that
-decided it. A low level is a valid and expected answer when the plan earns
-one; do not settle on the middle of the scale to be safe."""
+#: The text itself now lives in `prompts/<set>.json` and is versioned with
+#: the rest of the set. The commentary above stays here, next to the code
+#: that depends on it — a JSON file is a poor place to explain why three
+#: sentences are load-bearing.
 
 
 def grading_prompt(task: GradingTask) -> str:
     """The prompt for one dimension. Separated so a test can read it."""
-    return GRADING_INSTRUCTION.format(
-        title=task.dimension.title,
-        question=task.dimension.question,
-        anchors="\n".join(task.dimension.anchor_lines()),
-        situation=task.situation,
-        plan=task.plan_text,
-        facts="\n".join(task.fact_lines) or "(this dimension declares no facts)",
+    return (
+        prompt_set()
+        .text("grading_instruction")
+        .format(
+            title=task.dimension.title,
+            question=task.dimension.question,
+            anchors="\n".join(task.dimension.anchor_lines()),
+            situation=task.situation,
+            plan=task.plan_text,
+            facts="\n".join(task.fact_lines) or "(this dimension declares no facts)",
+        )
     )
 
 

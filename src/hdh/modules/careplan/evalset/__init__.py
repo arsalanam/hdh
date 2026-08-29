@@ -344,6 +344,13 @@ class Report:
     #: a seed, so a generator change moves what "default" means while the
     #: name and the MRNs stay put. The version is what says so.
     version: int = 0
+    #: Which prompt set produced these plans, as "<id>@<version>".
+    #:
+    #: The cohort version says the charts moved. This says the TEXT moved,
+    #: and it is the more dangerous of the two: the cohort is unchanged, the
+    #: MRNs identical, the charts byte-for-byte the same, and the scores move
+    #: anyway. Nothing about the run looks different.
+    prompts: str = ""
     measurements: list[Measurement] = field(default_factory=list)
 
     @property
@@ -381,6 +388,7 @@ class Report:
         return {
             "cohort": self.cohort,
             "version": self.version,
+            "prompts": self.prompts,
             "mean": self.mean,
             "noise": self.noise,
             "widest": self.widest,
@@ -420,6 +428,22 @@ def compare(report: Report, baseline: dict) -> list[str]:
             f"  not a comparison — the baseline holds {held}, this run is version {report.version}.",
             "  The cohort was regenerated, so these are different charts under the same",
             "  MRNs. Save this run as the new baseline rather than reading a delta.",
+        ]
+
+    # And the same refusal for the prompts. A prompt change leaves the
+    # cohort, the version and every MRN untouched — the only thing that
+    # moves is the score, which is exactly what a real improvement looks
+    # like. This is the one comparison nothing else in the harness can
+    # catch, because nothing else about the run is different.
+    before_prompts = baseline.get("prompts")
+    if (report.prompts or before_prompts) and before_prompts != report.prompts:
+        held = before_prompts or "no prompt set"
+        return [
+            f"  not a comparison — the baseline was measured with {held}, "
+            f"this run with {report.prompts or 'no prompt set'}.",
+            "  Same cohort, same charts, same MRNs: only the wording changed, so a",
+            "  delta here would read as an improvement in the plan rather than in the",
+            "  prompt. Save this run as the new baseline.",
         ]
 
     lines = []
@@ -539,7 +563,9 @@ class RunSettings:
 
 def run(session, cases: Sequence[Case], services, settings: RunSettings, on_case=None) -> Report:
     """Measure every case. Returns the report; writes no baseline."""
-    report = Report(cohort=settings.cohort, version=settings.version)
+    from hdh.modules.careplan.prompts import prompt_set
+
+    report = Report(cohort=settings.cohort, version=settings.version, prompts=prompt_set().stamp)
     for case in cases:
         measurement = measure_case(session, case, services, repeat=settings.repeat, revise=settings.revise)
         report.measurements.append(measurement)

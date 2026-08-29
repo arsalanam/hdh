@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hdh.modules.careplan.context import CarePlanContext
+from hdh.modules.careplan.prompts import prompt_set
 from hdh.modules.careplan.stratify import RiskFlag
 from hdh.modules.careplan.triage import Topic
 
@@ -238,12 +239,9 @@ def llm_selector(model: str | None = None, client=None) -> Selector:
     def select(task: SelectionTask) -> dict:
         menu = "\n\n".join(f"[{c.ref}]\n{c.text}" for c in task.candidates)
         prompt = (
-            f"{task.instruction}\n\n"
-            f"PATIENT SITUATION\n{task.situation}\n\n"
-            f"CANDIDATES — you may only select from these, and every item you "
-            f"return must cite at least one by its [reference]:\n\n{menu}\n\n"
-            "Do not propose anything the candidates do not support. Returning "
-            "fewer items, or none, is a valid and expected answer."
+            prompt_set()
+            .text("selection_envelope")
+            .format(instruction=task.instruction, situation=task.situation, menu=menu)
         )
         response = client.beta.messages.create(
             model=resolved,
@@ -329,20 +327,12 @@ def _kept(items: Sequence[dict], offered: set[str], drafts: list, dropped: list[
 #: instruction, because the node's job has not changed — only its evidence
 #: about how it did. Stated as the last thing before the candidates so it is
 #: not buried behind the situation.
-FEEDBACK_PREAMBLE = (
-    "A previous attempt at this was reviewed and scored below the required "
-    "standard. The reviewer said:\n\n{feedback}\n\nAddress that specifically. "
-    "Do not simply reword the previous attempt, and do not add items to look "
-    "thorough — if the objection is that something was unsupported, the fix "
-    "may be to leave it out."
-)
-
-
 def _instruct(instruction: str, feedback: str) -> str:
     """The node's instruction, with any critique of the last attempt."""
     if not feedback.strip():
         return instruction
-    return instruction + "\n\n" + FEEDBACK_PREAMBLE.format(feedback=feedback.strip())
+    preamble = prompt_set().text("feedback_preamble").format(feedback=feedback.strip())
+    return instruction + "\n\n" + preamble
 
 
 # ── the nodes ────────────────────────────────────────────────────────────
@@ -390,13 +380,7 @@ def propose_concerns(
             continue
         answer = selector(
             SelectionTask(
-                instruction=_instruct(
-                    "Select the health concerns this topic supports for this patient. "
-                    "Phrase each in one sentence a clinician would recognise. Concerns "
-                    "about anything other than the topic belong to another pass — leave "
-                    "them out.",
-                    feedback,
-                ),
+                instruction=_instruct(prompt_set().text("concerns"), feedback),
                 situation=f"{described}\n\nTOPIC: {topic.label}\nWHY: {topic.basis}",
                 candidates=candidates,
                 schema=CONCERN_SCHEMA,
@@ -433,11 +417,7 @@ def propose_goals(
             continue
         answer = selector(
             SelectionTask(
-                instruction=_instruct(
-                    "Select goals that answer this concern. State each as an "
-                    "outcome for the patient, not an action for the clinician.",
-                    feedback,
-                ),
+                instruction=_instruct(prompt_set().text("goals"), feedback),
                 situation=f"{situation(context, ())}\n\nCONCERN: {concern.statement}",
                 candidates=candidates,
                 schema=GOAL_SCHEMA,
@@ -469,12 +449,7 @@ def propose_interventions(store, context, goals, selector: Selector, feedback: s
             continue
         answer = selector(
             SelectionTask(
-                instruction=_instruct(
-                    "Select interventions that serve this goal. Name the role "
-                    "responsible for each. Removing or reducing a medication is "
-                    "a valid intervention.",
-                    feedback,
-                ),
+                instruction=_instruct(prompt_set().text("interventions"), feedback),
                 situation=f"{situation(context, ())}\n\nGOAL: {goal.statement}",
                 candidates=candidates,
                 schema=INTERVENTION_SCHEMA,
