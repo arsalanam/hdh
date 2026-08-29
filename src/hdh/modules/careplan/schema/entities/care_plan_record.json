@@ -3,9 +3,24 @@
   "tablename": "care_plan_records",
   "module": "careplan_module",
   "columns": [
-    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
-    {"name": "patient_id", "type": "Integer", "foreign_key": "patients.id", "nullable": false},
-    {"name": "title", "type": "String", "length": 200, "nullable": false},
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "patient_id",
+      "type": "Integer",
+      "foreign_key": "patients.id",
+      "nullable": false
+    },
+    {
+      "name": "title",
+      "type": "String",
+      "length": 200,
+      "nullable": false
+    },
     {
       "name": "status",
       "type": "Enum",
@@ -20,15 +35,51 @@
       ],
       "nullable": false
     },
-    {"name": "narrative", "type": "Text"},
-    {"name": "rejection_reason", "type": "String", "length": 300},
-    {"name": "checkpoint_thread_id", "type": "String", "length": 100},
-    {"name": "deferred", "type": "JSON"},
-    {"name": "created_at", "type": "DateTime"},
-    {"name": "updated_at", "type": "DateTime"}
+    {
+      "name": "narrative",
+      "type": "Text"
+    },
+    {
+      "name": "rejection_reason",
+      "type": "String",
+      "length": 300
+    },
+    {
+      "name": "checkpoint_thread_id",
+      "type": "String",
+      "length": 100
+    },
+    {
+      "name": "prompt_set",
+      "type": "String",
+      "length": 60,
+      "comment": "Which prompt set produced this plan, as '<id>@<version>'. Nullable: plans written before prompts were versioned cannot say, and inventing a value for them would be worse than an honest NULL."
+    },
+    {
+      "name": "deferred",
+      "type": "JSON"
+    },
+    {
+      "name": "created_at",
+      "type": "DateTime"
+    },
+    {
+      "name": "updated_at",
+      "type": "DateTime"
+    }
   ],
   "indexes": [
-    {"name": "ix_care_plan_patient", "columns": ["patient_id"]},
-    {"name": "ix_care_plan_status", "columns": ["status"]}
+    {
+      "name": "ix_care_plan_patient",
+      "columns": [
+        "patient_id"
+      ]
+    },
+    {
+      "name": "ix_care_plan_status",
+      "columns": [
+        "status"
+      ]
+    }
   ]
 }
