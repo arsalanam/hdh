@@ -82,6 +82,7 @@ def test_agent_tools_build(db_session):
         "amend_care_plan_stage",
         "reject_care_plan_stage",
         "show_care_plan_rubric",
+        "write_care_plan_page",
     }
 
 
