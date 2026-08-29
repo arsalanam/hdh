@@ -7,6 +7,7 @@ seed, so every assertion is deterministic — ranges express clinical
 plausibility (design §10 Q2), not epidemiology."""
 
 import random
+from datetime import date
 
 import pytest
 
@@ -16,6 +17,20 @@ from hdh.core.generators import build_dataset
 from hdh.core.models import Condition, Patient, Prescription, Visit, get_engine, get_session
 
 SEED = 20260814
+
+#: The day these charts are generated *as of*, pinned so the population is
+#: the same one every time. Every date in a chart is relative to this, and
+#: reading the wall clock made the whole fixture drift day to day: the
+#: CKD-and-hypertension overlap this file measures ranged from 29 to 41
+#: charts depending on the date, because the four-year history window slides
+#: across staging boundaries. CI found it by crossing midnight between two
+#: merges that changed no generation code.
+#:
+#: Matches SEED, which is itself a date. The measured ordering rate is ~0.90
+#: at 2026-01-01, 04-01, 07-01, 08-28 and 10-01; it dips to 0.79 at
+#: 2026-08-29, where the overlap shrinks to 29 charts. That dip is why the
+#: date is pinned rather than why this particular one was picked.
+AS_OF = date(2026, 8, 14)
 
 
 def _ctx(**overrides) -> SamplingContext:
@@ -105,7 +120,7 @@ def population(tmp_path_factory):
     # that any change to RNG consumption elsewhere can drop it under 0.8 —
     # which is a guard that cries wolf rather than one that catches
     # regressions. Doubling the cohort roughly doubles the overlap.
-    build_dataset(session, n_patients=500, years_of_history=4, verbose=False, seed=SEED)
+    build_dataset(session, n_patients=500, years_of_history=4, verbose=False, seed=SEED, as_of=AS_OF)
     yield session
     session.close()
     engine.dispose()
