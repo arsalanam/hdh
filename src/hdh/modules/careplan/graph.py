@@ -397,12 +397,32 @@ def require_declared(specs: Sequence[NodeSpec]) -> None:
         )
 
 
-def compile_pipeline(checkpointer=None, pipeline: Sequence[NodeSpec] | None = None):
+def review_points(specs: Sequence[NodeSpec]) -> list[str]:
+    """The nodes a reviewed run pauses after — the ones that judged.
+
+    Derived from ``kind``, never listed. A node added to ``PIPELINE`` gets
+    its review point for free, and cannot be given one it does not deserve.
+
+    Deterministic nodes are deliberately absent. ``stratify``, ``triage`` and
+    ``reconcile`` make no judgement to review, and pausing where there is
+    nothing to decide teaches a reviewer to press enter without reading —
+    which costs more than the pauses are worth.
+    """
+    return [spec.name for spec in specs if spec.calls_a_model]
+
+
+def compile_pipeline(checkpointer=None, pipeline: Sequence[NodeSpec] | None = None, *, review: bool = False):
     """A compiled StateGraph over ``PIPELINE``, in declared order.
 
     Built *from* the declarations rather than replacing them: adding a node
     is still one tuple entry, and the graph is a runner rather than a second
     definition of the pipeline.
+
+    ``review=True`` pauses after every model node (:func:`review_points`).
+    It is a property of *how the graph was compiled*, not of what the nodes
+    do — deliberately, so the eval harness and a clinician run the same node
+    code. A pause implemented inside a node body would mean the thing
+    measured is not the thing shipped.
     """
     from langgraph.graph import END, START, StateGraph
 
@@ -411,6 +431,16 @@ def compile_pipeline(checkpointer=None, pipeline: Sequence[NodeSpec] | None = No
         raise ValueError("cannot compile an empty pipeline")
     require_declared(specs)
 
+    if review and checkpointer is None:
+        # Not a framework quirk worth passing through raw: pausing means
+        # keeping the half-finished run somewhere, and without a saver the
+        # graph would stop and lose it.
+        raise ValueError(
+            "a reviewed run needs a checkpointer — there is nowhere to keep a "
+            "paused plan otherwise. Pass one from checkpoints.build(), or "
+            "compile with review=False for an unattended run."
+        )
+
     builder = StateGraph(CarePlanState, context_schema=PlanServices)
     for spec in specs:
         builder.add_node(spec.name, _as_graph_node(spec))
@@ -418,7 +448,10 @@ def compile_pipeline(checkpointer=None, pipeline: Sequence[NodeSpec] | None = No
     for earlier, later in zip(specs, specs[1:], strict=False):
         builder.add_edge(earlier.name, later.name)
     builder.add_edge(specs[-1].name, END)
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile(
+        checkpointer=checkpointer,
+        interrupt_after=review_points(specs) if review else None,
+    )
 
 
 def thread_config(thread_id: str) -> dict:
