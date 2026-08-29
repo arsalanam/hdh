@@ -41,6 +41,7 @@ import pathlib
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -75,6 +76,14 @@ class Cohort:
     patients: int
     years_of_history: int
     strata: tuple[Stratum, ...]
+    #: The day the cohort's charts are generated as of. Pinned, because the
+    #: seed alone does not fix the patients: every chart date is relative to
+    #: the generation date, and rebuilding on a different day slides the
+    #: history window across staging boundaries. A cohort rebuilt tomorrow
+    #: would not be the cohort the baseline was measured on, and — the part
+    #: that makes it dangerous — would keep the same name, version and most
+    #: of the same MRNs while saying so nowhere.
+    as_of: date | None = None
 
     @property
     def case_count(self) -> int:
@@ -146,6 +155,7 @@ def load_cohort(name: str = DEFAULT_COHORT, root: pathlib.Path | None = None) ->
         name=str(raw["name"]),
         version=int(raw["version"]),
         seed=int(raw["seed"]),
+        as_of=date.fromisoformat(raw["as_of"]) if raw.get("as_of") else None,
         patients=int(raw["patients"]),
         years_of_history=int(raw["years_of_history"]),
         strata=strata,
@@ -162,6 +172,7 @@ def build_cohort(session, cohort: Cohort) -> int:
         years_of_history=cohort.years_of_history,
         verbose=False,
         seed=cohort.seed,
+        as_of=cohort.as_of,
     )
     session.commit()
     return cohort.patients
