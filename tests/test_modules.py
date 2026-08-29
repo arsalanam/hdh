@@ -75,6 +75,13 @@ def test_agent_tools_build(db_session):
         "amend_chart_entry",
         "void_chart_entry",
         "chart_history",
+        # care planning, steered stage by stage (S4b)
+        "start_care_plan",
+        "show_care_plan",
+        "approve_care_plan_stage",
+        "amend_care_plan_stage",
+        "reject_care_plan_stage",
+        "show_care_plan_rubric",
     }
 
 

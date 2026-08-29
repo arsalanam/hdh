@@ -217,7 +217,14 @@ def summarise(pause: Pause) -> list[str]:
     for key, value in pause.proposed.items():
         if key.startswith("dropped_"):
             continue
-        items = value or []
+        # Not every channel holds a list of drafts. `reconcile` writes a
+        # ReconcileReport, and counting it raised a TypeError at the one
+        # pause a clinician reaches last — the end of a finished plan.
+        if not isinstance(value, list | tuple):
+            if value is not None:
+                lines.append(f"  {key}: {value}")
+            continue
+        items = value
         lines.append(f"  {key}: {len(items)}")
         for index, item in enumerate(items, 1):
             statement = getattr(item, "statement", None) or str(item)
