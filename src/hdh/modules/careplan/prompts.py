@@ -34,6 +34,7 @@ import os
 import pathlib
 import string
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
@@ -150,6 +151,12 @@ def _cached(name: str | None) -> PromptSet:
     return load_prompt_set(name)
 
 
+#: Set by :func:`using` for the duration of a block. Not a configuration
+#: knob — the one caller is the tuning loop, which has to run the same code
+#: twice under two different sets.
+_override: PromptSet | None = None
+
+
 def prompt_set(name: str | None = None) -> PromptSet:
     """The active prompt set, read once per process.
 
@@ -157,9 +164,35 @@ def prompt_set(name: str | None = None) -> PromptSet:
     and re-reading a file per API call would be a lot of syscalls to learn
     the same thing. :func:`reset` exists for tests that write their own.
     """
+    if name is None and _override is not None:
+        return _override
     return _cached(name or os.environ.get(ENV_VAR) or DEFAULT)
 
 
+@contextmanager
+def using(name: str):
+    """Run a block with one prompt set active, whatever the environment says.
+
+    The tuning loop needs the *whole* run — generation and grading both — on
+    one set, because the grading instruction is part of the set too: an edit
+    that changed how plans are graded would otherwise be invisible. Passing a
+    name down every call would have meant threading it through nodes that
+    have no business knowing about prompt sets.
+
+    Restores on the way out, including on an exception, so a failed tuning
+    run cannot leave the process quietly generating under the wrong wording.
+    """
+    global _override
+    previous = _override
+    _override = prompt_set(name)
+    try:
+        yield _override
+    finally:
+        _override = previous
+
+
 def reset() -> None:
-    """Forget the cached set. For tests, and for a deliberate reload."""
+    """Forget the cached set and any override. For tests and reloads."""
+    global _override
+    _override = None
     _cached.cache_clear()
