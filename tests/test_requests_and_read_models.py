@@ -106,7 +106,15 @@ def test_the_agent_cannot_create_chart_rows(monkeypatch):
     """
     from hdh.modules.agent.chart_tools import build_chart_tools
 
-    names = {getattr(tool, "__name__", "") for tool in build_chart_tools(session=None)}
+    # `.name`, not `__name__`. A BetaFunctionTool carries the former and
+    # leaves the latter None, so the first version of this test collected an
+    # empty set and asserted it held no creators — passing without ever
+    # looking at a tool. The guard below makes that failure impossible to
+    # repeat: no names means the test itself is broken, not that the
+    # property holds.
+    names = {tool.name for tool in build_chart_tools(session=None)}
+    assert names and all(names), "no tool names — this absence test would be vacuous"
+
     creators = {n for n in names if "create" in n or "add" in n or "new" in n}
     assert not creators, f"the agent gained a chart-creating tool: {creators}"
 
