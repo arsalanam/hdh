@@ -176,6 +176,72 @@ def _seed_for(session, mrn: str) -> dict | str:
     return {"context": context}
 
 
+def _amend(desk: _Desk, mrn: str, keep: str) -> str:
+    """Keep only the numbered items in the stage under review, then go on.
+
+    Every refusal here is returned rather than raised: the caller is a tool,
+    and the agent has to be able to tell the user which number did not exist.
+    """
+    graph, services = desk.ready()
+    config = thread_config(_thread_for(mrn))
+    pause = review.where(graph, config)
+    if not pause.started:
+        return f"no care plan in progress for {mrn}"
+    if pause.finished:
+        return "the plan is complete — there is no stage under review"
+
+    try:
+        channel = _staged_key(pause)
+        items = list(pause.proposed.get(channel) or [])
+        kept = [items[i] for i in _numbers(keep, len(items))]
+    except ValueError as err:
+        return str(err)
+
+    try:
+        after = review.edit(graph, config, services, **{channel: kept})
+    except review.ReviewError as err:
+        return str(err)
+    headline = f"kept {len(kept)} of {len(items)} {channel}"
+    return headline + "\n\n" + _render(mrn, after)
+
+
+def _write_page(desk: _Desk, mrn: str, path: str) -> str:
+    """Render the plan under review to a file, and say what is missing.
+
+    The count of uncited elements comes back in the tool result rather than
+    living only on the page: it is the number the plan is graded on, and the
+    agent should be able to say it out loud without the user opening
+    anything.
+    """
+    from hdh.modules.careplan.render import Framing, uncited, view_from_state, write_plan_html
+
+    graph, _services = desk.ready()
+    pause = review.where(graph, thread_config(_thread_for(mrn)))
+    if not pause.started:
+        return f"no care plan in progress for {mrn} — start one first"
+
+    context = pause.values.get("context")
+    view = view_from_state(
+        mrn,
+        pause.values,
+        Framing(age=getattr(context, "age", None), sex=getattr(context, "sex", "") or ""),
+    )
+    written = write_plan_html(
+        path or f"care-plan-{mrn.lower()}.html",
+        view,
+        generated_note=(
+            f"Paused after {pause.node}." if not pause.finished else "Complete — every stage reviewed."
+        ),
+    )
+    missing = uncited(view)
+    tail = (
+        f" {len(missing)} element(s) cite nothing and are flagged on the page."
+        if missing
+        else " Every element cites something."
+    )
+    return f"wrote {written}.{tail}"
+
+
 def build_careplan_tools(session, *, services: PlanServices | None = None, graph=None) -> list:
     """The agent's care-planning toolset.
 
@@ -265,26 +331,7 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
             mrn: The patient's medical record number.
             keep: Item numbers to keep, comma separated, e.g. "1,2,4". Empty keeps none.
         """
-        graph, services = desk.ready()
-        config = thread_config(_thread_for(mrn))
-        pause = review.where(graph, config)
-        if not pause.started:
-            return f"no care plan in progress for {mrn}"
-        if pause.finished:
-            return "the plan is complete — there is no stage under review"
-
-        try:
-            channel = _staged_key(pause)
-            items = list(pause.proposed.get(channel) or [])
-            kept = [items[i] for i in _numbers(keep, len(items))]
-        except ValueError as err:
-            return str(err)
-
-        try:
-            after = review.edit(graph, config, services, **{channel: kept})
-        except review.ReviewError as err:
-            return str(err)
-        return f"kept {len(kept)} of {len(items)} {channel}\n\n" + _render(mrn, after)
+        return _amend(desk, mrn, keep)
 
     @beta_tool
     @guard
@@ -313,6 +360,17 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
         """
         return _rubric_text(name)
 
+    @beta_tool
+    @guard
+    def write_care_plan_page(mrn: str, path: str = "") -> str:
+        """Write the care plan so far as a self-contained HTML page a clinician can read, and return where it was written. Use this when the user wants to review the plan properly rather than in the chat, or wants to show it to someone. Elements that cite nothing are marked prominently, because that is what the plan is graded on.
+
+        Args:
+            mrn: The patient's medical record number.
+            path: Where to write it. Defaults to care-plan-<mrn>.html in the working directory.
+        """
+        return _write_page(desk, mrn, path)
+
     return [
         start_care_plan,
         show_care_plan,
@@ -320,4 +378,5 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
         amend_care_plan_stage,
         reject_care_plan_stage,
         show_care_plan_rubric,
+        write_care_plan_page,
     ]
