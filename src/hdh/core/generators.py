@@ -51,6 +51,10 @@ from .models import (
 
 fake = Faker("en_US")
 
+#: The default generation date. Bound at import so one run cannot straddle
+#: midnight and produce two half-charts on different footings.
+TODAY = date.today()
+
 
 @dataclass(frozen=True)
 class RunScope:
@@ -63,6 +67,17 @@ class RunScope:
     years: int
     rng: random.Random
     periods_per_year: int = 1  # staging cadence: 1=yearly, 4=quarterly
+    #: The day the chart is generated *as of*. Every date in a chart is
+    #: relative to this one — dates of birth, the start of the history
+    #: window, immunisation seasons — so reading the wall clock instead
+    #: makes "same seed, same dataset" true only within a single day.
+    #:
+    #: It is not a uniform shift, which is what makes it a real bug rather
+    #: than an offset: a one-day move changed how many patients reached CKD
+    #: from 40 to 29 in a 500-patient run, because the history window slid
+    #: across staging boundaries. CI caught it by crossing midnight between
+    #: two merges that changed no generation code.
+    as_of: date = TODAY
 
 
 Faker.seed(42)
@@ -312,10 +327,13 @@ def generate_patient(
     age: int,
     surname: str | None = None,
     address: tuple[str, str, str, str] | None = None,
+    *,
+    as_of: date | None = None,
 ) -> Patient:
     """Generate one synthetic patient of a given age (household-aware)."""
+    as_of = as_of or TODAY
     sex = random.choice(["M", "F"])
-    dob = date.today() - timedelta(days=age * 365 + random.randint(0, 364))
+    dob = as_of - timedelta(days=age * 365 + random.randint(0, 364))
     fname = fake.first_name_male() if sex == "M" else fake.first_name_female()
     street, city, state, zipc = address or (
         fake.street_address(),
@@ -652,7 +670,7 @@ def generate_visit_history(patient: Patient, fam_hx: dict, smoker: bool, scope: 
         if (staging := scope.catalog.get(name).staging) is not None
     }
 
-    start_date = date.today() - timedelta(days=years * 365)
+    start_date = scope.as_of - timedelta(days=years * 365)
     # Baseline-seeded conditions predate the chart window: the patient
     # ARRIVED with them, so their clinical onset lands before it (first
     # visit merely records them) — this is what keeps rolled onsets like
@@ -799,7 +817,7 @@ def _procedures_for(patient: Patient, visit, cname: str) -> list[dict]:
     return rows
 
 
-def generate_immunizations(session, patient: Patient, chronic: set) -> None:
+def generate_immunizations(session, patient: Patient, chronic: set, *, as_of: date | None = None) -> None:
     """Age-appropriate immunization history (simplified CDC shape)."""
     rows: list[dict] = []
     age = patient.age
@@ -820,7 +838,7 @@ def generate_immunizations(session, patient: Patient, chronic: set) -> None:
     if age >= 65 or chronic:
         for years_back in range(1, 4):
             if random.random() < 0.7:
-                season = date.today().year - years_back
+                season = (as_of or TODAY).year - years_back
                 rows.append(
                     {
                         "patient_id": patient.id,
@@ -837,7 +855,7 @@ def generate_immunizations(session, patient: Patient, chronic: set) -> None:
                 "patient_id": patient.id,
                 "vaccine": "Td (tetanus, diphtheria)",
                 "cvx_code": "139",
-                "administered_date": date.today() - timedelta(days=random.randint(0, 3650)),
+                "administered_date": (as_of or TODAY) - timedelta(days=random.randint(0, 3650)),
                 "dose_number": 1,
             }
         )
@@ -1335,7 +1353,7 @@ def _generate_one(
             row.description = stage.description
 
     generate_medication_statements(session, patient, chronic_seen, rx_stream)
-    generate_immunizations(session, patient, set(chronic_seen))
+    generate_immunizations(session, patient, set(chronic_seen), as_of=scope.as_of)
     return len(visit_tuples), final_chronic
 
 
@@ -1348,6 +1366,7 @@ def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE th
     catalog: ConditionCatalog | None = None,
     seed: int | None = None,
     progression_cadence: str = "yearly",
+    as_of: date | None = None,
 ):
     """Generate n_patients patients (as households) with full charts and commit.
 
@@ -1390,6 +1409,7 @@ def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE th
         years=years_of_history,
         rng=random.Random(seed),
         periods_per_year={"yearly": 1, "quarterly": 4}[progression_cadence],
+        as_of=as_of or TODAY,
     )
 
     for size in _household_sizes(n_patients):
@@ -1404,7 +1424,7 @@ def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE th
 
         # adults first — their real conditions drive the children's heredity
         for age in adults:
-            patient = generate_patient(age, surname=surname, address=address)
+            patient = generate_patient(age, surname=surname, address=address, as_of=scope.as_of)
             session.add(patient)
             session.flush()
             allergy_names = generate_allergies(session, patient)
@@ -1421,7 +1441,7 @@ def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE th
             members.append(patient)
 
         for age in children:
-            patient = generate_patient(age, surname=surname, address=address)
+            patient = generate_patient(age, surname=surname, address=address, as_of=scope.as_of)
             session.add(patient)
             session.flush()
             allergy_names = generate_allergies(session, patient)
