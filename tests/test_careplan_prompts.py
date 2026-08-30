@@ -185,3 +185,36 @@ def test_a_plan_records_the_prompt_set_that_produced_it():
     # Nullable: plans written before prompts were versioned cannot say which
     # wording produced them, and inventing one would be worse than a NULL.
     assert columns["prompt_set"].get("nullable") is not False
+
+
+# ── the candidate set for the goal_quality experiment ────────────────────
+
+
+def test_the_candidate_set_changes_exactly_one_prompt():
+    """#128 found goal_quality pinned at 3 because goals_with_target was 0
+    and the model was never asked for a target. This set asks.
+
+    Everything else must be byte-identical to default@1 — otherwise a score
+    that moves cannot be attributed to the sentences under test, which is
+    the entire reason prompt sets carry versions.
+    """
+    base = load_prompt_set("default")
+    trial = load_prompt_set("measurable-goals")
+    differing = [key for key in base.texts if base.texts[key] != trial.texts.get(key)]
+    assert differing == ["goals"]
+
+
+def test_the_candidate_asks_for_a_number_and_refuses_invention():
+    """Pushing for measurable targets is exactly the pressure that produces
+    invented clinical figures. The instruction has to make an empty target
+    the correct answer when the evidence does not supply one."""
+    goals = load_prompt_set("measurable-goals").text("goals")
+    assert "target_value" in goals
+    assert "leave target_value empty" in goals
+    assert "invented target is worse than an absent one" in goals
+
+
+def test_the_candidate_carries_a_different_stamp():
+    """So `compare` refuses, and a run under it cannot be read as a delta
+    against the default baseline."""
+    assert load_prompt_set("measurable-goals").stamp != load_prompt_set("default").stamp

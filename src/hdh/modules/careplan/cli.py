@@ -133,7 +133,14 @@ def _cmd_tune(session, args) -> None:
     except ImportError:
         raise SystemExit("careplan tune needs the agent extra: pip install 'hdh[agent]'") from None
 
-    result = tuning.tune(session, args.mrn, args.before, args.after, services, noise=tuning.cohort_noise())
+    try:
+        result = tuning.tune(
+            session, args.mrn, args.before, args.after, services, noise=tuning.cohort_noise()
+        )
+    except ValueError as err:
+        # A wrong MRN or a wrong database is a user error, not a crash. A
+        # traceback here says "hdh is broken" when the answer is one env var.
+        raise SystemExit(f"hdh careplan tune: {err}") from None
     print()
     for line in tuning.summarise(result):
         print(line)
