@@ -67,3 +67,7 @@ Desktop.ini
 *.log
 .scratch/
 docs/brochure/agent-first-ehr.html
+
+# Generated care-plan pages (`careplan tune --html`, `write_care_plan_page`)
+out/
+care-plan-*.html
