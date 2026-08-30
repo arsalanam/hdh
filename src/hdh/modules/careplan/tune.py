@@ -123,6 +123,19 @@ def summarise(result: TuneResult) -> list[str]:
     return lines
 
 
+def _database(session) -> str:
+    """Which database a session is actually on, for error messages.
+
+    Best-effort and never raises: this is only ever called on a path that is
+    already failing, and an error about an error helps nobody.
+    """
+    try:
+        url = session.get_bind().url
+        return f"{url.database or url.render_as_string(hide_password=True)}"
+    except Exception:
+        return "this database"
+
+
 def _side(prompt_set_name: str, values: Mapping[str, Any], scores, verdict: str) -> Side:
     from hdh.modules.careplan.render import uncited, view_from_state
 
@@ -156,7 +169,15 @@ def run_once(session, mrn: str, prompt_set_name: str, services=None, *, grade: b
 
     patient = session.query(Patient).filter(Patient.mrn == mrn).first()
     if patient is None:
-        raise ValueError(f"no patient {mrn}")
+        # Name the database. The eval cohort deliberately lives in its own
+        # one — `select_cases` selects across every patient present, so it
+        # cannot share a working database — which makes "no patient X" by
+        # far most often "right MRN, wrong database".
+        raise ValueError(
+            f"no patient {mrn} in {_database(session)}. "
+            f"The eval cohort lives in its own database; if this MRN came from "
+            f"`careplan eval cases`, point HDH_DB_URL at that one."
+        )
 
     with prompt_module.using(prompt_set_name) as active:
         context = build_context(session, patient)

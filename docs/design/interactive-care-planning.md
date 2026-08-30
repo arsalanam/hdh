@@ -236,3 +236,48 @@ same guessing this design is meant to end.
 - That prompts-as-data is behaviour-neutral. Moving a string should change
   nothing. Every previous "should change nothing" in this module was worth
   measuring, and two of them were wrong.
+
+## 10. What the machinery found (added 2026-08-30)
+
+Written after using it, because the point of §1 was that the answer was not
+available from the scores.
+
+**`goal_quality` is pinned by a schema field, not by the wording.** The
+first plan rendered by S4c gave the mechanism: `goals_with_target = 0`,
+while the rubric's anchor 5 requires "something measurable attached".
+`GOAL_SCHEMA` marks `target_value` optional and the instruction never asked
+for one.
+
+**Asking was not enough.** `measurable-goals@1` changed exactly one prompt —
+the goals instruction — to request a specific measurable value. Tuned
+against `default@1` on MRN06934949:
+
+| | default@1 | measurable-goals@1 |
+|---|---|---|
+| goals | 11 | 10 |
+| goals carrying a target | **0** | **0** |
+| goal_quality | 3 | 3 |
+
+The model omits an optional field rather than filling it. The cohort run was
+not needed to learn this and was not spent: the mechanism check —
+*did any goal get a target* — is cheaper and more decisive than the score,
+and it answers in two plans rather than twenty-four.
+
+**What this implies for the next attempt.** `target_value` has to be
+*required* in the schema, with an empty string permitted. Required-key with
+empty-allowed is "you must decide", not "you must invent" — which is the
+distinction the instruction already makes, and the one that keeps a
+fabricated target from scoring well.
+
+That change lives in the schema rather than the text, so to stay
+attributable it has to become part of the prompt set: **what the model is
+asked includes the shape it must answer in.** A schema change applied
+globally could not be compared against the set it was meant to test, which
+is the same attribution problem §6 exists to solve.
+
+**And a second question this run did not answer.** Traceability scored 2
+with *zero* uncited elements, in both runs. It is not failing on missing
+citations but on citations that do not support the claim attached to them.
+Nothing in the current facts measures that, so the grader is reading it
+directly — which is exactly the kind of judgement `facts` exist to take off
+the model.

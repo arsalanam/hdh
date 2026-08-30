@@ -208,3 +208,34 @@ def test_an_explicit_name_still_wins_inside_a_block(tmp_path, monkeypatch):
     prompts.reset()
     with prompts.using("one"):
         assert prompts.prompt_set("two").stamp == "two@2"
+
+
+# ── a refusal that names its cause ───────────────────────────────────────
+
+
+def test_an_unknown_mrn_names_the_database_it_looked_in(tmp_path):
+    """ "no patient X" is most often "right MRN, wrong database".
+
+    The eval cohort deliberately lives in its own database — select_cases
+    selects across every patient present, so it cannot share a working one —
+    which makes the database the single most useful thing the refusal can
+    say. This project's rule throughout: a refusal names its cause.
+    """
+    from hdh.core.models import Base, get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.tune import run_once
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path / "empty.db"))
+    Base.metadata.create_all(engine)
+    session = get_session(engine)
+    try:
+        with pytest.raises(ValueError) as caught:
+            run_once(session, "MRN06934949", "default")
+        message = str(caught.value)
+        assert "MRN06934949" in message
+        assert "empty.db" in message
+        assert "HDH_DB_URL" in message
+    finally:
+        session.close()
+        engine.dispose()
