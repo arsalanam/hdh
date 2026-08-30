@@ -58,6 +58,13 @@ def register_cli(subparsers) -> None:
 
     sub.add_parser("retrievers", help="Which retrieval strategies exist, and which one is configured")
 
+    tune_p = sub.add_parser("tune", help="One patient, two prompt sets — see what a wording change did")
+    tune_p.add_argument("--mrn", required=True)
+    tune_p.add_argument("--before", default="default", help="Prompt set to compare from")
+    tune_p.add_argument("--after", required=True, help="Prompt set to compare to")
+    tune_p.add_argument("--html", help="Directory to write both plans as pages")
+    tune_p.add_argument("--model", help="Model override (default: HDH_AGENT_MODEL)")
+
     ev = sub.add_parser("eval", help="The fixed cohort: build it, check it, measure against it")
     ev_sub = ev.add_subparsers(dest="eval_cmd", required=True)
     ev_build = ev_sub.add_parser("build", help="Regenerate the cohort's patients from its pinned seed")
@@ -97,6 +104,7 @@ def run(session, args) -> None:
         "retrievers": lambda: _cmd_retrievers(),
         "facts": lambda: _cmd_facts(session, args),
         "evaluate": lambda: _cmd_evaluate(session, args),
+        "tune": lambda: _cmd_tune(session, args),
         "eval": lambda: _cmd_eval(session, args),
     }[args.careplan_cmd]()
 
@@ -105,6 +113,34 @@ def _baseline_path(cohort: str):
     from hdh.modules.careplan import evalset
 
     return evalset.HERE / (f"baseline-{cohort}.json" if cohort != "default" else "baseline.json")
+
+
+def _cmd_tune(session, args) -> None:
+    """`hdh careplan tune` — the fast loop, with the slow one named at the end.
+
+    Prints the comparison and then refuses to draw a conclusion from it. The
+    refusal is not decoration: the person reading this just made the change
+    and wants it to have worked, which is exactly when a single-case delta
+    is most likely to be believed.
+    """
+    from hdh.modules.careplan import tune as tuning
+    from hdh.modules.careplan.evaluate import llm_grader
+    from hdh.modules.careplan.generate import llm_selector
+    from hdh.modules.careplan.graph import PlanServices
+
+    try:
+        services = PlanServices(selector=llm_selector(model=args.model), grader=llm_grader(model=args.model))
+    except ImportError:
+        raise SystemExit("careplan tune needs the agent extra: pip install 'hdh[agent]'") from None
+
+    result = tuning.tune(session, args.mrn, args.before, args.after, services, noise=tuning.cohort_noise())
+    print()
+    for line in tuning.summarise(result):
+        print(line)
+    if args.html:
+        print()
+        for path in tuning.written_pages(result, args.html):
+            print(f"  wrote {path}")
 
 
 def _cmd_eval(session, args) -> None:
