@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from hdh.core.medications import ONGOING_WINDOW_DAYS, is_current
 from hdh.core.models import (
     Condition,
     Patient,
@@ -70,6 +71,28 @@ def _preventive_interval(age: int) -> int:
     return 365
 
 
+def _running_drug_counts(session, as_of) -> dict[int, int]:
+    """Distinct medications each patient is still on, by patient id.
+
+    Counted in Python rather than by the database, because "still running"
+    is a rule about each prescription's duration and not a date filter on
+    the visit that wrote it. Counting distinct names inside a 365-day window
+    made a five-day antibiotic finished in March part of December's
+    polypharmacy figure (#115) — which is graded, acted on, and was
+    reporting ten medications for patients who were not on ten.
+    """
+    year_ago = as_of - timedelta(days=ONGOING_WINDOW_DAYS)
+    running: dict[int, set[str]] = {}
+    for patient_id, visit_date, drug_name, duration in (
+        session.query(Visit.patient_id, Visit.visit_date, Prescription.drug_name, Prescription.duration_days)
+        .join(Prescription, Prescription.visit_id == Visit.id)
+        .filter(Visit.visit_date >= year_ago)
+    ):
+        if is_current(visit_date, duration, as_of):
+            running.setdefault(patient_id, set()).add((drug_name or "").lower())
+    return {pid: len(names) for pid, names in running.items()}
+
+
 def detect_gaps(
     session: Session, mrn: str | None = None, limit: int | None = None, as_of: date | None = None
 ) -> list[CareGap]:
@@ -117,14 +140,7 @@ def detect_gaps(
     ):
         uncontrolled.setdefault(pid, []).append(desc)
 
-    year_ago = as_of - timedelta(days=365)
-    drug_counts: dict[int, int] = {
-        pid: n
-        for pid, n in session.query(Visit.patient_id, func.count(func.distinct(Prescription.drug_name)))
-        .join(Prescription, Prescription.visit_id == Visit.id)
-        .filter(Visit.visit_date >= year_ago)
-        .group_by(Visit.patient_id)
-    }
+    drug_counts = _running_drug_counts(session, as_of)
 
     # ── Evaluate rules per patient ───────────────────────────────────────────
     q = session.query(Patient)

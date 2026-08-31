@@ -210,17 +210,14 @@ def _class_root(drug_class: str | None) -> str:
 def _prescription_is_current(started, rx: dict, as_of) -> bool:
     """Is this prescription still running on ``as_of``?
 
-    A course with a stated duration ends when it ends — a five-day antibiotic
-    is not a current medication in month eleven, and treating it as one is
-    how "polypharmacy" comes to include things the patient finished last
-    spring. Only prescriptions with no duration fall back to the window.
+    Delegates to :mod:`hdh.core.medications`, which is the one definition
+    the readers share. This used to be its own copy, and the copies drifted:
+    the generator respected duration and the two modules reading the chart
+    did not (#115).
     """
-    from datetime import timedelta
+    from .medications import is_current_row
 
-    days = rx.get("duration_days")
-    if days:
-        return started + timedelta(days=int(days)) >= as_of
-    return started >= as_of - timedelta(days=ONGOING_WINDOW_DAYS)
+    return is_current_row(rx, as_of, started=started, window_days=ONGOING_WINDOW_DAYS)
 
 
 def _current_medications(rx_stream: list[tuple], as_of) -> tuple[set[str], set[str]]:
