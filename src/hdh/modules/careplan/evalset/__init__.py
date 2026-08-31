@@ -351,6 +351,11 @@ class Report:
     #: MRNs identical, the charts byte-for-byte the same, and the scores move
     #: anyway. Nothing about the run looks different.
     prompts: str = ""
+    #: What the whole run cost, in tokens. Recorded in the baseline because
+    #: cost is half of "did this change help": a prompt that lifts the mean
+    #: 0.1 while tripling tokens is a trade, and a baseline that stores only
+    #: the score cannot show the other side of it.
+    usage: dict = field(default_factory=dict)
     measurements: list[Measurement] = field(default_factory=list)
 
     @property
@@ -389,6 +394,7 @@ class Report:
             "cohort": self.cohort,
             "version": self.version,
             "prompts": self.prompts,
+            "usage": self.usage,
             "mean": self.mean,
             "noise": self.noise,
             "widest": self.widest,
@@ -563,12 +569,20 @@ class RunSettings:
 
 def run(session, cases: Sequence[Case], services, settings: RunSettings, on_case=None) -> Report:
     """Measure every case. Returns the report; writes no baseline."""
+    from hdh.modules.careplan import usage as usage_module
     from hdh.modules.careplan.prompts import prompt_set
 
     report = Report(cohort=settings.cohort, version=settings.version, prompts=prompt_set().stamp)
-    for case in cases:
-        measurement = measure_case(session, case, services, repeat=settings.repeat, revise=settings.revise)
-        report.measurements.append(measurement)
-        if on_case is not None:
-            on_case(measurement)
+    # One ledger around the whole run. Per-case would be finer but the
+    # question the baseline has to answer is what a cohort run costs, and
+    # a per-case figure is already inside `by_stage` proportionally.
+    with usage_module.collecting() as ledger:
+        for case in cases:
+            measurement = measure_case(
+                session, case, services, repeat=settings.repeat, revise=settings.revise
+            )
+            report.measurements.append(measurement)
+            if on_case is not None:
+                on_case(measurement)
+    report.usage = ledger.as_dict()
     return report

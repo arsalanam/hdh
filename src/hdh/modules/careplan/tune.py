@@ -53,6 +53,9 @@ class Side:
     interventions: int = 0
     uncited: int = 0
     values: Mapping[str, Any] = field(default_factory=dict)
+    #: What this side cost. A wording change that scores the same for
+    #: half the tokens is a real result, and one the scores cannot show.
+    usage: Any = None
 
     @property
     def mean(self) -> float | None:
@@ -113,6 +116,13 @@ def summarise(result: TuneResult) -> list[str]:
         if before.mean is not None and after.mean is not None:
             lines.append(f"  mean {before.mean} -> {after.mean} ({after.mean - before.mean:+.3f})")
 
+    for side in (before, after):
+        if side.usage is not None and side.usage.calls:
+            from hdh.modules.careplan.usage import summarise as usage_lines
+
+            lines.append("")
+            lines.extend(f"  {line}" for line in usage_lines(side.usage, f"{side.prompt_set}: "))
+
     lines.append("")
     lines.append(f"  {CANNOT_DECIDE}")
     if result.noise:
@@ -136,7 +146,7 @@ def _database(session) -> str:
         return "this database"
 
 
-def _side(prompt_set_name: str, values: Mapping[str, Any], scores, verdict: str) -> Side:
+def _side(prompt_set_name: str, values: Mapping[str, Any], scores, verdict: str, ledger=None) -> Side:
     from hdh.modules.careplan.render import uncited, view_from_state
 
     view = view_from_state("—", values)
@@ -149,6 +159,7 @@ def _side(prompt_set_name: str, values: Mapping[str, Any], scores, verdict: str)
         interventions=len(values.get("interventions") or values.get("raw_interventions") or ()),
         uncited=len(uncited(view)),
         values=dict(values),
+        usage=ledger,
     )
 
 
@@ -163,6 +174,7 @@ def run_once(session, mrn: str, prompt_set_name: str, services=None, *, grade: b
 
     from hdh.core.models import Patient
     from hdh.modules.careplan import prompts as prompt_module
+    from hdh.modules.careplan import usage as usage_module
     from hdh.modules.careplan.context import build_context
     from hdh.modules.careplan.graph import PlanServices, compile_pipeline, thread_config, to_draft
     from hdh.modules.careplan.rubric import select_rubric
@@ -179,7 +191,7 @@ def run_once(session, mrn: str, prompt_set_name: str, services=None, *, grade: b
             f"`careplan eval cases`, point HDH_DB_URL at that one."
         )
 
-    with prompt_module.using(prompt_set_name) as active:
+    with prompt_module.using(prompt_set_name) as active, usage_module.collecting() as ledger:
         context = build_context(session, patient)
         resolved = (services or PlanServices()).resolved(session)
         graph = compile_pipeline(checkpointer=InMemorySaver())
@@ -202,7 +214,7 @@ def run_once(session, mrn: str, prompt_set_name: str, services=None, *, grade: b
             rubric, evaluation = evaluate(evidence, resolved.grader, rubric=select_rubric(context))
             scores = {s.dimension_id: s.score for s in evaluation.scores if s.score is not None}
             verdict = evaluation.verdict(rubric)
-        return _side(active.stamp, values, scores, verdict)
+        return _side(active.stamp, values, scores, verdict, ledger)
 
 
 def tune(session, mrn: str, before: str, after: str, services=None, *, noise: float = 0.0):
