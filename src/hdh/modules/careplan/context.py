@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+from hdh.core.medications import ONGOING_WINDOW_DAYS, is_current_row
+
 #: Drug classes that lower glucose, for the med-safety rules. Matched
 #: case-insensitively against `Prescription.drug_class`, which the
 #: condition packs author (`Sulfonylurea`, `Biguanide`, `DPP-4 inhibitor`).
@@ -26,12 +28,11 @@ DELAYED_RESCUE_CLASSES = ("sulfonylurea", "insulin", "anticoagulant", "opioid", 
 
 #: How far back a prescription still counts as an active medication.
 #:
-#: Matches the window `caregaps` already uses for its polypharmacy rule, so
-#: the two modules cannot disagree about whether a patient is on five drugs.
-#: Without a window at all, "active medications" becomes every prescription
-#: ever written — a five-day antiviral and a saline nasal spray counted
-#: alongside a statin, and a polypharmacy flag that fires on everyone.
-MEDICATION_WINDOW_DAYS = 365
+#: Re-exported from `hdh.core.medications`, which owns the rule. It used to
+#: be restated here, and a restated constant is how `careplan` and
+#: `caregaps` came to agree on the window while disagreeing about whether a
+#: finished course counts at all (#115).
+MEDICATION_WINDOW_DAYS = ONGOING_WINDOW_DAYS
 
 
 @dataclass(frozen=True)
@@ -157,12 +158,9 @@ def build_context(session, patient, as_of: date | None = None) -> CarePlanContex
     the same anchor `caregaps` uses, because a synthetic chart generated
     last year is not stale, it is simply dated.
     """
-    from datetime import timedelta
-
     from hdh.modules.caregaps import reference_date
 
     as_of = as_of or reference_date(session)
-    window_start = as_of - timedelta(days=MEDICATION_WINDOW_DAYS)
     problems = tuple(
         ProblemView(
             icd10=condition.icd10_code,
@@ -177,9 +175,14 @@ def build_context(session, patient, as_of: date | None = None) -> CarePlanContex
     seen: set[str] = set()
     medications: list[MedicationView] = []
     for visit in sorted(patient.visits, key=lambda v: v.visit_date, reverse=True):
-        if visit.visit_date < window_start:
-            continue
         for rx in visit.prescriptions:
+            # Per prescription, not per visit. A course ends when its
+            # duration runs out — a five-day antibiotic is not an active
+            # medication eleven months later (#115) — and a long course
+            # written before the window can still be running, which a
+            # visit-level date filter would have dropped.
+            if not is_current_row(rx, as_of, started=visit.visit_date):
+                continue
             key = (rx.drug_name or "").lower()
             if not key or key in seen:
                 continue
