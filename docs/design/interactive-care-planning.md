@@ -281,3 +281,32 @@ citations but on citations that do not support the claim attached to them.
 Nothing in the current facts measures that, so the grader is reading it
 directly — which is exactly the kind of judgement `facts` exist to take off
 the model.
+
+### 10.1 The second attempt, built but not run (2026-08-30)
+
+`measurable-goals@2` makes `target_value` required, carried by the prompt
+set so the change stays attributable — **what the model is asked includes
+the shape it must answer in**. A schema change applied globally could not be
+compared against the set it was meant to test.
+
+Required does not mean non-empty. An empty string remains the honest answer
+when nothing retrieved supports a number, and the instruction asks for
+exactly that. The requirement forces a decision, not a figure.
+
+**It has not been run.** The Anthropic account is out of credit, so the
+tuning run failed at the first call with a 400 and produced no plans.
+Everything deterministic is verified — the schema follows the active set,
+`default` is unmoved, `target_value` stays optional there and offered in
+both — but whether requiring the key actually produces targets is **not
+known**, and nothing in this repository should be read as saying it does.
+
+To find out, when the account has credit:
+
+```
+hdh careplan tune --mrn MRN06934949 --after measurable-goals --html ./out
+```
+
+The diagnostic is not the score. It is whether any goal carries a target:
+`goals carrying a target` in the tune output, or `class="target"` in the
+rendered page. That question is answered by two plans, and it decides
+whether a cohort run is worth spending on at all.

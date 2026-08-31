@@ -199,10 +199,25 @@ CONCERN_SCHEMA = _selection_schema(
     {"concern_type": {"type": "string", "enum": ["condition", "risk", "sdoh", "functional"]}},
     ["concern_type"],
 )
-GOAL_SCHEMA = _selection_schema(
-    {"concern_index": {"type": "integer"}, "target_value": {"type": "string"}},
-    ["concern_index"],
-)
+
+
+def goal_schema() -> dict:
+    """The shape a goal must answer in, under the active prompt set.
+
+    ``target_value`` is always offered; whether it is *required* comes from
+    the set. Required does not mean non-empty — an empty string is the
+    honest answer when nothing retrieved supports a number, and the
+    instruction says so. The requirement forces a decision, not a figure.
+    """
+    required = ["concern_index"]
+    if prompt_set().requires_goal_target:
+        required.append("target_value")
+    return _selection_schema(
+        {"concern_index": {"type": "integer"}, "target_value": {"type": "string"}},
+        required,
+    )
+
+
 INTERVENTION_SCHEMA = _selection_schema(
     {
         "goal_index": {"type": "integer"},
@@ -420,7 +435,7 @@ def propose_goals(
                 instruction=_instruct(prompt_set().text("goals"), feedback),
                 situation=f"{situation(context, ())}\n\nCONCERN: {concern.statement}",
                 candidates=candidates,
-                schema=GOAL_SCHEMA,
+                schema=goal_schema(),
             )
         )
         _kept(

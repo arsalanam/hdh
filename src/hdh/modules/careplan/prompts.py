@@ -77,6 +77,21 @@ class PromptSet:
     prompt_set_id: str
     version: int
     texts: Mapping[str, str]
+    #: Must a goal answer with a ``target_value`` key at all?
+    #:
+    #: Part of the set because **what the model is asked includes the shape
+    #: it must answer in**. Measured (design §10): asking for a target in
+    #: words moved nothing, because the field was optional and a model omits
+    #: an optional field rather than filling it — 0 goals carried a target
+    #: before and after. A schema change applied globally could not be
+    #: attributed to the set it was meant to test, which is the same problem
+    #: versions exist to solve.
+    #:
+    #: Required-key with an empty string still permitted: "you must decide",
+    #: not "you must invent". The instruction says to leave it empty when
+    #: nothing supports a number, and a fabricated target scores well while
+    #: being worse than none.
+    requires_goal_target: bool = False
 
     def text(self, key: str) -> str:
         """One prompt, or a refusal naming what exists.
@@ -123,6 +138,7 @@ def parse_prompt_set(raw: Mapping) -> PromptSet:
         prompt_set_id=str(raw["prompt_set_id"]),
         version=int(raw["version"]),
         texts=MappingProxyType(texts),
+        requires_goal_target=bool(raw.get("requires_goal_target", False)),
     )
 
 
