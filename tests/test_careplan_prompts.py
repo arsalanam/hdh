@@ -218,3 +218,53 @@ def test_the_candidate_carries_a_different_stamp():
     """So `compare` refuses, and a run under it cannot be read as a delta
     against the default baseline."""
     assert load_prompt_set("measurable-goals").stamp != load_prompt_set("default").stamp
+
+
+# ── the shape is part of what the model is asked ─────────────────────────
+
+
+def test_the_default_set_does_not_require_a_goal_target():
+    """default is what every baseline was measured under and must not move."""
+    assert load_prompt_set("default").requires_goal_target is False
+
+
+def test_the_candidate_requires_one():
+    assert load_prompt_set("measurable-goals").requires_goal_target is True
+
+
+def test_the_goal_schema_follows_the_active_set():
+    """Design §10: asking in words moved nothing, because a model omits an
+    optional field rather than filling it. The requirement has to be part of
+    the set — applied globally it could not be attributed to the set it was
+    meant to test."""
+    from hdh.modules.careplan.generate import goal_schema
+
+    def required(name):
+        with prompts.using(name):
+            return goal_schema()["properties"]["selections"]["items"]["required"]
+
+    assert "target_value" not in required("default")
+    assert "target_value" in required("measurable-goals")
+
+
+def test_target_value_is_offered_by_both_sets():
+    """Required-ness is the only difference. A set that did not offer the
+    field at all would be a different experiment."""
+    from hdh.modules.careplan.generate import goal_schema
+
+    for name in ("default", "measurable-goals"):
+        with prompts.using(name):
+            properties = goal_schema()["properties"]["selections"]["items"]["properties"]
+            assert "target_value" in properties
+
+
+def test_requiring_a_target_does_not_require_a_non_empty_one():
+    """ "You must decide", not "you must invent". An empty string stays a
+    valid answer, because a fabricated target scores well while being worse
+    than no target at all."""
+    from hdh.modules.careplan.generate import goal_schema
+
+    with prompts.using("measurable-goals"):
+        properties = goal_schema()["properties"]["selections"]["items"]["properties"]
+    assert properties["target_value"] == {"type": "string"}
+    assert "minLength" not in properties["target_value"]
