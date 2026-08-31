@@ -83,6 +83,10 @@ def test_agent_tools_build(db_session):
         "reject_care_plan_stage",
         "show_care_plan_rubric",
         "write_care_plan_page",
+        # medication refills, milestone C
+        "list_medication_orders",
+        "check_medication_refill",
+        "refill_medication",
     }
 
 

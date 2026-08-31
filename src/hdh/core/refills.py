@@ -136,3 +136,85 @@ def decide_refill(session, order, as_of: date) -> Decision:
     if order is None:
         return Decision(False, "no authorising order on record for this medication")
     return can_refill(order, as_of, issued=issued_count(session, order))
+
+
+def find_authorising_order(session, patient_id: int, drug_name: str, as_of: date):
+    """The medication order a refill of ``drug_name`` would draw on.
+
+    The most recent one that is still open. Matched on ``display``, which is
+    what the order carries — there is no drug reference on a
+    ``ServiceRequest`` yet, and inventing one here would put a second
+    identity for a drug beside `medications`.
+
+    Returns ``None`` rather than guessing when nothing matches. "No
+    authorising order on record" is a real and common answer — the patient
+    may simply never have been prescribed it.
+    """
+    from sqlalchemy import select
+
+    from hdh.core.models import RequestStatus, ServiceKind, ServiceRequest
+
+    needle = (drug_name or "").strip().lower()
+    if not needle:
+        return None
+
+    candidates = session.execute(
+        select(ServiceRequest)
+        .where(
+            ServiceRequest.patient_id == patient_id,
+            ServiceRequest.kind == ServiceKind.MEDICATION,
+            ServiceRequest.voided_at.is_(None),
+        )
+        .order_by(ServiceRequest.requested_date.desc())
+    ).scalars()
+
+    fallback = None
+    for order in candidates:
+        if needle not in (order.display or "").lower():
+            continue
+        # An open order first; otherwise keep the most recent match so the
+        # refusal can name what is actually wrong with it — "closed on
+        # 2026-03-01" is more use than "no order on record".
+        if order.status in (RequestStatus.DRAFT, RequestStatus.ACTIVE) and order.end_date is None:
+            return order
+        fallback = fallback or order
+    return fallback
+
+
+def record_fill(session, order, when: date, *, origin, days_supply=None, quantity=None):
+    """Record that a supply happened, if the order permits one.
+
+    Returns ``(decision, dispense)``. The dispense is ``None`` when refused,
+    and **nothing is written** in that case — the refusal is the whole
+    outcome.
+
+    This is the one place a fill may be created. Putting the check and the
+    write together means no caller can do half of it, which is the mistake
+    `fulfil` was written to prevent for requests: a status moved without its
+    date, discovered only when everything downstream read it wrong.
+
+    The dispense carries ``origin`` for as long as the row exists, so a fill
+    an agent recorded stays distinguishable from one a clinician did. That
+    is the property that makes letting an agent write here acceptable at
+    all.
+    """
+    from hdh.core.models import MedicationDispense
+
+    decision = decide_refill(session, order, when)
+    if not decision.allowed:
+        return decision, None
+
+    dispense = MedicationDispense(
+        patient_id=order.patient_id,
+        request_id=order.id,
+        drug_name=order.display,
+        dispensed_date=when,
+        days_supply=days_supply,
+        quantity=quantity,
+        origin=getattr(origin, "value", origin),
+    )
+    session.add(dispense)
+    session.flush()
+    # Re-read rather than subtract: remaining is derived, and the decision
+    # above was taken before this fill existed.
+    return decide_refill(session, order, when), dispense
