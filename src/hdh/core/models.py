@@ -504,6 +504,24 @@ class ServiceRequest(Base):
     requested_date: Mapped[date] = mapped_column(Date)
     occurrence_date: Mapped[date | None] = mapped_column(Date)  # "before the next visit"
     end_date: Mapped[date | None] = mapped_column(Date)  # explicit, never derived (§3)
+
+    #: How many refills the prescriber authorised beyond the first supply.
+    #:
+    #: MEDICATION orders only; NULL everywhere else and NULL on a medication
+    #: order that authorised none. Refills *remaining* is deliberately not
+    #: stored — it is `refills_authorised - (issued - 1)`, counted from
+    #: `medication_dispenses`. A counter decremented in two places drifts,
+    #: and `Prescription.refills` already demonstrates the failure: it
+    #: records what was authorised, never moves, and therefore reads as
+    #: current when it is not.
+    refills_authorised: Mapped[int | None] = mapped_column(Integer)
+    #: The last date this authorisation may be filled on.
+    #:
+    #: Distinct from `end_date`, which says the request's life is over
+    #: (§7 Q2). An order can expire while still open — nobody closed it, it
+    #: simply ran out of time — and the refusals read differently: "closed on
+    #: 2026-03-01" is not "expired on 2026-03-01".
+    valid_until: Mapped[date | None] = mapped_column(Date)
     quantity: Mapped[float | None] = mapped_column(Float)
     route: Mapped[str | None] = mapped_column(String(40))
     sig: Mapped[str | None] = mapped_column(String(300))  # verbatim directions
