@@ -24,6 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from hdh.modules.careplan import usage
 from hdh.modules.careplan.context import CarePlanContext
 from hdh.modules.careplan.prompts import prompt_set
 from hdh.modules.careplan.stratify import RiskFlag
@@ -264,10 +265,29 @@ def llm_selector(model: str | None = None, client=None) -> Selector:
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": dict(task.schema)}},
         )
+        # The stage is read from the schema rather than passed in: only a
+        # goal carries concern_index and only an intervention goal_index, so
+        # the shape of the answer names the node that asked for it. Passing
+        # it would have meant changing the Selector signature, which is the
+        # seam every fake selector depends on.
+        usage.record(response, _stage_of(task.schema))
         blocks = [block for block in response.content if block.type == "text"]
         return json.loads(blocks[0].text)
 
     return select
+
+
+def _stage_of(schema: Mapping[str, Any]) -> str:
+    """Which node a selection task came from, from the shape it demands."""
+    try:
+        properties = schema["properties"]["selections"]["items"]["properties"]
+    except (KeyError, TypeError):
+        return "selection"
+    if "goal_index" in properties:
+        return "interventions"
+    if "concern_index" in properties:
+        return "goals"
+    return "concerns"
 
 
 # ── retrieval helpers ────────────────────────────────────────────────────

@@ -248,6 +248,20 @@ def _cmd_eval_run(session, args, cohort, cases) -> None:
         f"noise {report.noise} (pooled sd; widest observed range {report.widest})"
     )
 
+    if report.usage.get("calls"):
+        from hdh.modules.careplan.usage import Ledger
+        from hdh.modules.careplan.usage import summarise as usage_lines
+
+        spent = Ledger(
+            calls=report.usage["calls"],
+            input_tokens=report.usage["input_tokens"],
+            output_tokens=report.usage["output_tokens"],
+            by_stage={stage: Ledger(**counts) for stage, counts in report.usage["by_stage"].items()},
+        )
+        print()
+        for line in usage_lines(spent, "  cost: "):
+            print(line)
+
     path = _baseline_path(cohort.name)
     if path.is_file():
         print()

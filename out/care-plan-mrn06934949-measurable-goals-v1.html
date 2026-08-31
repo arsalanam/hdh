@@ -1,0 +1,143 @@
+<title>Care Plan MRN06934949</title>
+<style>
+:root {
+  --ink: #12161c; --ink-soft: #4a5361; --ink-faint: #6b7480;
+  --ground: #fbfaf8; --card: #ffffff; --rule: #e3e2de;
+  --accent: #1f4b73; --accent-soft: #eaf1f8;
+  --warn: #8a4b12; --warn-soft: #fdf1e3; --warn-rule: #e0b184;
+  --good: #2f5d3f; --good-soft: #ebf3ed;
+  --shadow: 0 1px 2px rgba(18,22,28,.06), 0 4px 12px rgba(18,22,28,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #e8e6e1; --ink-soft: #a9b0b9; --ink-faint: #838b95;
+    --ground: #14171b; --card: #1b1f24; --rule: #2b3038;
+    --accent: #8fbde6; --accent-soft: #1c2833;
+    --warn: #e6b075; --warn-soft: #2b2015; --warn-rule: #6b4a22;
+    --good: #8fc7a1; --good-soft: #17241b;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.2);
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #e8e6e1; --ink-soft: #a9b0b9; --ink-faint: #838b95;
+  --ground: #14171b; --card: #1b1f24; --rule: #2b3038;
+  --accent: #8fbde6; --accent-soft: #1c2833;
+  --warn: #e6b075; --warn-soft: #2b2015; --warn-rule: #6b4a22;
+  --good: #8fc7a1; --good-soft: #17241b;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.2);
+}
+
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px; line-height: 1.55;
+}
+.sheet { max-width: 54rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+
+.synthetic {
+  display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap;
+  background: var(--warn-soft); border: 1px solid var(--warn-rule);
+  border-radius: .4rem; padding: .6rem .85rem; margin-bottom: 2rem;
+  color: var(--warn); font-size: .82rem;
+}
+.synthetic b { letter-spacing: .08em; text-transform: uppercase; }
+
+h1 {
+  font-family: ui-serif, Georgia, "Times New Roman", serif;
+  font-size: 2rem; line-height: 1.15; margin: 0 0 .35rem;
+  text-wrap: balance; font-weight: 600;
+}
+.who { color: var(--ink-soft); font-size: .95rem; margin: 0 0 2rem; }
+.who span + span::before { content: " · "; color: var(--ink-faint); }
+
+h2 {
+  font-family: ui-serif, Georgia, serif; font-size: 1.05rem; font-weight: 600;
+  letter-spacing: .02em; margin: 2.75rem 0 .9rem; padding-bottom: .4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.concern {
+  background: var(--card); border: 1px solid var(--rule); border-radius: .5rem;
+  box-shadow: var(--shadow); padding: 1.1rem 1.25rem; margin-bottom: 1.1rem;
+}
+.concern > header { display: flex; gap: .7rem; align-items: baseline; flex-wrap: wrap; }
+.concern h3 {
+  font-size: 1.06rem; font-weight: 600; margin: 0; flex: 1 1 18rem; text-wrap: balance;
+}
+.kind {
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--accent); background: var(--accent-soft);
+  border-radius: 2rem; padding: .18rem .6rem; white-space: nowrap;
+}
+
+.goal { margin: 1rem 0 0 0; padding: .85rem 0 0; border-top: 1px dashed var(--rule); }
+.goal > p { margin: 0; font-weight: 550; }
+.target { color: var(--ink-soft); font-weight: 400; }
+
+ul.actions { list-style: none; margin: .6rem 0 0; padding: 0; }
+ul.actions li {
+  position: relative; padding: .3rem 0 .3rem 1.15rem; color: var(--ink-soft);
+}
+ul.actions li::before {
+  content: ""; position: absolute; left: .25rem; top: .95em;
+  width: .35rem; height: .35rem; border-radius: 50%; background: var(--accent);
+}
+.role {
+  font-size: .72rem; color: var(--ink-faint); text-transform: uppercase;
+  letter-spacing: .06em; margin-left: .4rem;
+}
+
+.cites { margin-top: .4rem; display: flex; gap: .35rem; flex-wrap: wrap; }
+.ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem;
+  color: var(--good); background: var(--good-soft);
+  border-radius: .25rem; padding: .12rem .45rem; word-break: break-all;
+}
+/* The point of the whole page. Traceability governs 21 of 24 verdicts, so
+   an element with nothing behind it is the loudest thing here. */
+.ref.none {
+  color: var(--warn); background: var(--warn-soft);
+  border: 1px solid var(--warn-rule); font-weight: 600;
+}
+
+.withheld { background: var(--card); border: 1px solid var(--rule); border-radius: .5rem; }
+.withheld > div { padding: .85rem 1.25rem; border-bottom: 1px solid var(--rule); }
+.withheld > div:last-child { border-bottom: 0; }
+.withheld h4 {
+  margin: 0 0 .3rem; font-size: .72rem; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--ink-faint); font-weight: 600;
+}
+.withheld p { margin: .15rem 0; color: var(--ink-soft); font-size: .92rem; }
+
+table.grade { width: 100%; border-collapse: collapse; font-size: .92rem; }
+table.grade th, table.grade td {
+  text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--rule);
+}
+table.grade th { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink-faint); font-weight: 600; }
+table.grade td.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.governs td { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+.scroll { overflow-x: auto; }
+
+.empty { color: var(--ink-faint); font-style: italic; }
+footer { margin-top: 3.5rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+  color: var(--ink-faint); font-size: .8rem; }
+</style>
+<main class="sheet">
+  <div class="synthetic">
+    <b>Synthetic record</b>
+    <span>Generated by hdh for testing. Not a real patient and not clinical advice.</span>
+  </div>
+
+  <h1>Care plan</h1>
+  <p class="who"><span>MRN06934949</span></p>
+
+  <h2>Concerns, goals and interventions</h2>
+  <article class="concern"><header><h3>At age 83, glycaemic targets and glucose-lowering agents warrant active review for deintensification, as the harms of tight control (particularly hypoglycaemia) increasingly outweigh the long-term benefits.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">med_safety/glycaemic-targets-older-adults</span><span class="ref">condition_guidelines/type2-diabetes</span></div><div class="goal"><p>Patient has an agreed, documented HbA1c target range that reflects her age, frailty, and risk of hypoglycaemia, with a stated floor as well as a ceiling so that a rising value is not misread as a lapse, reviewed within 3–6 months.</p><div class="cites"><span class="ref">condition_guidelines/type2-diabetes</span></div><ul class="actions"><li>Establish and document an agreed HbA1c target band (with both a ceiling and a floor) that reflects her age, frailty, and low benefit-to-risk ratio of tight control, with rationale recorded in the chart and review scheduled within 3–6 months.<span class="role">Primary care physician or endocrinologist</span><div class="cites"><span class="ref">condition_guidelines/type2-diabetes</span></div></li><li>Incorporate her living-alone status into the glycaemic target-setting discussion, ensuring the floor of the HbA1c band is set conservatively to reduce hypoglycaemia risk in a context where no one is present to recognise or respond to an episode.<span class="role">Primary care physician</span><div class="cites"><span class="ref">condition_guidelines/type2-diabetes</span><span class="ref">med_safety/living-alone-and-medication-risk</span></div></li></ul></div></article><article class="concern"><header><h3>Polypharmacy with 10 active medications warrants a structured regimen review to identify opportunities for simplification, deprescribing, and reduction of adverse drug event risk.</h3><span class="kind">risk</span></header><div class="cites"><span class="ref">med_safety/living-alone-and-medication-risk</span></div><div class="goal"><p>Patient experiences no adverse drug event attributable to concurrent use of multiple NSAIDs (meloxicam, ibuprofen, naproxen), and redundant anti-inflammatory agents are reduced to the minimum necessary for symptom control.</p><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div><ul class="actions"><li>Discontinue ibuprofen and naproxen, retaining at most one NSAID (meloxicam) at the lowest effective dose and shortest necessary duration, given that concurrent use of multiple NSAIDs dramatically increases gastrointestinal, renal, and cardiovascular harm with no additive analgesic benefit.<span class="role">Prescribing clinician</span><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div></li><li>Reassess whether any NSAID remains necessary by asking whether pain is adequately controlled by non-pharmacological means (exercise, weight management) and whether the patient&#x27;s comorbidities (hypertension, CAD, COPD, diabetes) make continued NSAID use disproportionately hazardous; document the clinical rationale for continuing or stopping.<span class="role">Prescribing clinician</span><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div></li></ul></div><div class="goal"><p>Patient&#x27;s analgesia regimen is simplified such that the continued necessity of each anti-inflammatory is confirmed and no drug combination in the regimen makes its use dangerous.</p><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div><ul class="actions"><li>Review all three concurrent NSAIDs/COX-2 inhibitors (Meloxicam, Ibuprofen, Naproxen) against the patient&#x27;s full regimen. Confirm whether each remains individually necessary, and assess whether any combination makes its use dangerous — particularly given concurrent Hydrochlorothiazide (which interacts with NSAIDs to worsen renal function and blunt antihypertensive effect), CAD, hypertension, and COPD. Aim to reduce to the minimum necessary anti-inflammatory exposure.<span class="role">Prescribing clinician</span><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div></li><li>Offer exercise and weight management as first-line analgesic strategies so that any reduction in anti-inflammatory medications does not leave pain unaddressed.<span class="role">Physiotherapy</span><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div></li></ul></div></article><article class="concern"><header><h3>Osteoarthritis is recorded as not controlled, and the patient is on three concurrent NSAIDs (meloxicam, ibuprofen, naproxen), which poses significant risk given her age, hypertension, and cardiovascular disease, and warrants urgent analgesic regimen review.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">condition_guidelines/osteoarthritis</span></div><p class="empty">No goals were set against this concern.</p></article><article class="concern"><header><h3>Hyperlipidemia is recorded as not controlled in a patient with established coronary artery disease, where adequacy and tolerability of current statin therapy warrants review.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">condition_guidelines/hyperlipidemia</span></div><div class="goal"><p>Patient&#x27;s lipid profile is at or below the agreed threshold on a statin she is taking and tolerating without side effects.</p><div class="cites"><span class="ref">condition_guidelines/hyperlipidemia</span><span class="ref">condition_guidelines/coronary-artery-disease</span></div><ul class="actions"><li>Review whether atorvastatin dose is appropriate and whether the patient is tolerating it without side effects; adjust dose or switch agent if not tolerated, aiming for lipid profile at or below agreed threshold.<span class="role">Prescribing clinician</span><div class="cites"><span class="ref">condition_guidelines/hyperlipidemia</span></div></li><li>Monitor lipid profile at an interval matched to current treatment stability to confirm the agreed threshold is being met.<span class="role">Prescribing clinician</span><div class="cites"><span class="ref">condition_guidelines/hyperlipidemia</span></div></li></ul></div></article><article class="concern"><header><h3>Hypothyroidism on levothyroxine replacement requires monitoring to ensure thyroid function remains within age-appropriate target range, avoiding over-replacement given her age and coronary artery disease.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">condition_guidelines/hypothyroidism</span></div><div class="goal"><p>TSH remains within the age-appropriate target range (upper end of normal, less suppressed) on a stable levothyroxine dose, with no symptoms of over-replacement such as palpitations or worsening cardiac symptoms.</p><div class="cites"><span class="ref">condition_guidelines/hypothyroidism</span></div><ul class="actions"><li>Monitor TSH periodically and compare results against the age-appropriate target (upper end of the normal range, less suppressed) to detect over-replacement or under-replacement early. In older adults with coronary artery disease, over-replacement carries particular cardiac risk and should be the primary direction of concern.<span class="role">Primary care physician</span><div class="cites"><span class="ref">condition_guidelines/hypothyroidism</span></div></li><li>Review levothyroxine dose at each TSH check, with readiness to reduce the dose if TSH is suppressed below the age-appropriate target or if symptoms of over-replacement (palpitations, worsening cardiac symptoms) are present. Reducing levothyroxine is an active clinical decision and should be documented with a rationale.<span class="role">Primary care physician</span><div class="cites"><span class="ref">condition_guidelines/hypothyroidism</span></div></li></ul></div></article><article class="concern"><header><h3>Type 2 diabetes mellitus in an 83-year-old warrants individualised glycaemic target review, with deintensification considered given the limited benefit of tight control and the risk of hypoglycaemia at this age.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">condition_guidelines/type2-diabetes</span></div><div class="goal"><p>Patient has an agreed, documented HbA1c target range appropriate for her age and comorbidities, reflecting the priority of avoiding hypoglycaemia over achieving tight glycaemic control, reviewed within 3–6 months.</p><div class="cites"><span class="ref">condition_guidelines/type2-diabetes</span></div><ul class="actions"><li>Agree and document an HbA1c target range appropriate for an 83-year-old with multiple comorbidities, explicitly prioritising avoidance of hypoglycaemia over tight glycaemic control. The target should be stated as a band (floor and ceiling) rather than a single figure, with the clinical rationale recorded so that a deliberately relaxed target is not later misread as a lapse. Review within 3–6 months.<span class="role">GP / Prescribing Physician</span><div class="cites"><span class="ref">condition_guidelines/type2-diabetes</span><span class="ref">med_safety/glycaemic-targets-older-adults</span></div></li><li>Review current diabetes regimen in light of the agreed deintensified target. Metformin should be assessed for renal safety (eGFR check); if renal function is impaired, dose reduction or cessation should be considered. Any agents with hypoglycaemia risk should be scrutinised and removed or reduced if the relaxed target no longer justifies them.<span class="role">GP / Prescribing Physician</span><div class="cites"><span class="ref">med_safety/glycaemic-targets-older-adults</span><span class="ref">condition_guidelines/type2-diabetes</span></div></li></ul></div></article><article class="concern"><header><h3>Established coronary artery disease requires confirmation that secondary-prevention therapy is complete, current, and being taken, with modifiable risk factors at agreed targets.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">condition_guidelines/coronary-artery-disease</span></div><div class="goal"><p>Patient has a high-intensity statin in place, tolerated, and taken consistently as part of secondary prevention for coronary artery disease.</p><div class="cites"><span class="ref">condition_guidelines/coronary-artery-disease</span></div><ul class="actions"><li>Confirm that the current statin (Atorvastatin) is at a high-intensity dose appropriate for secondary prevention of coronary artery disease; if it is not, escalate the dose to a high-intensity regimen (e.g., Atorvastatin 40–80 mg daily).<span class="role">Prescribing clinician (physician or nurse practitioner)</span><div class="cites"><span class="ref">condition_guidelines/coronary-artery-disease</span><span class="ref">condition_guidelines/hyperlipidemia</span></div></li><li>Review adherence to Atorvastatin at each visit and address any barriers to consistent use, including side-effect concerns, cost, or pill burden, to ensure the statin is actually being taken.<span class="role">Primary care clinician or pharmacist</span><div class="cites"><span class="ref">condition_guidelines/coronary-artery-disease</span><span class="ref">condition_guidelines/hyperlipidemia</span></div></li></ul></div><div class="goal"><p>Patient&#x27;s modifiable cardiovascular risk factors (blood pressure, lipids, blood glucose) are at targets agreed with the patient and maintained.</p><div class="cites"><span class="ref">condition_guidelines/coronary-artery-disease</span></div><ul class="actions"><li>Review and consider discontinuing or reducing ibuprofen and naproxen (duplicate NSAIDs); both raise blood pressure and blunt the effect of antihypertensive therapy, directly undermining the blood pressure target.<span class="role">Prescribing clinician (GP or geriatrician)</span><div class="cites"><span class="ref">condition_guidelines/hypertension</span><span class="ref">med_safety/living-alone-and-medication-risk</span></div></li><li>Review and consider discontinuing meloxicam for the same reason: concurrent use of a COX-2 inhibitor alongside two other NSAIDs further elevates blood pressure and adds cardiovascular risk in a patient with established coronary artery disease.<span class="role">Prescribing clinician (GP or geriatrician)</span><div class="cites"><span class="ref">condition_guidelines/hypertension</span><span class="ref">condition_guidelines/hyperlipidemia</span></div></li></ul></div></article><article class="concern"><header><h3>Essential hypertension requires ongoing individualised blood pressure target-setting, accounting for her age, vascular comorbidities, and risk of postural hypotension, with sustained monitoring across visits.</h3><span class="kind">condition</span></header><div class="cites"><span class="ref">condition_guidelines/hypertension</span></div><div class="goal"><p>Patient&#x27;s blood pressure is within her individually agreed target range, confirmed on readings from at least two visits, with the specific target documented in the care plan accounting for her age, vascular comorbidities (coronary artery disease), and risk of postural hypotension from her medications and age.</p><div class="cites"><span class="ref">condition_guidelines/hypertension</span></div><ul class="actions"><li>Establish and document an individualised blood pressure target in the care plan, accounting for her age (83), coronary artery disease, and risk of postural hypotension, then confirm the target is achieved on readings from at least two visits.<span class="role">GP / primary care physician</span><div class="cites"><span class="ref">condition_guidelines/hypertension</span></div></li><li>Review current medications — particularly Hydrochlorothiazide — for contribution to postural hypotension risk given her age and that she lives alone, where an unwitnessed fall from standing hypotension carries heightened danger.<span class="role">GP / primary care physician</span><div class="cites"><span class="ref">condition_guidelines/hypertension</span><span class="ref">med_safety/living-alone-and-medication-risk</span></div></li></ul></div></article>
+
+  <h2>What did not make it in</h2>
+  <div class="withheld"><div><h4>Deferred by triage — never offered to the model</h4><p>COPD, unspecified — chronic problem on the chart, not addressed in this plan</p></div></div>
+
+  <h2>Grade — fail</h2><div class="scroll"><table class="grade"><thead><tr><th>dimension</th><th class='n'>score</th></tr></thead><tbody><tr class="governs"><td>traceability (governs the verdict)</td><td class="n">2</td></tr><tr class="governs"><td>feasibility_burden (governs the verdict)</td><td class="n">2</td></tr><tr class=""><td>goal_quality</td><td class="n">3</td></tr><tr class=""><td>guideline_concordance</td><td class="n">4</td></tr><tr class=""><td>safety</td><td class="n">4</td></tr><tr class=""><td>completeness</td><td class="n">5</td></tr></tbody></table></div><footer>Mean 3.33, reported only. The lowest dimension decides.</footer>
+  <footer>Prompt set measurable-goals@1. A single case cannot decide this. Two runs of the same prompt on the same patient differ by about as much as this, so read the plans, not the delta.</footer>
+</main>
