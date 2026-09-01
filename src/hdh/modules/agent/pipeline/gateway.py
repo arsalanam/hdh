@@ -40,7 +40,17 @@ one-sentence plan for which tools to use.
 Choose 'charting' whenever the request is to WRITE to a chart — record or
 chart a note, document an encounter, amend or void an entry. Such a request
 almost always names a patient, so an MRN alone never makes it a lookup: ask
-what the sentence is asking you to DO.\
+what the sentence is asking you to DO.
+
+Choose 'care_plan' for anything about a care plan: building one, reviewing
+or amending a stage of one, asking what concerns or goals it raised, or
+what a rubric scores. This is NOT 'charting' — a care plan is a plan ABOUT
+a chart, and the tools that build one are not the tools that write a note.
+
+Choose 'medication' for repeats and refills: whether a medication can be
+refilled, how many refills remain, recording that one was supplied, or what
+a patient is authorised for. Also NOT 'charting': the decision is arithmetic
+over the authorisation, and it has its own tools.\
 """
 
 VALIDATOR_PROMPT = """\
@@ -76,6 +86,8 @@ INTENT_SCHEMA = {
                 "sql",
                 "coding",
                 "charting",
+                "care_plan",
+                "medication",
                 "other",
             ],
         },
@@ -127,6 +139,35 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "loinc_search",
         "query_database",
     },
+    # Care planning is its own intent for the same reason charting is. Left
+    # unlisted, "build a care plan for MRN06934949" classified as `charting`
+    # — it does write something — and the executor was handed note tools, so
+    # every care-plan tool built in the S4 milestones was unreachable
+    # through the pipeline. Measured before this entry existed: 4 of 6
+    # realistic care-plan and refill questions could not reach their tools,
+    # and the 2 that could only worked by falling through to `other`.
+    "care_plan": {
+        "start_care_plan",
+        "show_care_plan",
+        "approve_care_plan_stage",
+        "amend_care_plan_stage",
+        "reject_care_plan_stage",
+        "show_care_plan_rubric",
+        "write_care_plan_page",
+        "get_patient_chart",
+        "get_care_gaps",
+        "query_database",
+    },
+    # Refills, likewise. "how many refills does she have left" classified as
+    # `patient_lookup`, so the agent read the chart — which cannot answer
+    # the question, because the authorisation lives on the order.
+    "medication": {
+        "list_medication_orders",
+        "check_medication_refill",
+        "refill_medication",
+        "get_patient_chart",
+        "query_database",
+    },
 }
 
 INTENT_TABLES: dict[str, tuple[str, ...]] = {
@@ -143,6 +184,22 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "prescriptions",
         "service_requests",
         "note_records",
+    ),
+    "care_plan": (
+        "patients",
+        "conditions",
+        "prescriptions",
+        "care_plan_records",
+        "health_concerns",
+        "plan_goals",
+        "plan_interventions",
+    ),
+    "medication": (
+        "patients",
+        "prescriptions",
+        "service_requests",
+        "medication_dispenses",
+        "medication_statements",
     ),
 }
 
