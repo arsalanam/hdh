@@ -89,21 +89,25 @@ def build_store(session, name: str | None = None):
         raise RetrieverError(
             f"unknown retriever {chosen!r} — set {ENV_VAR} to one of: {', '.join(available())}"
         )
-    factory, _description = entry
+    factory, description = entry
     if factory is None:
+        # The description carries the pointer, rather than a hardcoded issue
+        # number. #100 was hardcoded here until #100 was the issue that
+        # BUILT these retrievers, at which point the refusal cited the work
+        # that made it unnecessary.
         raise RetrieverError(
-            f"retriever {chosen!r} is planned but not implemented yet (see issue #100). "
+            f"retriever {chosen!r} is planned but not implemented yet ({description}). "
             f"Available now: {', '.join(available())}"
         )
     return factory(session)
 
 
 def _register_bundled() -> None:
-    from hdh.modules.careplan.knowledge import PgStore
+    from hdh.modules.careplan.knowledge import PgStore, RerankedVectorStore, VectorStore
 
     register("lexical", PgStore, "PostgreSQL full-text with a trigram fallback")
-    register("vector", None, "pgvector over API embeddings (#100)")
-    register("vector+rerank", None, "pgvector, then a cross-encoder rerank (#100)")
+    register("vector", VectorStore, "pgvector over Titan embeddings (#100)")
+    register("vector+rerank", RerankedVectorStore, "pgvector, then a Cohere cross-encoder rerank")
 
 
 _register_bundled()

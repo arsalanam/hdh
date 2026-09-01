@@ -34,7 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector's image: same PostgreSQL 16 plus the `vector`
+        # extension semantic retrieval needs (#100). Matches
+        # docker-compose.deps.yml, so CI and local development
+        # cannot disagree about what the database can do.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: hdh
           POSTGRES_PASSWORD: hdh

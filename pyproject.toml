@@ -42,9 +42,13 @@ agent = [
     # from langgraph itself, which ships only the in-memory saver.
     "langgraph-checkpoint-postgres>=2.0",
 ]
+# Semantic retrieval: Bedrock for embeddings and reranking, pgvector for
+# storage. Optional because lexical retrieval is the default and needs
+# neither an AWS account nor a vector-capable PostgreSQL.
+bedrock = ["boto3>=1.34", "pgvector>=0.3"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 docs = ["python-docx>=1.1"]
-all = ["hdh[risk,agent,api,docs]"]
+all = ["hdh[risk,agent,api,docs,bedrock]"]
 
 # Dev tooling (PEP 735): installed by `uv sync` automatically, never shipped.
 [dependency-groups]
