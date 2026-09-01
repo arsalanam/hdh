@@ -174,6 +174,147 @@ Three things to notice, because they are the point of the module:
 
 ---
 
+## A worked session
+
+Verbatim from `hdh agent --pipeline`, three turns, each validated. David
+Fowler is 84, has nine chronic problems and six active medications.
+
+### Turn 1 — ask for a plan
+
+```
+you> build a care plan for MRN63193008
+```
+
+```
+├─ guardrails   topic allowed ✓ (Care plan building)
+├─ intent       care_plan · entities: MRN63193008
+├─ validator    VALID ✓ — response is grounded in tool evidence
+
+## Care Plan for David Fowler (MRN63193008) — 84M
+The care plan is paused after the Concerns stage, awaiting direction
+before proceeding to Goals.
+
+| # | Concern                                          | Evidence Source |
+| 1 | Polypharmacy — 6 active meds; structured regimen | med_safety/
+      review needed given age and multi-prescriber risk   duplicate-class-therapy |
+| 2 | Osteoarthritis (uncontrolled) — establish        | condition_guidelines/
+      functional ADL goal, not pain score alone           osteoarthritis |
+| 3 | Antithrombotic therapy — confirm agent matches   | condition_guidelines/
+      event mechanism (cardioembolic vs. non-)            stroke-history |
+| 4 | Iron deficiency anemia (uncontrolled) — correct  | condition_guidelines/
+      deficiency AND investigate underlying cause         iron-deficiency-anaemia |
+| 5 | COPD exacerbation risk — living situation and    | condition_guidelines/
+      polypharmacy increase late-recognition risk         copd |
+| 6 | Hypothyroidism — monitor replacement at a        | condition_guidelines/
+      less-suppressed TSH target given age + cardiac      hypothyroidism |
+| 7 | Hyperlipidemia — is simvastatin achieving LDL    | condition_guidelines/
+      targets given CAD + TIA history                     hyperlipidemia |
+
+3 conditions NOT addressed: essential hypertension, coronary artery
+disease, chronic diastolic heart failure — all controlled.
+
+⚠️ Given David's complexity (84M, CAD, diastolic heart failure, TIA
+   history), excluding CAD and heart failure warrants explicit
+   consideration. These can be added if the stage is sent back.
+
+Next step is Goals: ✅ approve · ✂️ amend · ➕ expand · 🔄 reject
+```
+
+Every concern names the document behind it. The three conditions triage set
+aside are listed as prominently as the seven it kept — a reviewer who cannot
+see what was filtered out is reviewing a filtered list without knowing it.
+
+### Turn 2 — edit it
+
+The author disagrees with two of them, and wants one back:
+
+```
+you> drop the hypothyroidism and hyperlipidemia concerns, and add
+     essential hypertension given the stroke history
+```
+
+```
+Done. Hypothyroidism and Hyperlipidemia have been dropped; Essential
+Hypertension has been added, flagged as the primary modifiable risk
+factor for recurrent stroke/TIA.
+
+### ✅ Active Concerns (5)
+| 1 | Polypharmacy — structured regimen review for 6 active meds |
+| 2 | Osteoarthritis — analgesia review avoiding NSAIDs given heart failure |
+| 3 | Essential Hypertension — BP optimisation as primary modifiable
+      stroke recurrence risk |
+| 4 | Iron deficiency anaemia — correct stores + investigate cause |
+| 5 | COPD — exacerbation reduction and breathlessness management |
+
+### ⚠️ Action Required
+7 goals are now proposed, but Goal #1 references simvastatin/lipid
+therapy (citing hyperlipidemia guidelines) despite Hyperlipidemia being
+dropped as a concern. Two options:
+  • Drop Goal #1 — keep goals 2–7 (recommended for consistency)
+  • Retain Goal #1 — if simvastatin monitoring is still wanted under
+    the Polypharmacy concern
+```
+
+Worth pausing on: **it caught an inconsistency the edit had just created.**
+Dropping a concern left a goal citing that concern's guidance, and rather
+than proceeding it named the orphan and offered two ways out.
+
+### Turn 3 — approve, and see what came back
+
+```
+you> approve
+```
+
+```
+├─ guardrails   topic allowed ✓ (care-plan amendment — approving a stage
+                is within the allowed scope of reviewing care plans)
+
+**Approved.** Advanced past Interventions; paused at Reconcile.
+
+14 interventions confirmed, covering:
+  Hyperlipidemia   duplicate-class check; statin myopathy screening (1–2)
+  Osteoarthritis   individualised activity/pain goal-setting (3)
+  Medication safety NSAID exclusion — HF + lisinopril + furosemide (4)
+  Hypertension     individualised target; ≥2 confirmed readings; lower
+                   boundary for age 84; lying/standing BP (5–8)
+  Iron deficiency  FBC, ferritin, transferrin before oral iron;
+                   GI blood loss investigated (9–10)
+  COPD             written exacerbation action plan (lives alone);
+                   inhaler technique; bronchodilator review (11–14)
+
+Note: items 5/6/7 (BP targeting) and 11/14 (COPD action plan) have
+flagged overlap — consider consolidating at Reconcile.
+
+Deferred: CAD without angina, chronic diastolic heart failure.
+```
+
+A bare `approve` is enough, because the topic guard reads the conversation
+rather than the sentence alone. It flagged its own duplication before being
+asked.
+
+### Then: trim, and write it out
+
+```
+you> the interventions are too many for an 84-year-old — keep only the
+     ones a GP can act on at the next visit
+you> write the plan out as a page I can review
+```
+
+`write_care_plan_page` produces a self-contained HTML file —
+`care-plan-mrn63193008.html` in the working directory — laid out the way a
+clinician reads a plan: concern, the goals under it, the interventions under
+each, what every element cites, what was deferred, and the grade with the
+governing dimension marked. Elements citing nothing are styled as the
+loudest thing on the page, because traceability is what the plan is graded
+on.
+
+> **Not verified end to end.** These last two turns are what exposed the
+> evidence-cap bug fixed in the same PR, and the daily token quota ran out
+> before the session could be replayed with the fix in place. The first
+> three turns above are verbatim; these two are the intended behaviour, not
+> a transcript.
+---
+
 ## 7 · Steer it
 
 Interactive mode is the natural home for the review loop:
