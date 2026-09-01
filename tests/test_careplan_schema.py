@@ -511,3 +511,20 @@ def test_retrieval_refuses_on_sqlite_rather_than_returning_nothing(world):
     session, _patient = world
     with pytest.raises(DatabaseFeatureError, match="Care-plan knowledge retrieval"):
         PgStore(session).search("anything", "med_safety")
+
+
+def test_the_module_declares_its_own_extension_rather_than_core_naming_it():
+    """The dependency rule, at the one place it was nearly broken.
+
+    `hdh db-init` has to install pgvector, which only this module needs. The
+    first version put it in `hdh.core.dbinit` alongside pg_trgm — and had to
+    import this package for the vector width, which is exactly the import
+    the rule forbids. The extension now travels with the module and the CLI
+    composes the two.
+    """
+    from hdh.core.dbinit import EXTENSIONS as core_extensions
+    from hdh.modules.careplan.dbsetup import EXTENSIONS as module_extensions
+
+    assert "vector" in {name for name, _why in module_extensions}
+    assert "vector" not in {name for name, _why in core_extensions}
+    assert "pg_trgm" in {name for name, _why in core_extensions}, "core still needs pg_trgm for termsearch"

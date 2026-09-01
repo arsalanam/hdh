@@ -134,6 +134,50 @@ columns a note writes when it says *"well treated hypertension"* or *"h/o type
 2 diabetes"*. So charting a note changes what the panel view says the next
 morning, which is the point of these being one system rather than two.
 
+### 6 · A care plan gets built, one stage at a time
+
+```bash
+export HDH_CAREPLAN_RETRIEVER=vector+rerank   # or: lexical
+hdh careplan ingest                           # the clinical corpus
+hdh agent "build a care plan for MRN63193008"
+```
+
+```
+## Care Plan — David Fowler (MRN63193008), 84 M
+Status: Stage 1 Complete — 7 Health Concerns Identified.
+Awaiting your direction to proceed to Goals.
+
+| # | Concern                                          | Source |
+| 1 | Polypharmacy — 6 active medications across       | med_safety/
+      multiple classes                                    duplicate-class-therapy |
+| 3 | TIA/Stroke history (uncontrolled) — confirm      | condition_guidelines/
+      antithrombotic appropriateness                      stroke-history |
+
+⚠️ Deferred: Essential Hypertension, CAD, Chronic Diastolic Heart Failure
+   — controlled, so triage set them aside. Recommend considering HTN given
+   its role in stroke recurrence risk.
+
+Next — your decision: approve all 7 · amend · expand · reject
+```
+
+**Every element cites the document it came from**, and the plan is assembled
+from retrieved guidance rather than composed by a model from the chart — the
+agent is explicitly forbidden from writing one itself. The graph pauses after
+each stage the model judged, so rejecting a concern costs nothing downstream:
+the goals underneath it have not been built yet.
+
+What was *withheld* is shown as prominently as what was kept. Triage
+deferring three controlled problems is a decision a reviewer has to see.
+
+Steer it in conversation — *"drop 6 and 7, add hypertension"*, *"the goals
+are too vague"*, *"write it up"* — or ask what it scores on:
+`hdh careplan rubrics`. The lowest dimension governs the verdict; the mean is
+only reported.
+
+📖 **[Care planning with the agent](docs/guides/care-planning-with-the-agent.md)** —
+every command, verified against a database built from scratch, with what it
+costs and what to do when it does not work.
+
 ---
 
 ## The same loop, by talking
@@ -391,7 +435,8 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [risk](docs/guides/risk.md) · [agent](docs/guides/agent.md) ·
   [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
   [snomed](docs/guides/snomed.md) ·
-  [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md)
+  [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md) ·
+  [care planning with the agent](docs/guides/care-planning-with-the-agent.md)
 - Chart maintenance — [chart-maintenance.md](docs/design/chart-maintenance.md)
   (symptom billing coverage + amend/void with an audit trail)
 - Design docs — [notes-comprehension-service.md](docs/design/notes-comprehension-service.md) ·
@@ -402,7 +447,10 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [icd10cm-ontology-module.md](docs/design/icd10cm-ontology-module.md) ·
   [clinical-breadth.md](docs/design/clinical-breadth.md) ·
   [fhir-emitters.md](docs/design/fhir-emitters.md) ·
-  [care-plan-module.md](docs/design/care-plan-module.md)
+  [care-plan-module.md](docs/design/care-plan-module.md) ·
+  [interactive-care-planning.md](docs/design/interactive-care-planning.md) ·
+  [medication-orders-and-refills.md](docs/design/medication-orders-and-refills.md) ·
+  [requests-and-read-models.md](docs/design/requests-and-read-models.md)
 - [Note comprehension introduction](docs/articles/note-comprehension-agent-ui.md) —
   what it is, using it via the agent, and the roadmap toward an
   agent-driven EHR
