@@ -1071,6 +1071,106 @@ class VisitOrders(NamedTuple):
     advice: list[str]
 
 
+#: How long a repeat authorisation stays valid when nothing else bounds it.
+#: A year is the usual review interval for a chronic repeat, and it is also
+#: what stops a generated order being refillable forever.
+AUTHORISATION_DAYS = 365
+
+#: How often a repeat is collected when no duration says otherwise.
+DEFAULT_SUPPLY_DAYS = 30
+
+#: Chance a patient collects the next refill they are entitled to.
+#:
+#: Not every authorised refill is taken, and a chart where all of them are
+#: would be a chart with no non-adherence in it — which is the thing a care
+#: plan most often has to notice. Collection stops at the first miss rather
+#: than resuming, so a lapse looks like a lapse.
+REFILL_COLLECTED = 0.85
+
+
+def _medication_order(patient, visit, rx_spec) -> dict:
+    """The authorisation behind a prescription, with what it permits.
+
+    Two departures from :func:`_served_request`, both because an
+    authorisation is not a one-shot order:
+
+    **An order with refills left is not over.** `_served_request` closes
+    what it creates, which is right for a lab drawn at the visit and wrong
+    here: `end_date` says the request's life has ended, and an authorisation
+    the patient may still draw on has not ended. Measured before this
+    changed: 0 of 949 generated medication orders were refillable, so the
+    refill tool would have refused every request ever made against a
+    generated chart.
+
+    **`valid_until` bounds it in time.** A repeat that never expires is one
+    nobody has to review, which is not how prescribing works.
+    """
+    refills = int(getattr(rx_spec, "refills", 0) or 0)
+    duration = getattr(rx_spec, "duration_days", None)
+    if duration:
+        # A course: valid for as long as its fills could reasonably run.
+        valid_days = int(duration) * (refills + 1)
+    else:
+        valid_days = AUTHORISATION_DAYS
+
+    order = _served_request(
+        patient,
+        visit,
+        "MEDICATION",
+        rx_spec.drug_name,
+        code_system="rxnorm" if rx_spec.rxcui else None,
+        code=rx_spec.rxcui,
+    )
+    order["refills_authorised"] = refills or None
+    order["valid_until"] = visit.visit_date + timedelta(days=valid_days)
+    if refills:
+        order["status"] = RequestStatus.ACTIVE
+        order["end_date"] = None
+    return order
+
+
+def _repeat_fills(patient, visit, rx_spec, request_index: int, as_of) -> list[dict]:
+    """The refills the patient actually collected after the first supply.
+
+    Uses its own RNG, seeded from the patient, the visit and the drug rather
+    than drawn from the run's stream. That is deliberate: a new draw against
+    the shared RNG would shift every subsequent value and change the whole
+    chart, so adding refills would have re-baselined the cohort for reasons
+    that have nothing to do with refills. Seeding from a string is stable
+    across processes — `Random` hashes it with SHA-512 rather than `hash()`.
+    """
+    refills = int(getattr(rx_spec, "refills", 0) or 0)
+    if not refills:
+        return []
+
+    supply = int(getattr(rx_spec, "duration_days", None) or DEFAULT_SUPPLY_DAYS)
+    expires = visit.visit_date + timedelta(days=supply * (refills + 1))
+    rng = random.Random(f"{patient.id}-{visit.id}-{rx_spec.drug_name}-refills")
+
+    fills = []
+    when = visit.visit_date
+    for _ in range(refills):
+        when = when + timedelta(days=supply)
+        if when > as_of or when > expires:
+            break
+        if rng.random() > REFILL_COLLECTED:
+            # A missed collection ends the run rather than skipping one. A
+            # patient who stops collecting usually stops, and a gap followed
+            # by resumption would need a reason the generator does not have.
+            break
+        fills.append(
+            {
+                "_request": request_index,
+                "patient_id": patient.id,
+                "drug_name": rx_spec.drug_name,
+                "dispensed_date": when,
+                "days_supply": supply,
+                "origin": "GENERATED",
+            }
+        )
+    return fills
+
+
 def _prescribe_at_visit(
     patient,
     visit,
@@ -1078,6 +1178,7 @@ def _prescribe_at_visit(
     *,
     is_chronic: bool,
     buffers: OrderBuffers,
+    as_of: date,
 ) -> VisitOrders:
     """Decide what this visit prescribes, and what answers each order.
 
@@ -1128,16 +1229,7 @@ def _prescribe_at_visit(
         # while the dispense is what says the medication actually reached the
         # patient.
         rx["_request"] = len(buffers.requests)
-        buffers.requests.append(
-            _served_request(
-                patient,
-                visit,
-                "MEDICATION",
-                rx_spec.drug_name,
-                code_system="rxnorm" if rx_spec.rxcui else None,
-                code=rx_spec.rxcui,
-            )
-        )
+        buffers.requests.append(_medication_order(patient, visit, rx_spec))
         buffers.dispenses.append(
             {
                 "_request": rx["_request"],
@@ -1149,6 +1241,10 @@ def _prescribe_at_visit(
                 "visit_id": visit.id,
             }
         )
+        # And the refills collected against it afterwards. These are what
+        # make an authorisation observable: a chart with one fill per
+        # prescription cannot show a patient who stopped collecting.
+        buffers.dispenses.extend(_repeat_fills(patient, visit, rx_spec, rx["_request"], as_of))
         buffers.prescriptions.append(rx)
         orders.prescriptions.append(rx)
         buffers.history.append((visit.visit_date, rx))
@@ -1275,6 +1371,7 @@ def _generate_one(
             cprofile,
             is_chronic=cname in final_chronic,
             buffers=buffers,
+            as_of=scope.as_of,
         )
 
         visit_labs = [generate_lab(visit.id, spec, has_condition=True) for spec in cprofile.labs]
