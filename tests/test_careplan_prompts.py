@@ -268,3 +268,56 @@ def test_requiring_a_target_does_not_require_a_non_empty_one():
         properties = goal_schema()["properties"]["selections"]["items"]["properties"]
     assert properties["target_value"] == {"type": "string"}
     assert "minLength" not in properties["target_value"]
+
+
+# ── the third thing that moves scores while everything else holds ────────
+
+
+def test_the_baseline_records_which_retriever_fetched_the_evidence():
+    from hdh.modules.careplan import evalset
+
+    report = evalset.Report(cohort="default", version=2, retriever="vector+rerank")
+    assert report.as_dict()["retriever"] == "vector+rerank"
+
+
+def test_compare_refuses_across_retrievers():
+    """Cohort, charts, MRNs and wording all identical — only the evidence
+    differs, which reads exactly like the model reasoning better."""
+    from hdh.modules.careplan import evalset
+
+    report = evalset.Report(cohort="default", version=2, prompts="default@1", retriever="vector+rerank")
+    lines = evalset.compare(
+        report,
+        {
+            "cohort": "default",
+            "version": 2,
+            "prompts": "default@1",
+            "retriever": "lexical",
+            "mean": 3.7,
+            "cases": [],
+        },
+    )
+    assert any("not a comparison" in line for line in lines)
+    assert any("different evidence" in line for line in lines)
+
+
+def test_the_same_retriever_still_compares():
+    """The guard must not refuse the comparison the harness exists for."""
+    from hdh.modules.careplan import evalset
+
+    report = evalset.Report(cohort="default", version=2, prompts="default@1", retriever="lexical")
+    report.measurements.append(
+        evalset.Measurement(mrn="MRN1", stratum="single", rubric="default", runs=[{"mean": 4.0}])
+    )
+    lines = evalset.compare(
+        report,
+        {
+            "cohort": "default",
+            "version": 2,
+            "prompts": "default@1",
+            "retriever": "lexical",
+            "mean": 3.9,
+            "cases": [{"mrn": "MRN1", "mean": 3.9}],
+        },
+    )
+    assert not any("not a comparison" in line for line in lines)

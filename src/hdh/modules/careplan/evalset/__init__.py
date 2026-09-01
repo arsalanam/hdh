@@ -351,6 +351,14 @@ class Report:
     #: MRNs identical, the charts byte-for-byte the same, and the scores move
     #: anyway. Nothing about the run looks different.
     prompts: str = ""
+    #: Which retriever fetched the evidence these plans cite.
+    #:
+    #: The third thing that moves scores while everything else holds still.
+    #: A retriever change leaves the cohort, the charts, the MRNs and the
+    #: prompt set identical — only the evidence the model was shown differs,
+    #: which is indistinguishable from the model reasoning better unless the
+    #: baseline says which retriever it used.
+    retriever: str = ""
     #: What the whole run cost, in tokens. Recorded in the baseline because
     #: cost is half of "did this change help": a prompt that lifts the mean
     #: 0.1 while tripling tokens is a trade, and a baseline that stores only
@@ -394,6 +402,7 @@ class Report:
             "cohort": self.cohort,
             "version": self.version,
             "prompts": self.prompts,
+            "retriever": self.retriever,
             "usage": self.usage,
             "mean": self.mean,
             "noise": self.noise,
@@ -441,6 +450,19 @@ def compare(report: Report, baseline: dict) -> list[str]:
     # moves is the score, which is exactly what a real improvement looks
     # like. This is the one comparison nothing else in the harness can
     # catch, because nothing else about the run is different.
+    # And the same refusal for the retriever. Same cohort, same charts, same
+    # MRNs, same wording — only the evidence differs, which reads exactly
+    # like the model having got better at reasoning over it.
+    before_retriever = baseline.get("retriever")
+    if (report.retriever or before_retriever) and before_retriever != report.retriever:
+        held = before_retriever or "no retriever recorded"
+        return [
+            f"  not a comparison — the baseline used {held}, this run used "
+            f"{report.retriever or 'no retriever recorded'}.",
+            "  The plans were shown different evidence, so a delta here is a retrieval",
+            "  result rather than a care-plan one. Save this run as its own baseline.",
+        ]
+
     before_prompts = baseline.get("prompts")
     if (report.prompts or before_prompts) and before_prompts != report.prompts:
         held = before_prompts or "no prompt set"
@@ -571,8 +593,14 @@ def run(session, cases: Sequence[Case], services, settings: RunSettings, on_case
     """Measure every case. Returns the report; writes no baseline."""
     from hdh.modules.careplan import usage as usage_module
     from hdh.modules.careplan.prompts import prompt_set
+    from hdh.modules.careplan.retriever import configured as configured_retriever
 
-    report = Report(cohort=settings.cohort, version=settings.version, prompts=prompt_set().stamp)
+    report = Report(
+        cohort=settings.cohort,
+        version=settings.version,
+        prompts=prompt_set().stamp,
+        retriever=configured_retriever(),
+    )
     # One ledger around the whole run. Per-case would be finer but the
     # question the baseline has to answer is what a cohort run costs, and
     # a per-case figure is already inside `by_stage` proportionally.
