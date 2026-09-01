@@ -298,3 +298,87 @@ def test_writing_to_a_chart_has_its_own_intent():
     assert not INTENT_TOOLS["patient_lookup"] & {"apply_note", "amend_chart_entry", "void_chart_entry"}, (
         "a read-only intent must not be able to write"
     )
+
+
+# ── every intent can reach the tools it names ────────────────────────────
+
+
+def test_every_intent_names_a_tool_that_is_defined_somewhere():
+    """An intent listing a tool nobody defines silently narrows the executor
+    to nothing useful, and the failure reads as the model being unhelpful
+    rather than as a typo.
+
+    Checked against the source rather than a built toolset, because the
+    ontology packs legitimately return [] without their catalogs loaded and
+    the comprehension pack needs stored notes — so a built set is a subset
+    of what exists, and asserting against it would fail for tools that are
+    merely gated.
+
+    The risk this actually guards is a misspelled or renamed tool name in
+    INTENT_TOOLS, which is invisible until someone asks the question that
+    needs it.
+    """
+    import pathlib
+    import re
+
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+
+    defined: set[str] = set()
+    for path in pathlib.Path("src/hdh").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "beta_tool" not in source:
+            continue
+        defined |= set(re.findall(r"^\s*def (\w+)\(", source, re.M))
+    assert defined, "no tool definitions found — this test would be vacuous"
+
+    for intent, names in INTENT_TOOLS.items():
+        missing = names - defined
+        assert not missing, f"intent {intent!r} names tools nobody defines: {sorted(missing)}"
+
+
+def test_every_intent_in_the_schema_has_tools_or_falls_back_deliberately():
+    """`other` is the deliberate fallback — unknown intents get the full
+    set. Every other value in the enum must have an entry, or it silently
+    becomes a second fallback nobody wrote down."""
+    from hdh.modules.agent.pipeline.gateway import INTENT_SCHEMA, INTENT_TOOLS
+
+    enum = set(INTENT_SCHEMA["properties"]["intent"]["enum"])
+    unrouted = enum - set(INTENT_TOOLS) - {"other"}
+    assert not unrouted, f"intents with no tools: {sorted(unrouted)}"
+
+
+def test_care_planning_and_refills_are_routable():
+    """Both were unreachable through the pipeline until they had intents of
+    their own: "build a care plan for MRN X" classified as `charting` and
+    got note tools; "how many refills are left" classified as
+    `patient_lookup` and got the chart, which does not hold the
+    authorisation."""
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+
+    assert {"start_care_plan", "amend_care_plan_stage"} <= INTENT_TOOLS["care_plan"]
+    assert {"check_medication_refill", "refill_medication"} <= INTENT_TOOLS["medication"]
+
+
+def test_care_planning_does_not_get_chart_writing_tools():
+    """The intent split is also a permission boundary: a care-plan request
+    should not be able to amend the chart on its way past."""
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+
+    forbidden = {"apply_note", "amend_chart_entry", "void_chart_entry"}
+    assert not (forbidden & INTENT_TOOLS["care_plan"])
+    assert not (forbidden & INTENT_TOOLS["medication"])
+
+
+def test_every_intent_names_tables_that_exist():
+    """A table named here appears in the SQL tool's schema description. One
+    that does not exist tells the model a table is available and then fails
+    when it queries it."""
+    from hdh.core.models import Base
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.agent.pipeline.gateway import INTENT_TABLES
+
+    bootstrap_schema()
+    real = set(Base.metadata.tables)
+    for intent, tables in INTENT_TABLES.items():
+        missing = set(tables) - real
+        assert not missing, f"intent {intent!r} names missing tables: {sorted(missing)}"
