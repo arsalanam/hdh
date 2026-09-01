@@ -81,13 +81,23 @@ def test_an_unknown_retriever_lists_what_is_available():
 def test_a_planned_but_unbuilt_retriever_says_so_and_points_somewhere():
     """Registered rather than omitted, so the roadmap is visible where
     somebody configuring the module will read it — and so the failure is
-    "not built yet" rather than "unknown"."""
-    with pytest.raises(retriever.RetrieverError) as err:
-        retriever.build_store(object(), "vector+rerank")
-    message = str(err.value)
-    assert "not implemented" in message
-    assert "#100" in message
-    assert "lexical" in message
+    "not built yet" rather than "unknown".
+
+    Every registered retriever is now built (#100), so this exercises the
+    mechanism against a temporary entry. The path stays tested because the
+    *next* planned retriever will use it, and a refusal nobody exercises is
+    a refusal nobody has read.
+    """
+    retriever.register("hybrid", None, "planned: lexical and vector merged (#nnn)")
+    try:
+        with pytest.raises(retriever.RetrieverError) as err:
+            retriever.build_store(object(), "hybrid")
+        message = str(err.value)
+        assert "not implemented" in message
+        assert "#nnn" in message
+        assert "lexical" in message
+    finally:
+        retriever._REGISTRY.pop("hybrid", None)
 
 
 # ── the registry is the point ────────────────────────────────────────────
@@ -122,17 +132,16 @@ def test_a_registration_can_shadow_a_shipped_one():
 
 
 def test_available_lists_only_what_can_be_built():
-    # `vector` became buildable in #100; `vector+rerank` is still the
-    # registered-but-unbuilt entry that keeps the roadmap visible.
-    assert retriever.available() == ["lexical", "vector"]
+    """#100 built both, so `available` and `catalogue` now agree. The
+    distinction is still worth keeping: it is what lets a retriever be
+    announced before it exists."""
+    assert retriever.available() == ["lexical", "vector", "vector+rerank"]
     assert set(retriever.catalogue()) == {"lexical", "vector", "vector+rerank"}
 
 
 def test_the_catalogue_says_which_are_built():
     catalogue = retriever.catalogue()
-    assert catalogue["lexical"][0] is True
-    assert catalogue["vector"][0] is True
-    assert catalogue["vector+rerank"][0] is False
+    assert all(built for built, _description in catalogue.values())
     assert all(description for _built, description in catalogue.values())
 
 

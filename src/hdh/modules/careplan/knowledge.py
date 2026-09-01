@@ -480,3 +480,94 @@ class VectorStore:
             for row in rows
             if float(row.score) >= VECTOR_FLOOR
         ]
+
+
+class RerankedVectorStore:
+    """Vector search, then a cross-encoder decides the order (#100).
+
+    Two stages because they answer different questions. An embedding is
+    computed before any query exists, so it represents a chunk in the
+    abstract and can be searched cheaply. A reranker reads the query and the
+    chunk together, which is more accurate and costs a model call per
+    candidate — so it can only reorder a shortlist that something cheaper
+    produced.
+
+    The shortlist is deliberately wider than ``k``
+    (:data:`~hdh.modules.careplan.rerank.CANDIDATE_MULTIPLIER`): a reranker
+    that is only shown the top five can never promote the chunk the
+    embedding ranked sixth, which is precisely the case it exists for.
+
+    Falls back to the vector order — never to nothing — if the reranker is
+    unavailable. A plan built on slightly worse ordering is still a plan; a
+    plan built on no evidence is not, and this project drops elements with
+    no retrieved support rather than inventing them.
+    """
+
+    name: ClassVar[str] = "vector+rerank"
+
+    def __init__(self, session, embedder=None, reranker=None) -> None:
+        self._session = session
+        self._vectors = VectorStore(session, embedder=embedder)
+        self._reranker = reranker
+
+    @property
+    def reranker(self):
+        if self._reranker is None:
+            from hdh.modules.careplan.rerank import build_reranker
+
+            self._reranker = build_reranker()
+        return self._reranker
+
+    def ingest(self, corpus: str, documents: Iterable[KnowledgeDoc]) -> int:
+        """Identical to the vector store — reranking happens at query time."""
+        return self._vectors.ingest(corpus, documents)
+
+    def search(
+        self, query: str, corpus: str, k: int = 5, filters: Mapping | None = None
+    ) -> list[KnowledgeHit]:
+        """The k chunks the reranker judges most relevant, best first.
+
+        Scores are the reranker's, not the vector's — they answer a
+        different question and are not comparable across the two stores.
+        Falls back to the vector order if reranking fails, so this returns
+        fewer or worse-ordered hits but never no hits for a query the vector
+        arm could answer.
+        """
+        from hdh.modules.careplan.rerank import CANDIDATE_MULTIPLIER
+
+        shortlist = self._vectors.search(
+            query, corpus, k=min(k * CANDIDATE_MULTIPLIER, MAX_HITS), filters=filters
+        )
+        if len(shortlist) <= 1:
+            return shortlist[:k]
+
+        try:
+            ordered = self.reranker.rerank(query, [hit.chunk for hit in shortlist], k)
+        except Exception as err:
+            # Broad on purpose: a reranker is a network call to a paid
+            # service, and it can fail as a RerankError, a botocore
+            # ClientError, a timeout or a throttle. Every one of them means
+            # the same thing here — ordering is a refinement, evidence is
+            # not. Degrading to the vector order keeps the plan buildable,
+            # and the warning keeps the reason visible rather than swallowed.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "rerank unavailable (%s: %s) — falling back to vector order",
+                type(err).__name__,
+                err,
+            )
+            return shortlist[:k]
+
+        return [
+            KnowledgeHit(
+                corpus=shortlist[index].corpus,
+                doc_id=shortlist[index].doc_id,
+                chunk=shortlist[index].chunk,
+                score=score,
+                source=shortlist[index].source,
+                license=shortlist[index].license,
+                metadata=shortlist[index].metadata,
+            )
+            for index, score in ordered
+        ]
