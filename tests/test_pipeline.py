@@ -28,7 +28,7 @@ def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None):
     verdicts = list(verdicts if verdicts is not None else [(True, "grounded")])
     calls = {"executor": 0, "validator": 0}
 
-    def check_topic(question):
+    def check_topic(question, history=None):
         return on_topic, "clinical query" if on_topic else "cooking recipes", NO_USAGE
 
     def analyze_intent(question, history):
@@ -382,3 +382,66 @@ def test_every_intent_names_tables_that_exist():
     for intent, tables in INTENT_TABLES.items():
         missing = set(tables) - real
         assert not missing, f"intent {intent!r} names missing tables: {sorted(missing)}"
+
+
+# ── the guard reads the conversation, not just the sentence ──────────────
+
+
+def test_the_guard_is_given_the_conversation():
+    """A follow-up is on topic if what it follows is.
+
+    Judged alone, "approve" is not a clinical question — and the guard said
+    so, which made the care-plan review loop unusable from the turn where a
+    reviewer starts answering in single words. Measured on a real session:
+    turns 1 and 2 passed, turns 4 and 5 were rejected as "clinical judgment
+    call" and "output format request".
+    """
+    import dataclasses
+
+    from hdh.modules.agent.pipeline.nodes import make_guardrails_node
+
+    seen: list = []
+    base, _calls = make_deps()
+
+    def watching(question, history=None):
+        seen.append(list(history or []))
+        return base.check_topic(question, history)
+
+    # PipelineDeps is frozen — the point of it being the injection seam.
+    deps = dataclasses.replace(base, check_topic=watching)
+    make_guardrails_node(deps)(
+        {"question": "approve", "history": ["Q: build a care plan", "A: 7 concerns, paused"]}
+    )
+    assert seen and seen[0], "the guard was given no history — a bare 'approve' cannot be judged"
+
+
+def test_care_planning_vocabulary_is_on_topic():
+    """The guard's allowed topics have to cover the words a reviewer uses
+    while steering a plan, not just the words used to start one."""
+    from hdh.modules.agent.pipeline.state import DEFAULT_ALLOWED_TOPICS
+
+    topics = " ".join(DEFAULT_ALLOWED_TOPICS).lower()
+    assert "care plan" in topics
+    assert "amending" in topics or "amend" in topics
+    assert "refill" in topics
+
+
+def test_the_validator_never_sees_less_evidence_than_the_drafter():
+    """A validator judging against less than the drafter had rejects true
+    claims, and the failure looks like the model hallucinating.
+
+    Measured: evidence was cut to 1,200 chars while the executor's tool
+    results were capped at 6,000. A 4,690-char care plan reached the
+    validator as its first ~5 of 14 interventions, so it refused three times
+    — correctly, because the evidence really did not contain what the draft
+    described. The draft was right; the evidence was starved.
+    """
+    import inspect
+
+    from hdh.modules.agent.pipeline import gateway
+
+    source = inspect.getsource(gateway.Gateway._run_tools)
+    assert "text[:1200]" not in source, "evidence is capped below the tool-result cap"
+    assert "self.config.tool_result_cap" in source, (
+        "evidence should be capped at the same size the executor was given"
+    )
