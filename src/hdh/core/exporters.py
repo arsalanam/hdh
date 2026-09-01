@@ -214,7 +214,10 @@ def patient_to_text(patient: Patient) -> str:
     """Produce a plain-text chart summary readable by an LLM."""
     lines = []
 
-    sex_label = "Male" if str(patient.sex).endswith("M") or "MALE" in str(patient.sex) else "Female"
+    # `Sex.label`, not a substring test: "MALE" is a substring of "FEMALE",
+    # so the old expression rendered every patient as Male — including in
+    # the chart text the agent reads and reasons over.
+    sex_label = patient.sex.label if patient.sex is not None else "Unknown"
     lines += [
         "=" * 70,
         "PATIENT CHART SUMMARY",

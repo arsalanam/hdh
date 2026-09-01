@@ -43,8 +43,33 @@ class Base(DeclarativeBase):
 
 
 class Sex(str, enum.Enum):
+    """Administrative sex, with the comparisons callers need.
+
+    The properties are here rather than at each call site because the
+    obvious inline test is wrong: ``"MALE" in str(Sex.FEMALE)`` is True, and
+    two call sites reached for exactly that. Use :attr:`is_male` and
+    :attr:`label`, never a substring.
+    """
+
     MALE = "M"
     FEMALE = "F"
+
+    @property
+    def is_male(self) -> bool:
+        """Male, decided by identity rather than by substring.
+
+        `"MALE" in str(Sex.FEMALE)` is True — "FEMALE" ends in "MALE" — and
+        two call sites reached for exactly that test. The chart exporter
+        rendered every patient as Male, including in the text the agent
+        reads, and the risk model encoded every patient as male in its
+        feature vector. Both read as plausible output; neither was.
+        """
+        return self is Sex.MALE
+
+    @property
+    def label(self) -> str:
+        """Male / Female, for display."""
+        return "Male" if self.is_male else "Female"
 
 
 class VisitType(str, enum.Enum):

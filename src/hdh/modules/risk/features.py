@@ -159,7 +159,10 @@ def extract_features(
         rows.append(
             [
                 age,
-                1 if str(p.sex).endswith("M") or "MALE" in str(p.sex) else 0,
+                # Same substring trap as the exporter: this encoded every
+                # patient as male, so the model's sex feature was a constant
+                # and carried no information at all.
+                1 if (p.sex is not None and p.sex.is_male) else 0,
                 1 if p.smoker else 0,
                 p.bmi_baseline or 25.0,
                 fam_hx,
