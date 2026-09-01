@@ -365,6 +365,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # schema
     sub.add_parser("schema", help="Describe the schema registry: modules, extensions, new entities")
+    sub.add_parser(
+        "db-init",
+        help="Install the PostgreSQL extensions the modules need (pg_trgm, vector). Idempotent.",
+    )
 
     # migrate (SQLite → HDH_DB_URL; the exit path from SQLite)
     mig_p = sub.add_parser("migrate", help="Copy a SQLite database into HDH_DB_URL (PostgreSQL)")
@@ -467,6 +471,27 @@ def main():
 
     elif args.command == "schema":
         print(schema_registry.describe())
+
+    elif args.command == "db-init":
+        # The CLI composes: core installs what core needs, and each module
+        # contributes its own. Core never learns the module exists.
+        from hdh.core.dbinit import initialise
+        from hdh.modules.careplan import dbsetup as careplan_db
+
+        report = initialise(session, extra=careplan_db.EXTENSIONS)
+        report.embedding_column = careplan_db.ensure_embedding_column(session)
+        print()
+        for line in report.lines():
+            print(line)
+        print()
+        if not report.ok:
+            # Not an error exit: a server without pgvector is a real
+            # deployment, and the modules that need it refuse clearly on
+            # their own. Saying which feature is unavailable beats failing
+            # the setup step that was otherwise successful.
+            print("  Some features will be unavailable. Everything else is ready.")
+        else:
+            print("  Database ready.")
 
     elif hasattr(args, "func"):
         args.func(session, args)

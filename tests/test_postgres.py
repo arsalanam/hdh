@@ -794,3 +794,76 @@ def test_the_checkpointer_sets_up_while_the_caller_holds_a_transaction(pg_engine
         assert build_checkpointer(session) is not None
     finally:
         session.close()
+
+
+def test_db_init_installs_what_the_modules_need(pg_engine):
+    """The gap between "the tables exist" and "the features work".
+
+    `create_all` builds tables and installs no extensions. The migrations do
+    (0011 pg_trgm, 0017 vector) — but migrations are for databases that
+    already exist, and `alembic upgrade head` from zero fails at 0002, which
+    alters an enum `create_all` creates and no migration does.
+
+    So a database prepared the documented way came up with no pg_trgm, no
+    vector and no embedding column: trigram fallback raised, semantic
+    retrieval was impossible, and neither failure named a setup step because
+    there wasn't one.
+    """
+    from sqlalchemy import text
+
+    from hdh.core.dbinit import initialise
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        from hdh.modules.careplan import dbsetup as careplan_db
+
+        report = initialise(session, extra=careplan_db.EXTENSIONS)
+        report.embedding_column = careplan_db.ensure_embedding_column(session)
+        installed = set(report.installed) | set(report.already)
+        available = {
+            row
+            for row in session.execute(
+                text("SELECT name FROM pg_available_extensions WHERE name IN ('pg_trgm','vector')")
+            ).scalars()
+        }
+        assert available <= installed, f"available but not installed: {available - installed}"
+
+        if "vector" in installed:
+            column = session.execute(
+                text(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_name='knowledge_chunks' AND column_name='embedding'"
+                )
+            ).scalar()
+            assert column, "vector is installed but the embedding column is not"
+
+        # Idempotent: running it again reports everything as already there.
+        again = initialise(session, extra=careplan_db.EXTENSIONS)
+        assert not again.installed, f"second run installed {again.installed} — not idempotent"
+    finally:
+        session.close()
+
+
+def test_db_init_does_not_fail_on_a_server_without_pgvector(pg_engine, monkeypatch):
+    """A server that does not ship pgvector is a real deployment. The setup
+    step should say which feature is unavailable, not die — the modules that
+    need it already refuse clearly on their own."""
+    from hdh.core import dbinit
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        monkeypatch.setattr(dbinit, "EXTENSIONS", (("no_such_extension", "a feature that needs it"),))
+        report = dbinit.initialise(session)
+        assert not report.ok
+        assert report.unavailable[0][0] == "no_such_extension"
+        assert any("MISSING" in line for line in report.lines())
+    finally:
+        session.close()

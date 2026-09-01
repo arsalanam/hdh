@@ -47,5 +47,6 @@ specified in:
 | [fhir-api.md](fhir-api.md) | Serving the dataset as a FHIR R4 API | `hdh[api]` |
 | [ontology.md](ontology.md) | ICD-10 → SNOMED mapping | base install |
 | [billing.md](billing.md) | CPT / RVU claim estimation (scaffold) | base install |
+| [care-planning-with-the-agent.md](care-planning-with-the-agent.md) | Building a care plan by talking to the agent, stage by stage | `hdh[agent]` + PostgreSQL (`hdh[bedrock]` for semantic retrieval) |
 
 Project-level docs: [Feature Guide](../FEATURE_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [Contributing](../../CONTRIBUTING.md)
