@@ -189,13 +189,14 @@ def test_selective_tool_exposure_by_intent():
     scoped = build_tools(None, include={"get_risk_scores", "query_database", "search_patients"})
     assert {t.name for t in scoped} == {"get_risk_scores", "query_database", "search_patients"}
     everything = build_tools(None)
-    # 6 core + 3 chart-maintenance + 7 care-planning, all always available;
+    # 6 core + 3 chart-maintenance + 7 care-planning + 3 refill, all always
+    # available;
     # the ontology and comprehension toolsets need their catalogs and stay
     # absent here. Care planning is in the always-on set for the same reason
     # chart maintenance is: it needs no loaded catalog, and what it does
     # need — a retrieval store — is built on first use rather than at
     # import, so listing the tools costs nothing.
-    assert len(everything) == 16
+    assert len(everything) == 19
 
 
 def test_selective_schema_revealing():
