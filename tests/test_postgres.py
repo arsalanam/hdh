@@ -622,6 +622,26 @@ def test_careplan_run_is_durable_and_resumable(pg_engine):
         session.close()
 
 
+def _require_pgvector(session) -> None:
+    """Skip when the database genuinely cannot do vectors.
+
+    The CI service image and docker-compose both ship pgvector, so this
+    should never skip in either. It exists because a contributor pointing
+    HDH_PG_TEST_URL at their own PostgreSQL should get a clear skip rather
+    than a failure about an extension they were never told to install — and
+    because the alternative, deleting the test, would leave the vector store
+    untested everywhere.
+    """
+    from sqlalchemy import text
+
+    available = session.execute(
+        text("SELECT count(*) FROM pg_available_extensions WHERE name = 'vector'")
+    ).scalar()
+    if not available:
+        pytest.skip("pgvector is not installed in this PostgreSQL — see docker-compose.deps.yml")
+    session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+
 def test_vector_retrieval_stores_and_searches_embeddings(pg_engine):
     """The pipeline, with a hashing embedder so this needs no AWS account.
 
@@ -645,7 +665,7 @@ def test_vector_retrieval_stores_and_searches_embeddings(pg_engine):
     Base.metadata.create_all(pg_engine)
     session = get_session(pg_engine)
     try:
-        session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        _require_pgvector(session)
         store = VectorStore(session, embedder=HashingEmbedder())
         _meta, docs = read_corpus("med_safety")
         written = store.ingest("med_safety", docs)
@@ -681,7 +701,6 @@ def test_vector_retrieval_returns_nothing_for_an_empty_query(pg_engine):
     """The same refusal the lexical store makes: an element with no
     retrieved evidence should not be generated, and the k chunks nearest to
     a meaningless vector are not evidence."""
-    from sqlalchemy import text
 
     from hdh.core.models import Base, get_session
     from hdh.core.schema_registry import bootstrap_schema
@@ -692,7 +711,7 @@ def test_vector_retrieval_returns_nothing_for_an_empty_query(pg_engine):
     Base.metadata.create_all(pg_engine)
     session = get_session(pg_engine)
     try:
-        session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        _require_pgvector(session)
         assert VectorStore(session, embedder=HashingEmbedder()).search("  ", "med_safety") == []
     finally:
         session.close()
@@ -713,7 +732,7 @@ def test_vector_and_lexical_ingest_the_same_rows(pg_engine):
     Base.metadata.create_all(pg_engine)
     session = get_session(pg_engine)
     try:
-        session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        _require_pgvector(session)
         _meta, docs = read_corpus("med_safety")
 
         lexical = PgStore(session).ingest("med_safety", docs)
