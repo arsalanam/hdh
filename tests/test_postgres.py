@@ -313,8 +313,43 @@ def test_careplan_retrieval_returns_nothing_when_nothing_matches(pg_engine):
     try:
         session.execute(__import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         ingest_corpus(session, "med_safety")
-        assert PgStore(session).search("orbital mechanics of comets", "med_safety") == []
+        assert PgStore(session).search("the capital of France is a large city", "med_safety") == []
         assert PgStore(session).search("", "med_safety") == []
+    finally:
+        session.close()
+
+
+def test_a_lexical_match_is_not_a_relevant_one(pg_engine):
+    """Measured while adding the #102 corpus documents, and kept because it
+    is the mechanism behind the traceability score.
+
+    This query used to return nothing. It now returns two chunks — not
+    through the trigram arm, whose floor it never approaches, but through
+    FTS: Postgres stems *mechanics* and *mechanism* to the same root, and
+    the new documents explain bleeding and renal harm in terms of
+    mechanisms. The match is lexically genuine and semantically empty.
+
+    That is exactly the failure the cohort keeps scoring. Traceability
+    governs 21 of 24 verdicts, with **zero** uncited elements — so the plans
+    are not failing for want of citations, they are failing on citations
+    that share a word stem with the claim rather than supporting it. No
+    threshold fixes this, because the hit is a real lexical hit; it is the
+    argument for retrieval that reads meaning (#100).
+    """
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.ingest import ingest_corpus
+    from hdh.modules.careplan.knowledge import PgStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(__import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        ingest_corpus(session, "med_safety")
+        hits = PgStore(session).search("orbital mechanics of comets", "med_safety")
+        assert hits, "if this stops matching, the corpus changed — reread the docstring"
+        assert all(hit.score < 0.1 for hit in hits), "a weak hit is still a hit, and still cited"
     finally:
         session.close()
 

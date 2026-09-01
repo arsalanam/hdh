@@ -132,7 +132,125 @@ def _uncontrolled_chronic(context: CarePlanContext) -> str | None:
     return ", ".join(f"{p.description} ({p.icd10})" for p in problems)
 
 
+#: Classes where a second concurrent agent is a prescribing question rather
+#: than normal practice.
+#:
+#: Deliberately a list rather than "any repeated class". Antibiotics repeat
+#: because courses follow one another, and dual antiplatelet therapy is
+#: standard after a stent — flagging either would train a reader to ignore
+#: the flag, which costs more than the rule is worth. The generator makes
+#: the same exemption for antiplatelets.
+DUPLICATE_WATCH: tuple[str, ...] = (
+    "nsaid",
+    "statin",
+    "ppi",
+    "ssri",
+    "anticoagulant",
+    "sulfonylurea",
+    "biguanide",
+    "ace inhibitor",
+    "arb",
+    "benzodiazepine",
+    "anxiolytic",
+)
+
+#: What raises the bleeding risk of an NSAID from a caution to a hazard.
+BLEEDING_RISK_CLASSES: tuple[str, ...] = ("anticoagulant",)
+
+#: ICD-10 prefixes where an NSAID is a problem in its own right. CKD stages
+#: 3-5 and heart failure; N18.1/N18.2 are deliberately absent because the
+#: concern is meaningful impairment rather than any CKD code at all.
+NSAID_UNSAFE_ICD: tuple[str, ...] = ("N18.3", "N18.4", "N18.5", "N18.6", "N18.9", "I50")
+
+
+def _class_family(drug_class: str | None) -> str:
+    """The family a class belongs to, for comparing two drugs.
+
+    Needed because the formulary spells one family several ways: `NSAID` and
+    `COX-2 NSAID`, `Statin` and `Statin (high-intensity)`,
+    `Anticoagulant (DOAC)` and `Anticoagulant (VKA)`. Comparing the strings
+    exactly makes them different classes, and a patient ends up on two of
+    something with nothing noticing — which is exactly how the two NSAIDs in
+    #102 got past both the generator's guard and every rule here.
+    """
+    lowered = (drug_class or "").lower()
+    for family in DUPLICATE_WATCH:
+        if family in lowered:
+            return family
+    return lowered.split("(")[0].strip()
+
+
+def _nsaid_with_bleeding_risk(context: CarePlanContext) -> str | None:
+    """An NSAID alongside something that already impairs haemostasis."""
+    nsaids = context.medications_in_class("nsaid")
+    if not nsaids:
+        return None
+    risky = context.medications_in_class(*BLEEDING_RISK_CLASSES)
+    if not risky:
+        return None
+    # Both drugs are named. "A drug interaction was found" is not something
+    # a clinician can act on or disagree with.
+    return (
+        f"{', '.join(d.name for d in nsaids)} with {', '.join(f'{d.name} ({d.drug_class})' for d in risky)}"
+    )
+
+
+def _duplicate_class_therapy(context: CarePlanContext) -> str | None:
+    """Two active drugs in one family, where that is not standard practice."""
+    families: dict[str, list[str]] = {}
+    for medication in context.medications:
+        family = _class_family(medication.drug_class)
+        if family in DUPLICATE_WATCH:
+            families.setdefault(family, []).append(medication.name)
+
+    duplicated = {family: names for family, names in families.items() if len(set(names)) > 1}
+    if not duplicated:
+        return None
+    return "; ".join(
+        f"{family}: {', '.join(sorted(set(names)))}" for family, names in sorted(duplicated.items())
+    )
+
+
+def _nsaid_in_renal_or_cardiac_impairment(context: CarePlanContext) -> str | None:
+    """An NSAID where the kidneys or the heart already cannot absorb it."""
+    nsaids = context.medications_in_class("nsaid")
+    if not nsaids:
+        return None
+    problems = [
+        problem
+        for problem in context.problems
+        if any((problem.icd10 or "").startswith(code) for code in NSAID_UNSAFE_ICD)
+    ]
+    if not problems:
+        return None
+    return (
+        f"{', '.join(d.name for d in nsaids)} with "
+        f"{', '.join(f'{p.description} ({p.icd10})' for p in problems)}"
+    )
+
+
 RULES: tuple[SafetyRule, ...] = (
+    SafetyRule(
+        rule_id="nsaid-with-anticoagulant",
+        kind="medication_safety",
+        cites="med_safety/nsaid-bleeding-risk",
+        fires=_nsaid_with_bleeding_risk,
+        statement="An NSAID is prescribed alongside an anticoagulant — bleeding risk",
+    ),
+    SafetyRule(
+        rule_id="duplicate-class-therapy",
+        kind="medication_safety",
+        cites="med_safety/duplicate-class-therapy",
+        fires=_duplicate_class_therapy,
+        statement="Two active medications in the same class, with no added benefit",
+    ),
+    SafetyRule(
+        rule_id="nsaid-in-renal-or-cardiac-impairment",
+        kind="medication_safety",
+        cites="med_safety/nsaid-in-ckd-and-heart-failure",
+        fires=_nsaid_in_renal_or_cardiac_impairment,
+        statement="An NSAID is prescribed with impaired renal function or heart failure",
+    ),
     SafetyRule(
         rule_id="sulfonylurea-in-older-adult",
         kind="medication_safety",
