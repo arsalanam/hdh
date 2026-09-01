@@ -55,26 +55,31 @@ TRIGRAM_FLOOR = 0.25
 
 #: Below this cosine similarity, a vector hit is not about the query.
 #:
-#: Measured against the bundled corpus with Titan v2, five clinical queries
-#: and five deliberately unrelated ones:
+#: Calibrated against the queries the system ACTUALLY ISSUES — the 14
+#: distinct triage topic queries the cohort produces — and not against
+#: hand-written probes. The first version of this constant was 0.15, set
+#: from conversational phrasings like "patient bleeds easily on blood
+#: thinners". Real triage queries are terse diagnosis labels, and a short
+#: label scores lower against a prose paragraph than a sentence does:
 #:
-#:     worst relevant  0.275  "patient bleeds easily on blood thinners"
-#:     best nonsense   0.086  "how to bake sourdough bread at home"
+#:     worst real query   0.144  "Coronary artery disease without angina pectoris"
+#:     best nonsense      0.086  "how to bake sourdough bread at home"
 #:
-#: No overlap, and a gap of 0.189 to put a floor in. 0.15 is the middle of
-#: it rather than the edge of either.
+#: 0.15 sat *above* the worst real query, so the CAD topic retrieved
+#: nothing at all — for a corpus that contains a coronary-artery-disease
+#: document, which the search ranked first. A topic with no candidates
+#: yields no concern, so the floor was silently deleting a chronic problem
+#: from one patient's plan.
 #:
-#: The comparison that matters is with the lexical arm, whose scores do NOT
-#: separate: nonsense scored 0.020 and the design's own §12 scenario 0.041,
-#: a ratio of two, and on "patient bleeds easily on blood thinners" lexical
-#: ranked the WRONG document first. Vector separates by a factor of three
-#: and ranks correctly.
+#: 0.12 is the midpoint of the measured gap: no real query starved, no
+#: nonsense admitted. All 14 real queries rank the correct document first,
+#: so the discrimination was never the problem — only the threshold.
 #:
-#: Like TRIGRAM_FLOOR, this is calibrated against a corpus and will go stale
-#: as that corpus grows — TRIGRAM_FLOOR already did, which is how the
-#: "orbital mechanics" probe started matching. Re-measure when the corpus
-#: changes materially rather than trusting the number.
-VECTOR_FLOOR = 0.15
+#: The lesson, and it is the same one TRIGRAM_FLOOR taught: a floor is
+#: calibrated against a *distribution*, not a corpus, and the distribution
+#: that matters is the one the code produces rather than the one a human
+#: writes while testing.
+VECTOR_FLOOR = 0.12
 
 #: Retrieval never returns more than this per call, whatever k asks for —
 #: hits become prompt tokens, and an unbounded k is an unbounded bill.
