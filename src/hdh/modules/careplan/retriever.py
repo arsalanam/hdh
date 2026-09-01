@@ -99,10 +99,10 @@ def build_store(session, name: str | None = None):
 
 
 def _register_bundled() -> None:
-    from hdh.modules.careplan.knowledge import PgStore
+    from hdh.modules.careplan.knowledge import PgStore, VectorStore
 
     register("lexical", PgStore, "PostgreSQL full-text with a trigram fallback")
-    register("vector", None, "pgvector over API embeddings (#100)")
+    register("vector", VectorStore, "pgvector over Titan embeddings (#100)")
     register("vector+rerank", None, "pgvector, then a cross-encoder rerank (#100)")
 
 

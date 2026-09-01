@@ -33,6 +33,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import ClassVar, Protocol
 
+from sqlalchemy import text as sql_text
+
 #: Below this, a trigram hit is noise rather than a weak match.
 #:
 #: Character trigrams find *some* similarity between any two English
@@ -50,6 +52,29 @@ from typing import ClassVar, Protocol
 #: (The floor was also first applied to ``similarity()``, which was the
 #: wrong function entirely — see :meth:`PgStore._trigram`.)
 TRIGRAM_FLOOR = 0.25
+
+#: Below this cosine similarity, a vector hit is not about the query.
+#:
+#: Measured against the bundled corpus with Titan v2, five clinical queries
+#: and five deliberately unrelated ones:
+#:
+#:     worst relevant  0.275  "patient bleeds easily on blood thinners"
+#:     best nonsense   0.086  "how to bake sourdough bread at home"
+#:
+#: No overlap, and a gap of 0.189 to put a floor in. 0.15 is the middle of
+#: it rather than the edge of either.
+#:
+#: The comparison that matters is with the lexical arm, whose scores do NOT
+#: separate: nonsense scored 0.020 and the design's own §12 scenario 0.041,
+#: a ratio of two, and on "patient bleeds easily on blood thinners" lexical
+#: ranked the WRONG document first. Vector separates by a factor of three
+#: and ranks correctly.
+#:
+#: Like TRIGRAM_FLOOR, this is calibrated against a corpus and will go stale
+#: as that corpus grows — TRIGRAM_FLOOR already did, which is how the
+#: "orbital mechanics" probe started matching. Re-measure when the corpus
+#: changes materially rather than trusting the number.
+VECTOR_FLOOR = 0.15
 
 #: Retrieval never returns more than this per call, whatever k asks for —
 #: hits become prompt tokens, and an unbounded k is an unbounded bill.
@@ -331,3 +356,127 @@ def corpora(session) -> Sequence[tuple[str, int]]:
             select(table.c.corpus, func.count().label("n")).group_by(table.c.corpus).order_by(table.c.corpus)
         ).all()
     ]
+
+
+class VectorStore:
+    """Semantic retrieval: pgvector for storage, an embedder for meaning (#100).
+
+    The argument for it is measured, not aesthetic. Lexical retrieval
+    matches character trigrams and word stems, so it returns
+    `nsaid-bleeding-risk` for the query "orbital mechanics of comets" —
+    PostgreSQL stems *mechanics* and *mechanism* to one root, and the
+    document explains harm in terms of mechanisms. The hit is lexically
+    genuine and semantically empty.
+
+    That is the shape of the failure the cohort keeps scoring: traceability
+    governs 21 of 24 verdicts while *zero* elements are uncited, so plans
+    fail on citations that share a word with the claim rather than
+    supporting it. No threshold fixes a real lexical hit. Reading meaning
+    might.
+
+    **The embedding column lives outside the schema registry**, added by
+    migration 0017 and by :meth:`ensure_schema`. Putting a `vector` type in
+    the registry would make `pgvector` a mandatory import for every hdh
+    install, including the ones that never leave SQLite — and lexical
+    retrieval, the default, needs neither the extension nor an AWS account.
+    """
+
+    name: ClassVar[str] = "vector"
+
+    def __init__(self, session, embedder=None) -> None:
+        self._session = session
+        self._embedder = embedder
+
+    @property
+    def embedder(self):
+        if self._embedder is None:
+            from hdh.modules.careplan.embeddings import build_embedder
+
+            self._embedder = build_embedder()
+        return self._embedder
+
+    def _require_pgvector(self) -> None:
+        from hdh.core.dialect import DatabaseFeatureError, require_postgresql
+
+        require_postgresql(self._session, "Care-plan semantic retrieval")
+        installed = self._session.execute(
+            sql_text("SELECT count(*) FROM pg_extension WHERE extname = 'vector'")
+        ).scalar()
+        if not installed:
+            raise DatabaseFeatureError(
+                "semantic retrieval needs the pgvector extension, which this database "
+                "does not have. Run `CREATE EXTENSION vector;` against it, or start the "
+                "containers with `just deps` — the bundled image ships it."
+            )
+
+    def ensure_schema(self) -> None:
+        """Make the embedding column exist. Idempotent."""
+        from hdh.modules.careplan.embeddings import DIMENSIONS
+
+        self._require_pgvector()
+        self._session.execute(
+            sql_text(f"ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding vector({DIMENSIONS})")
+        )
+        self._session.flush()
+
+    def ingest(self, corpus: str, documents: Iterable[KnowledgeDoc]) -> int:
+        """Write the chunks, then embed them.
+
+        The text lands through :class:`PgStore` so both stores hold exactly
+        the same rows — a corpus that reads differently depending on which
+        retriever ingested it would make every comparison between them
+        meaningless.
+        """
+        self.ensure_schema()
+        written = PgStore(self._session).ingest(corpus, documents)
+        if not written:
+            return 0
+
+        rows = self._session.execute(
+            sql_text("SELECT id, text FROM knowledge_chunks WHERE corpus = :corpus ORDER BY id"),
+            {"corpus": corpus},
+        ).all()
+        vectors = self.embedder.embed([row.text for row in rows])
+        for row, vector in zip(rows, vectors, strict=True):
+            self._session.execute(
+                sql_text("UPDATE knowledge_chunks SET embedding = :v WHERE id = :id"),
+                {"v": "[" + ",".join(f"{f:.7f}" for f in vector) + "]", "id": row.id},
+            )
+        self._session.flush()
+        return written
+
+    def search(
+        self, query: str, corpus: str, k: int = 5, filters: Mapping | None = None
+    ) -> list[KnowledgeHit]:
+        """The k nearest chunks by cosine distance.
+
+        Returns nothing for an empty query rather than the k arbitrary
+        chunks nearest to a meaningless vector — the same refusal the
+        lexical store makes, and for the same reason: an element with no
+        retrieved evidence should not be generated at all.
+        """
+        needle = (query or "").strip()
+        if not needle:
+            return []
+        self._require_pgvector()
+
+        embedded = self.embedder.embed([needle])[0]
+        literal = "[" + ",".join(f"{f:.7f}" for f in embedded) + "]"
+        clause, params = PgStore(self._session)._filter_clause(filters)
+        rows = self._session.execute(
+            sql_text(
+                "SELECT corpus, doc_id, text, source, license, chunk_metadata, "
+                "       1 - (embedding <=> CAST(:v AS vector)) AS score "
+                "FROM knowledge_chunks "
+                "WHERE corpus = :corpus AND embedding IS NOT NULL "
+                f"  {clause}"
+                "ORDER BY embedding <=> CAST(:v AS vector) "
+                "LIMIT :limit"
+            ),
+            {"v": literal, "corpus": corpus, "limit": min(k, MAX_HITS), **params},
+        ).all()
+        return [
+            PgStore(self._session)._hit(row, float(row.score))
+            for row in rows
+            if float(row.score) >= VECTOR_FLOOR
+        ]

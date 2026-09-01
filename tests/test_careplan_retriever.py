@@ -83,7 +83,7 @@ def test_a_planned_but_unbuilt_retriever_says_so_and_points_somewhere():
     somebody configuring the module will read it — and so the failure is
     "not built yet" rather than "unknown"."""
     with pytest.raises(retriever.RetrieverError) as err:
-        retriever.build_store(object(), "vector")
+        retriever.build_store(object(), "vector+rerank")
     message = str(err.value)
     assert "not implemented" in message
     assert "#100" in message
@@ -122,14 +122,17 @@ def test_a_registration_can_shadow_a_shipped_one():
 
 
 def test_available_lists_only_what_can_be_built():
-    assert retriever.available() == ["lexical"]
+    # `vector` became buildable in #100; `vector+rerank` is still the
+    # registered-but-unbuilt entry that keeps the roadmap visible.
+    assert retriever.available() == ["lexical", "vector"]
     assert set(retriever.catalogue()) == {"lexical", "vector", "vector+rerank"}
 
 
 def test_the_catalogue_says_which_are_built():
     catalogue = retriever.catalogue()
     assert catalogue["lexical"][0] is True
-    assert catalogue["vector"][0] is False
+    assert catalogue["vector"][0] is True
+    assert catalogue["vector+rerank"][0] is False
     assert all(description for _built, description in catalogue.values())
 
 

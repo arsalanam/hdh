@@ -620,3 +620,115 @@ def test_careplan_run_is_durable_and_resumable(pg_engine):
         assert node_index("goals") > node_index("concerns")
     finally:
         session.close()
+
+
+def test_vector_retrieval_stores_and_searches_embeddings(pg_engine):
+    """The pipeline, with a hashing embedder so this needs no AWS account.
+
+    What it proves: chunks are stored with vectors of the declared width,
+    the nearest neighbour to a chunk's own text is that chunk, and the
+    ordering comes from the database rather than from Python.
+
+    What it cannot prove: that semantic retrieval is *better*. The hashing
+    embedder carries no meaning. That question is answered against Bedrock
+    and the cohort, not here.
+    """
+    from sqlalchemy import text
+
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.embeddings import DIMENSIONS, HashingEmbedder
+    from hdh.modules.careplan.ingest import read_corpus
+    from hdh.modules.careplan.knowledge import VectorStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        store = VectorStore(session, embedder=HashingEmbedder())
+        _meta, docs = read_corpus("med_safety")
+        written = store.ingest("med_safety", docs)
+        assert written
+
+        embedded = session.execute(
+            text(
+                "SELECT count(*) FROM knowledge_chunks WHERE corpus = 'med_safety' AND embedding IS NOT NULL"
+            )
+        ).scalar()
+        assert embedded == written, "a chunk without a vector can never be retrieved"
+
+        width = session.execute(
+            text("SELECT vector_dims(embedding) FROM knowledge_chunks WHERE corpus = 'med_safety' LIMIT 1")
+        ).scalar()
+        assert width == DIMENSIONS
+
+        # A chunk's own text must retrieve that chunk first. With any sane
+        # embedder this is the easiest possible query, so a failure here is
+        # the SQL or the storage, not the model.
+        chunk, doc_id = session.execute(
+            text("SELECT text, doc_id FROM knowledge_chunks WHERE corpus='med_safety' LIMIT 1")
+        ).one()
+        hits = store.search(chunk, "med_safety", k=3)
+        assert hits and hits[0].doc_id == doc_id
+        assert hits[0].score > 0.99, "a chunk is not similar to itself"
+        assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+    finally:
+        session.close()
+
+
+def test_vector_retrieval_returns_nothing_for_an_empty_query(pg_engine):
+    """The same refusal the lexical store makes: an element with no
+    retrieved evidence should not be generated, and the k chunks nearest to
+    a meaningless vector are not evidence."""
+    from sqlalchemy import text
+
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.embeddings import HashingEmbedder
+    from hdh.modules.careplan.knowledge import VectorStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        assert VectorStore(session, embedder=HashingEmbedder()).search("  ", "med_safety") == []
+    finally:
+        session.close()
+
+
+def test_vector_and_lexical_ingest_the_same_rows(pg_engine):
+    """A corpus that reads differently depending on which retriever ingested
+    it would make every comparison between them meaningless."""
+    from sqlalchemy import text
+
+    from hdh.core.models import Base, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.embeddings import HashingEmbedder
+    from hdh.modules.careplan.ingest import read_corpus
+    from hdh.modules.careplan.knowledge import PgStore, VectorStore
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        _meta, docs = read_corpus("med_safety")
+
+        lexical = PgStore(session).ingest("med_safety", docs)
+        lexical_hashes = set(
+            session.execute(
+                text("SELECT content_hash FROM knowledge_chunks WHERE corpus='med_safety'")
+            ).scalars()
+        )
+        vector = VectorStore(session, embedder=HashingEmbedder()).ingest("med_safety", docs)
+        vector_hashes = set(
+            session.execute(
+                text("SELECT content_hash FROM knowledge_chunks WHERE corpus='med_safety'")
+            ).scalars()
+        )
+        assert lexical == vector
+        assert lexical_hashes == vector_hashes
+    finally:
+        session.close()
