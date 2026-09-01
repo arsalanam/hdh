@@ -25,6 +25,20 @@ DEFAULT_ALLOWED_TOPICS = (
     "or free-text note onto a patient's record",
     "chart maintenance: amending or voiding an entry and reading its audit trail",
     "orders and service requests: labs, medications, referrals, follow-up visits",
+    # Care planning reaches the guard in the reviewer's own words, which do
+    # not look like data questions. Measured before this line existed: the
+    # guard rejected "keep only the interventions a GP can act on at the
+    # next visit" as a *clinical judgment call* and "write the plan out as a
+    # page I can review" as an *output format request* — so the review loop
+    # was unusable from turn three onward, having worked for two turns.
+    #
+    # Deciding whether a plan element is appropriate IS the clinician's job
+    # here; the guard judges the subject, not whether the action should run.
+    "care plans: building one for a patient, reviewing and amending its "
+    "concerns, goals and interventions, approving or rejecting a stage, "
+    "asking what a rubric scores, and writing a plan out for review",
+    "medication repeats and refills: whether one is allowed, how many remain, "
+    "and recording that a supply happened",
     "clinical terminology: ICD-10-CM, SNOMED CT, RxNorm and LOINC — finding the "
     "right code for a description, lookups, hierarchy, laterality, and "
     "Excludes/code-first rules",
@@ -67,7 +81,7 @@ class PipelineDeps:
     """Everything the graph nodes need, injected by the gateway (or a test).
 
     Callable contracts (all usage dicts are {"input_tokens", "output_tokens"}):
-      check_topic(question)           -> (allowed, topic_or_reason, usage)
+      check_topic(question, hist)     -> (allowed, topic_or_reason, usage)
       analyze_intent(question, hist)  -> (intent_dict, usage)
       run_tools(question, intent, feedback, hist)
                                       -> (findings, evidence_list, usage)

@@ -344,9 +344,9 @@ def instrument_deps(deps: PipelineDeps, store: TraceStore, ctx: TurnContext) -> 
             )
         )
 
-    def check_topic(question):
+    def check_topic(question, history=None):
         t0 = perf_counter()
-        allowed, label, usage = deps.check_topic(question)
+        allowed, label, usage = deps.check_topic(question, history)
         record(
             "guardrails",
             "ok" if allowed else "rejected",
