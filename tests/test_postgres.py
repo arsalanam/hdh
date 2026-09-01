@@ -751,3 +751,46 @@ def test_vector_and_lexical_ingest_the_same_rows(pg_engine):
         assert lexical_hashes == vector_hashes
     finally:
         session.close()
+
+
+def test_the_checkpointer_sets_up_while_the_caller_holds_a_transaction(pg_engine):
+    """The deadlock that made the agent's care-plan path unusable.
+
+    `PostgresSaver.setup()` builds its indexes with `CREATE INDEX
+    CONCURRENTLY`, which waits for every transaction older than itself in
+    that database. The agent reaches the checkpointer holding one — a
+    session that has just read a patient and is sitting idle in transaction
+    — so neither side could move and nothing timed out.
+
+    Measured before the fix: eleven minutes and still waiting, on the first
+    "build a care plan for MRN..." ever asked of a fresh database. After: a
+    fraction of a second.
+
+    This test asserts the *condition*, not the timing: an open transaction
+    on the caller's session while the checkpointer is built. If the deadlock
+    returns, this test hangs — which is a worse failure mode than an
+    assertion, but an honest one, and the alternative is not testing the
+    thing that actually broke.
+    """
+    from hdh.core.models import Base, Patient, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+    from hdh.modules.careplan.checkpoints import build_checkpointer
+
+    bootstrap_schema()
+    Base.metadata.create_all(pg_engine)
+    session = get_session(pg_engine)
+    try:
+        # Leaves the session idle in transaction, exactly as the agent's
+        # patient lookup does.
+        session.query(Patient).first()
+        assert session.in_transaction(), "the test must reproduce the blocking condition"
+
+        saver = build_checkpointer(session)
+        assert saver is not None
+
+        # And again: setup is skipped once the schema exists, so a second
+        # plan in the same process does not re-issue CONCURRENTLY.
+        session.query(Patient).first()
+        assert build_checkpointer(session) is not None
+    finally:
+        session.close()

@@ -125,11 +125,63 @@ def _postgres(session=None):
     # `dict_row` is not a preference: the saver reads its rows by name.
     connection = psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
     saver = PostgresSaver(connection, serde=serializer())
-    # Creates the checkpoint tables if they are absent. Idempotent, and kept
-    # out of Alembic on purpose: they are LangGraph's schema, versioned with
-    # LangGraph, and a migration of ours would fight its upgrades.
-    saver.setup()
+    _ensure_schema(saver, session)
     return saver
+
+
+def _ensure_schema(saver, session) -> None:
+    """Create the checkpoint tables, without deadlocking on the caller.
+
+    ``PostgresSaver.setup()`` builds its indexes with ``CREATE INDEX
+    CONCURRENTLY``, which waits for **every transaction older than itself**
+    in that database to finish. The caller reaches us holding one: a
+    SQLAlchemy session that has just read a patient and is sitting *idle in
+    transaction*. Neither side can move, and nothing times out.
+
+    Measured, the first time the agent was asked to build a care plan
+    against a fresh database: `CREATE INDEX CONCURRENTLY` ran for eleven
+    minutes against our own idle-in-transaction session and would have run
+    forever. The tables are LangGraph's schema, so the fix cannot be to stop
+    using CONCURRENTLY — it has to be to stop holding the transaction.
+
+    Two steps, in this order:
+
+    1. **Skip when already set up.** Idempotent for LangGraph means "runs
+       again harmlessly", not "runs again cheaply" — every call re-issues the
+       CONCURRENTLY statements, so every call is another chance to deadlock.
+       A version check makes the common path free — and it has to be a
+       *version* check: "any rows exist" treats an interrupted setup as a
+       finished one, which is how a database stuck at v6 went on failing
+       every plan on a column the v9 migration adds.
+    2. **Release the caller's transaction first.** ``rollback()`` rather than
+       ``commit()``: this runs before a plan has written anything, so there
+       is nothing of the caller's to preserve, and committing someone else's
+       open transaction is not ours to do.
+    """
+    from sqlalchemy import text as sql_text
+
+    # Against `len(MIGRATIONS) - 1`, not "are there any rows". Checking for
+    # presence is what the first version of this did, and a real run exposed
+    # why it was wrong: a database left at v6 by the interrupted setup above
+    # was treated as done, so the v9 migration that adds
+    # `checkpoint_writes.task_path` never ran and every plan failed on the
+    # missing column. A partial setup is not a finished one.
+    target = len(type(saver).MIGRATIONS) - 1
+    try:
+        current = session.execute(sql_text("SELECT max(v) FROM checkpoint_migrations")).scalar()
+    except Exception:
+        # No table yet — the expected state on a fresh database. The failed
+        # statement poisons the transaction, so it has to be cleared before
+        # anything else runs on this session.
+        session.rollback()
+        current = None
+    if current is not None and int(current) >= target:
+        return
+
+    # Nothing of ours is pending here, and an open transaction is exactly
+    # what CONCURRENTLY cannot proceed past.
+    session.rollback()
+    saver.setup()
 
 
 def build_checkpointer(session=None, name: str | None = None):
