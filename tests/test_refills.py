@@ -229,3 +229,132 @@ def test_a_voided_dispense_does_not_count_against_the_patient(chart):
     refill the patient is owed."""
     order = _order_with_dispenses(chart, 1, voided=2)
     assert decide_refill(chart, order, TODAY).remaining == 2
+
+
+# ── milestone D: the generator issues orders and fills ───────────────────
+
+
+@pytest.fixture(scope="module")
+def generated(tmp_path_factory):
+    from hdh.core.generators import build_dataset
+    from hdh.core.models import Base, get_engine, get_session
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
+    engine = get_engine(str(tmp_path_factory.mktemp("refills") / "chart.db"))
+    Base.metadata.create_all(engine)
+    session = get_session(engine)
+    build_dataset(
+        session, n_patients=20, years_of_history=4, verbose=False, seed=4242, as_of=date(2026, 8, 28)
+    )
+    yield session, date(2026, 8, 28)
+    session.close()
+    engine.dispose()
+
+
+def _medication_orders(session):
+    from sqlalchemy import select
+
+    from hdh.core.models import ServiceKind, ServiceRequest
+
+    return (
+        session.execute(select(ServiceRequest).where(ServiceRequest.kind == ServiceKind.MEDICATION))
+        .scalars()
+        .all()
+    )
+
+
+def test_a_repeat_authorisation_stays_open(generated):
+    """An order with refills left is not over.
+
+    Measured before this changed: 0 of 949 generated medication orders were
+    refillable, because every one was closed on the day it was written. The
+    refill tool would have refused every request ever made against a
+    generated chart.
+    """
+    from hdh.core.models import RequestStatus
+
+    session, _as_of = generated
+    orders = _medication_orders(session)
+    repeats = [o for o in orders if o.refills_authorised]
+    assert repeats, "the generator issued no repeat authorisations"
+    for order in repeats:
+        assert order.status == RequestStatus.ACTIVE
+        assert order.end_date is None, "a repeat with refills left is not over"
+
+
+def test_a_one_off_order_still_closes_on_the_fill(generated):
+    """Nothing changed for the orders that authorise nothing."""
+    from hdh.core.models import RequestStatus
+
+    session, _as_of = generated
+    one_offs = [o for o in _medication_orders(session) if not o.refills_authorised]
+    assert one_offs
+    for order in one_offs:
+        assert order.status == RequestStatus.COMPLETED
+        assert order.end_date is not None
+
+
+def test_every_authorisation_is_bounded_in_time(generated):
+    """A repeat that never expires is one nobody has to review."""
+    session, _as_of = generated
+    for order in _medication_orders(session):
+        assert order.valid_until is not None
+
+
+def test_no_order_is_filled_beyond_what_it_authorised(generated):
+    """The invariant the whole model rests on. If this fails, `can_refill`
+    is answering a question the chart has already contradicted."""
+    from hdh.core.refills import issued_count
+
+    session, _as_of = generated
+    for order in _medication_orders(session):
+        issued = issued_count(session, order)
+        assert issued <= (order.refills_authorised or 0) + 1, (
+            f"order #{order.id} has {issued} fills against {order.refills_authorised or 0} authorised refills"
+        )
+
+
+def test_no_fill_happens_after_the_authorisation_expired(generated):
+    from sqlalchemy import select
+
+    from hdh.core.models import MedicationDispense
+
+    session, _as_of = generated
+    for order in _medication_orders(session):
+        if order.valid_until is None:
+            continue
+        fills = session.execute(
+            select(MedicationDispense.dispensed_date).where(MedicationDispense.request_id == order.id)
+        ).scalars()
+        for when in fills:
+            assert when <= order.valid_until, f"order #{order.id} filled after it expired"
+
+
+def test_no_fill_happens_in_the_future(generated):
+    from sqlalchemy import func, select
+
+    from hdh.core.models import MedicationDispense
+
+    session, as_of = generated
+    latest = session.execute(select(func.max(MedicationDispense.dispensed_date))).scalar()
+    assert latest <= as_of
+
+
+def test_the_chart_can_actually_be_refilled(generated):
+    """The point of the milestone. C shipped a tool that could not act on a
+    generated chart, because nothing in one was refillable."""
+    session, as_of = generated
+    refillable = [o for o in _medication_orders(session) if decide_refill(session, o, as_of).allowed]
+    assert refillable, "no generated order is refillable — milestone C is unexercisable"
+
+
+def test_not_every_authorised_refill_was_collected(generated):
+    """A chart where every refill is taken has no non-adherence in it, which
+    is the thing a care plan most often has to notice."""
+    from hdh.core.refills import issued_count
+
+    session, _as_of = generated
+    repeats = [o for o in _medication_orders(session) if o.refills_authorised]
+    uncollected = [o for o in repeats if issued_count(session, o) < (o.refills_authorised or 0) + 1]
+    assert uncollected, "every authorised refill was collected — no lapses in the chart"
