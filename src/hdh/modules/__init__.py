@@ -27,7 +27,7 @@ CLI_MODULES = {
 
 # Modules contributing FHIR enrichers/emitters (each exposes fhir_enrichers();
 # see hdh.core.fhir — design docs/design/fhir-emitters.md)
-FHIR_MODULES = ("hdh.modules.ontology.fhir",)
+FHIR_MODULES = ("hdh.modules.ontology.fhir", "hdh.modules.careplan.fhir")
 
 # Vocabulary modules implementing the OntologyService protocol (each exposes
 # build_service(session); see hdh.core.ontology — consumers dispatch through

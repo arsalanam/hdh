@@ -81,5 +81,21 @@
         "status"
       ]
     }
-  ]
+  ],
+  "fhir": {
+    "resourceType": "CarePlan",
+    "patient_link": "patient_id",
+    "id_fields": [
+      "id"
+    ],
+    "subject_field": "subject",
+    "set": {
+      "intent": "plan",
+      "status": "draft"
+    },
+    "fields": {
+      "title": "title",
+      "narrative": "description"
+    }
+  }
 }

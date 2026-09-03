@@ -154,6 +154,16 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "reject_care_plan_stage",
         "show_care_plan_rubric",
         "write_care_plan_page",
+        # The record half. Omitted when they were first written, and the
+        # agent responded by DESCRIBING a save it had never performed —
+        # "11 concerns, 19 goals, 30 interventions persisted" — with real
+        # counts read from show_care_plan, so the validator passed it.
+        # A tool nobody can reach is worse than a missing one: the model
+        # narrates the capability instead of refusing.
+        "save_care_plan",
+        "approve_care_plan",
+        "reject_care_plan",
+        "care_plan_history",
         "get_patient_chart",
         "get_care_gaps",
         "query_database",

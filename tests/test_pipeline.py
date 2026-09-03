@@ -189,14 +189,14 @@ def test_selective_tool_exposure_by_intent():
     scoped = build_tools(None, include={"get_risk_scores", "query_database", "search_patients"})
     assert {t.name for t in scoped} == {"get_risk_scores", "query_database", "search_patients"}
     everything = build_tools(None)
-    # 6 core + 3 chart-maintenance + 7 care-planning + 3 refill, all always
+    # 6 core + 3 chart-maintenance + 11 care-planning + 3 refill, all always
     # available;
     # the ontology and comprehension toolsets need their catalogs and stay
     # absent here. Care planning is in the always-on set for the same reason
     # chart maintenance is: it needs no loaded catalog, and what it does
     # need — a retrieval store — is built on first use rather than at
     # import, so listing the tools costs nothing.
-    assert len(everything) == 19
+    assert len(everything) == 23
 
 
 def test_selective_schema_revealing():
@@ -445,3 +445,37 @@ def test_the_validator_never_sees_less_evidence_than_the_drafter():
     assert "self.config.tool_result_cap" in source, (
         "evidence should be capped at the same size the executor was given"
     )
+
+
+def test_every_care_plan_tool_is_reachable_from_its_intent(db_session):
+    """The reverse of the check above, and the direction that actually bit.
+
+    `test_every_intent_names_a_tool_that_is_defined_somewhere` catches an
+    intent naming a tool nobody wrote. It cannot catch a tool nobody named —
+    and that is what happened twice: #141 for the whole care-plan pack, and
+    again one PR later for `save_care_plan` and its siblings.
+
+    The failure mode is worse than an error. Asked to save a plan with no
+    save tool in reach, the agent DESCRIBED a save it had never performed,
+    quoting real counts it had read from `show_care_plan`, and the validator
+    passed it because every number was grounded. Nothing was written.
+    """
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+    from hdh.modules.careplan.agent_tools import build_careplan_tools
+
+    pack = {tool.name for tool in build_careplan_tools(db_session)}
+    assert pack, "no care-plan tools built — this test would be vacuous"
+    unreachable = pack - INTENT_TOOLS["care_plan"]
+    assert not unreachable, (
+        f"care-plan tools no intent exposes: {sorted(unreachable)} — "
+        f"the agent will narrate the capability instead of using it"
+    )
+
+
+def test_every_refill_tool_is_reachable_from_its_intent(db_session):
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+    from hdh.modules.agent.refill_tools import build_refill_tools
+
+    pack = {tool.name for tool in build_refill_tools(db_session)}
+    assert pack, "no refill tools built — this test would be vacuous"
+    assert not pack - INTENT_TOOLS["medication"]
