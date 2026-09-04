@@ -21,6 +21,11 @@ def register_cli(subparsers) -> None:
     ingest = sub.add_parser("ingest", help="Load a knowledge corpus into the store")
     ingest.add_argument("--corpus", help="Corpus name (default: every bundled corpus)")
     ingest.add_argument("--root", help="Directory holding corpora (default: the bundled ones)")
+    ingest.add_argument(
+        "--force",
+        action="store_true",
+        help="Ingest even if it would drop embeddings the current retriever will not rewrite",
+    )
 
     sub.add_parser("corpora", help="What is ingested, and how much")
 
@@ -514,6 +519,73 @@ def _cmd_stratify(session, args) -> None:
         print()
 
 
+def _embedded_counts(session, names) -> dict[str, int]:
+    """How many chunks in each named corpus currently carry a vector.
+
+    Raw SQL, not the ORM metadata: `embedding` is added by migration 0017
+    and deliberately lives OUTSIDE the schema registry, so
+    `Base.metadata.tables["knowledge_chunks"].c` has no such column. The
+    first version of this guard read the metadata, found nothing to protect,
+    and let the ingest through — reproducing the exact silence it exists to
+    break, on the very run that was meant to prove it worked.
+    """
+    from sqlalchemy import bindparam, text
+
+    if session.bind.dialect.name != "postgresql":
+        return {}
+    try:
+        rows = session.execute(
+            text(
+                "SELECT corpus, count(embedding) AS embedded FROM knowledge_chunks "
+                "WHERE corpus IN :names GROUP BY corpus"
+            ).bindparams(bindparam("names", expanding=True)),
+            {"names": list(names)},
+        ).all()
+    except Exception:  # noqa: BLE001 - no table, or no embedding column yet
+        session.rollback()
+        return {}
+    return {row.corpus: row.embedded for row in rows if row.embedded}
+
+
+def _refuse_to_drop_embeddings(session, names, force: bool) -> None:
+    """Stop an ingest that would silently leave the vector retriever empty.
+
+    `ingest` replaces a corpus wholesale, and only computes embeddings when
+    the configured retriever needs them. So running it with
+    HDH_CAREPLAN_RETRIEVER unset — the default is `lexical` — deletes every
+    vector and writes rows without them.
+
+    Nothing then fails. The corpus still reports the same chunk count, the
+    lexical retriever keeps working, and `vector+rerank` quietly matches
+    nothing: `search` answers "no chunks match", which reads exactly like a
+    query with no good answer. Measured on this repository, that state
+    persisted unnoticed until a retrieval comparison turned up zero hits for
+    a query the corpus plainly covers.
+
+    Refusing beats warning. A warning scrolls past above the reassuring
+    "ingested 38 chunks" line, and the person who needed to read it is the
+    one who did not know to look.
+    """
+    from hdh.modules.careplan import retriever
+
+    at_risk = _embedded_counts(session, names)
+    if not at_risk or force:
+        return
+    # Ask the store that will actually do the writing, rather than matching
+    # retriever names here — a new embedding retriever would otherwise be
+    # refused by a list nobody remembered to update.
+    if hasattr(retriever.build_store(session), "embedder"):
+        return
+
+    listed = ", ".join(f"{corpus} ({n} embedded)" for corpus, n in sorted(at_risk.items()))
+    raise SystemExit(
+        f"hdh careplan ingest: this would delete embeddings and not rewrite them — {listed}.\n"
+        f"  The configured retriever is '{retriever.configured()}', which does not embed.\n"
+        f"  Re-run as:  {retriever.ENV_VAR}=vector+rerank hdh careplan ingest\n"
+        f"  Or pass --force if a lexical-only corpus is what you want."
+    )
+
+
 def _cmd_ingest(session, args) -> None:
     import pathlib
 
@@ -529,6 +601,8 @@ def _cmd_ingest(session, args) -> None:
     names = [args.corpus] if args.corpus else available(root)
     if not names:
         raise SystemExit("no corpora found — nothing to ingest")
+
+    _refuse_to_drop_embeddings(session, names, force=getattr(args, "force", False))
 
     total = 0
     for name in names:
