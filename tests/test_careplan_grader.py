@@ -294,3 +294,45 @@ def test_the_bundled_rubrics_all_produce_usable_prompts():
             rubric=rubric,
         )
         assert len(evaluation.graded) == len(rubric.dimensions)
+
+
+# ── the split that made grading cacheable (default@2) ────────────────────
+
+
+def test_the_situation_and_plan_come_before_the_dimension():
+    """The reordering *is* the feature. Put the title back in front and the
+    shared block stops being a prefix, no breakpoint can reach it, and the
+    largest saving in the module silently becomes zero."""
+    prompt = grading_prompt(_task("completeness"))
+    assert prompt.index("PATIENT SITUATION") < prompt.index("DIMENSION:")
+    assert prompt.index("THE PLAN") < prompt.index("DIMENSION:")
+
+
+def test_the_prefix_is_byte_identical_across_dimensions():
+    from hdh.modules.careplan.evaluate import grading_parts
+
+    prefixes = {grading_parts(_task(name))[0] for name in ("completeness", "safety", "traceability")}
+    assert len(prefixes) == 1, "a prefix that differs per dimension caches nothing and pays to write"
+
+
+def test_the_split_loses_nothing_that_was_being_sent():
+    """Reordering is allowed to move text. Dropping it is a quieter change
+    to what the model is asked than the version bump would suggest."""
+    from hdh.modules.careplan.evaluate import grading_parts
+
+    task = _task("completeness")
+    prefix, question = grading_parts(task)
+    whole = grading_prompt(task)
+    assert whole == prefix + question
+    for required in (
+        "You are grading ONE dimension",
+        "PATIENT SITUATION",
+        "THE PLAN",
+        "DIMENSION:",
+        "QUESTION:",
+        "SCALE",
+        "ESTABLISHED FACTS",
+        "lexical check",
+        "do not settle on the middle of the scale",
+    ):
+        assert required in whole, required

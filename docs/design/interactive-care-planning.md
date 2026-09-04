@@ -284,7 +284,7 @@ the model.
 
 ### 10.1 The second attempt, built but not run (2026-08-30)
 
-`measurable-goals@2` makes `target_value` required, carried by the prompt
+`measurable-goals@3` makes `target_value` required, carried by the prompt
 set so the change stays attributable — **what the model is asked includes
 the shape it must answer in**. A schema change applied globally could not be
 compared against the set it was meant to test.
@@ -292,6 +292,10 @@ compared against the set it was meant to test.
 Required does not mean non-empty. An empty string remains the honest answer
 when nothing retrieved supports a number, and the instruction asks for
 exactly that. The requirement forces a decision, not a figure.
+
+(It was `measurable-goals@2` when written. The stamp moved to `@3` with the
+grading split in §11, which changed no goal instruction — a reminder that a
+version tracks *the set*, not the one prompt someone happens to be studying.)
 
 **It has not been run.** The Anthropic account is out of credit, so the
 tuning run failed at the first call with a 400 and produced no plans.
