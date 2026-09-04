@@ -3,15 +3,66 @@
   "tablename": "note_records",
   "module": "comprehension_module",
   "columns": [
-    { "name": "id", "type": "Integer", "primary_key": true, "autoincrement": true },
-    { "name": "visit_note_id", "type": "Integer", "foreign_key": "visit_notes.id", "nullable": false },
-    { "name": "pack", "type": "String", "length": 40, "nullable": false },
-    { "name": "pipeline_version", "type": "String", "length": 20, "nullable": false },
-    { "name": "status", "type": "Enum", "values": ["complete", "needs_review", "failed"], "nullable": false },
-    { "name": "created_at", "type": "DateTime" },
-    { "name": "properties", "type": "JSON" }
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "visit_note_id",
+      "type": "Integer",
+      "foreign_key": "visit_notes.id",
+      "nullable": false
+    },
+    {
+      "name": "pack",
+      "type": "String",
+      "length": 40,
+      "nullable": false
+    },
+    {
+      "name": "pipeline_version",
+      "type": "String",
+      "length": 20,
+      "nullable": false
+    },
+    {
+      "name": "status",
+      "type": "Enum",
+      "values": [
+        "complete",
+        "needs_review",
+        "failed"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "created_at",
+      "type": "DateTime"
+    },
+    {
+      "name": "properties",
+      "type": "JSON"
+    }
   ],
   "indexes": [
-    { "name": "ix_note_record_visit_note", "columns": ["visit_note_id"] }
-  ]
+    {
+      "name": "ix_note_record_visit_note",
+      "columns": [
+        "visit_note_id"
+      ]
+    }
+  ],
+  "semantics": {
+    "purpose": "A note that has been through comprehension: the structured reading of narrative text, with what was extracted and whether it was applied to the chart.",
+    "also_called": [
+      "comprehended notes",
+      "note extraction"
+    ],
+    "use_when": "Asked what was FOUND in a note, or whether a note has been processed. For the prose a clinician wrote, use visit_notes — this table is the machine's reading of it.",
+    "joins": [
+      "note_records.patient_id -> patients.id"
+    ]
+  }
 }

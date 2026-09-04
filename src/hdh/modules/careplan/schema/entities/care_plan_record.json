@@ -108,5 +108,23 @@
       "title": "title",
       "narrative": "description"
     }
+  },
+  "semantics": {
+    "purpose": "A saved care plan: the header row. The plan's content lives in health_concerns, plan_goals and plan_interventions beneath it.",
+    "also_called": [
+      "care plan",
+      "the plan"
+    ],
+    "use_when": "Asked what plan a patient has. A plan only exists here once it was SAVED — a plan still under review lives in a checkpoint and is not in the database at all, so an empty result means 'none saved', not 'none exists'.",
+    "columns": {
+      "status": "What a clinician decided: 'user_edited' (written, undecided), 'approved', 'rejected'. Decided once — a plan is never re-decided in place.",
+      "supersedes_id": "The plan this one replaces, or NULL. Set when a DECIDED plan is amended: the decided row is never edited, so a revision becomes a new row pointing back. IMPORTANT: superseding does NOT change the old plan's status — it really was approved. To find the plan in force, take the newest row that no other row's supersedes_id points at; do not filter on status.",
+      "rejection_reason": "Populated only for rejected plans.",
+      "prompt_set": "Which prompt wording produced it, as '<id>@<version>'. NULL on plans written before prompts were versioned.",
+      "deferred": "JSON. Problems triage deliberately set aside, so an absence can be told from an omission."
+    },
+    "joins": [
+      "care_plan_records.patient_id -> patients.id"
+    ]
   }
 }

@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from graphlib import CycleError, TopologicalSorter
 from importlib import import_module
 from pathlib import Path
@@ -221,12 +222,14 @@ class SchemaRegistry:
                         "indexes": [],
                         "is_new": not is_base_entity,
                         "fhir": None,
+                        "semantics": None,
                     },
                 )
                 if merged["is_new"] and spec.get("tablename"):
                     merged["tablename"] = spec["tablename"]
                 merged["indexes"].extend(spec.get("indexes", []))
                 self._merge_fhir_hint(spec, merged, module, spec_file, is_base_entity)
+                self._merge_semantics(spec, merged, module)
                 base_columns = {c.name for c in base[entity].__table__.columns} if is_base_entity else set()
                 for column_spec in spec.get("columns", []):
                     name = column_spec["name"]
@@ -250,6 +253,31 @@ class SchemaRegistry:
                 raise SchemaError(f"new entity {entity} defines no tablename")
             if merged["fhir"]:
                 self._validate_fhir_hint(entity, merged)
+
+    @staticmethod
+    def _merge_semantics(spec, merged, module) -> None:
+        """Capture an entity's optional ``semantics`` block (issue #93).
+
+        Unlike a fhir hint this is allowed on a base-entity extension too. A
+        module that adds columns to a core table is exactly the module that
+        knows what they mean, and forcing that sentence back into core would
+        recreate the arrangement this replaces: one file explaining tables it
+        does not own, drifting a module at a time.
+        """
+        block = spec.get("semantics")
+        if block is None:
+            return
+        if merged["semantics"] is None:
+            merged["semantics"] = {}
+        for key, value in block.items():
+            if key in ("columns", "also_called", "joins") and key in merged["semantics"]:
+                if isinstance(value, dict):
+                    merged["semantics"][key] = {**merged["semantics"][key], **value}
+                else:
+                    merged["semantics"][key] = [*merged["semantics"][key], *value]
+            else:
+                merged["semantics"][key] = value
+        merged["semantics"].setdefault("_declared_by", module.name)
 
     @staticmethod
     def _merge_fhir_hint(spec, merged, module, spec_file, is_base_entity: bool) -> None:
@@ -452,6 +480,43 @@ def reconcile_missing_columns(connection) -> list[str]:
 # ── Process-wide bootstrap (the app.py sequence from the design) ─────────────
 
 registry = SchemaRegistry()
+
+
+#: Semantics for the tables declared in ``models.py``, which have no entity
+#: JSON to carry them. Module-declared tables carry their own block.
+BASE_SEMANTICS = Path(__file__).parent / "schema" / "semantics.json"
+
+
+@lru_cache(maxsize=1)
+def _base_semantics() -> dict:
+    if not BASE_SEMANTICS.is_file():
+        return {}
+    raw = json.loads(BASE_SEMANTICS.read_text(encoding="utf-8"))
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+def table_semantics() -> dict[str, dict]:
+    """What each table MEANS, keyed by table name.
+
+    Structure is generated from live ORM metadata and cannot drift. Meaning
+    cannot be generated at all, so it is declared — by core for the tables in
+    ``models.py``, and by each module for the entities it ships.
+
+    The arrangement it replaces was a hand-written paragraph inside the
+    agent's SQL tool describing tables that module owned none of. It went
+    four tables behind (`service_requests`, `note_records`,
+    `rejected_results`, `care_plan_records` had column lists and no
+    explanation), and it went behind in the only way it could: every new
+    module added an entity without adding the sentence that explains it.
+    """
+    out: dict[str, dict] = {name: dict(block) for name, block in _base_semantics().items()}
+    for merged in registry.merged_entities.values():
+        block = merged.get("semantics")
+        table = merged.get("tablename")
+        if not block or not table:
+            continue
+        out[table] = {**out.get(table, {}), **block}
+    return out
 
 
 def bootstrap_schema(module_names: list[str] | None = None) -> SchemaRegistry:

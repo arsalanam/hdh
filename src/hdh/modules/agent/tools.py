@@ -17,18 +17,42 @@ from hdh.core.models import Base, Condition, Patient
 log = logging.getLogger("hdh.agent")
 
 
-def _schema_summary(tables: tuple[str, ...] | None = None) -> str:
-    """One line per table from the live ORM metadata — never drifts from models.py.
+def _semantic_schema(tables: tuple[str, ...] | None = None) -> str:
+    """Columns AND meaning, per table, from the schema registry (#93).
 
-    ``tables`` limits the summary to the named tables (selective schema
-    revealing: the executor only sees what its intent needs).
+    What this replaces is the point. The columns were always generated from
+    live ORM metadata and could not drift; the sentence explaining what a
+    table is *for* was a hand-written paragraph in this file, about tables
+    this module does not own. It went four behind — `service_requests`,
+    `note_records`, `rejected_results` and `care_plan_records` appeared in
+    the column list with nothing saying what they were — and it went behind
+    in the only way it could, one module at a time.
+
+    So the meaning now travels with the entity that declares it, and this
+    function renders rather than remembers.
     """
-    lines = [
-        f"  {table.name}({', '.join(c.name for c in table.columns)})"
-        for table in Base.metadata.sorted_tables
-        if tables is None or table.name in tables
-    ]
-    return "\n".join(lines)
+    from hdh.core.schema_registry import table_semantics
+
+    meanings = table_semantics()
+    blocks: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if tables is not None and table.name not in tables:
+            continue
+        lines = [f"  {table.name}({', '.join(c.name for c in table.columns)})"]
+        meaning = meanings.get(table.name)
+        if meaning:
+            if meaning.get("purpose"):
+                lines.append(f"      {meaning['purpose']}")
+            if meaning.get("also_called"):
+                lines.append(f"      also called: {', '.join(meaning['also_called'])}")
+            if meaning.get("use_when"):
+                lines.append(f"      use when: {meaning['use_when']}")
+            for column, note in (meaning.get("columns") or {}).items():
+                lines.append(f"      .{column}: {note}")
+            for join in meaning.get("joins") or []:
+                lines.append(f"      join: {join}")
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
 
 
 def clip_tool_results(tool_response: Mapping | None, cap: int) -> Mapping | None:
@@ -70,21 +94,14 @@ def _sql_tool_description(tables: tuple[str, ...] | None, dialect: str = "sqlite
         date_note = "Dates are ISO 'YYYY-MM-DD' text (julianday()/strftime() work)."
     return f"""Run a read-only SQL SELECT against the synthetic {dialect} database.
 
-        Schema (one line per table):
-{_schema_summary(tables)}
+        Schema — columns, and what each table is for:
+{_semantic_schema(tables)}
 
-        Joins: conditions.patient_id -> patients.id (the unified problem
-        list: chronic=1 rows are ongoing conditions, others are encounter
-        diagnoses; conditions.visit_id links to the recording visit);
-        vitals, prescriptions, lab_results, visit_notes, procedures join via
-        visit_id -> visits.id; allergies, family_history, immunizations,
-        medication_statements join via patient_id. Enum columns store names:
-        visits.visit_type in ('ACUTE','FOLLOW_UP','PREVENTIVE','URGENT'),
-        lab_results.status in ('NORMAL','HIGH','LOW','CRITICAL'),
-        conditions.status in ('ACTIVE','RESOLVED','REMISSION'), patients.sex
-        in ('MALE','FEMALE'). conditions.controlled is 0/1.
-        ontology_concepts.path is ICD-10-CM only; use the icd tools for
-        hierarchy questions. {date_note} Results are capped at 200 rows.
+        Tables not annotated above carry columns only; if one looks like the
+        answer, say what you are assuming rather than guessing at its meaning.
+        Enum columns store NAMES, not numbers — compare to the string.
+        Anything joining via visit_id reaches the patient through
+        visits.patient_id. {date_note} Results are capped at 200 rows.
 
         Args:
             sql: A single SELECT statement (no writes, no multiple statements).
