@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from hdh.modules.careplan import usage
+from hdh.modules.careplan.caching import cached_text
 from hdh.modules.careplan.facts import PlanEvidence, PlanFacts, compute_facts
 from hdh.modules.careplan.prompts import prompt_set
 from hdh.modules.careplan.rubric import Dimension, Rubric, select_rubric
@@ -359,7 +360,7 @@ def llm_grader(model: str | None = None, client=None) -> Grader:
         response = client.beta.messages.create(
             model=resolved,
             max_tokens=1000,
-            messages=[{"role": "user", "content": grading_prompt(task)}],
+            messages=[{"role": "user", "content": cached_text(grading_prompt(task))}],
             output_config={"format": {"type": "json_schema", "schema": dict(task.schema)}},
         )
         usage.record(response, "grading")
