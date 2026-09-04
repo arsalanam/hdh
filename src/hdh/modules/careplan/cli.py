@@ -52,7 +52,14 @@ def register_cli(subparsers) -> None:
     grade.add_argument("--dry-run", action="store_true", help="Score it, record nothing")
 
     show = sub.add_parser("show", help="One plan, with what each element traces to")
-    show.add_argument("--id", type=int, required=True)
+    # Either identifier. A clinician has an MRN in front of them, not a plan
+    # id, and requiring the id meant the answer to "show me this patient's
+    # care plan" was a SQL query first.
+    show.add_argument("--id", type=int, help="Care plan id")
+    show.add_argument("--mrn", help="Patient MRN; shows their current plan")
+
+    plans = sub.add_parser("plans", help="Every saved plan for a patient, and which one is current")
+    plans.add_argument("--mrn", required=True)
 
     sub.add_parser("rubrics", help="The evaluation rubrics on disk, and what each dimension asks")
 
@@ -100,6 +107,7 @@ def run(session, args) -> None:
         "stratify": lambda: _cmd_stratify(session, args),
         "generate": lambda: _cmd_generate(session, args),
         "show": lambda: _cmd_show(session, args),
+        "plans": lambda: _cmd_plans(session, args),
         "rubrics": lambda: _cmd_rubrics(),
         "retrievers": lambda: _cmd_retrievers(),
         "facts": lambda: _cmd_facts(session, args),
@@ -661,38 +669,46 @@ def _cmd_generate(session, args) -> None:
 
 def _cmd_show(session, args) -> None:
     """One plan, printed so every element shows what it traces to."""
-    from sqlalchemy import select
+    from hdh.modules.careplan.persist import current_plan_id, load_plan, render_record
 
-    from hdh.core.models import Base
+    plan_id = args.id
+    if not plan_id:
+        if not args.mrn:
+            raise SystemExit("give --id or --mrn")
+        patient = _patient(session, args.mrn)
+        plan_id = current_plan_id(session, patient.id)
+        if not plan_id:
+            raise SystemExit(f"{args.mrn} has no saved care plan")
 
-    tables = Base.metadata.tables
-    plans = tables["care_plan_records"]
-    plan = session.execute(select(plans).where(plans.c.id == args.id)).first()
+    plan = load_plan(session, plan_id)
     if plan is None:
-        raise SystemExit(f"no care plan #{args.id}")
-
+        raise SystemExit(f"no care plan #{plan_id}")
     print()
-    print(f"#{plan.id}  {plan.title}")
-    print(f"  status: {plan.status}")
-    for item in (getattr(plan, "deferred", None) or {}).get("problems") or []:
-        print(f"  deferred: {item}")
+    print(render_record(plan))
 
-    concerns = session.execute(
-        select(tables["health_concerns"]).where(tables["health_concerns"].c.care_plan_id == plan.id)
-    ).all()
-    for concern in concerns:
-        refs = ", ".join((concern.evidence_refs or {}).get("chunks", [])) or "—"
-        print()
-        print(f"  [{concern.concern_type}] {concern.statement}   ({concern.source}, cites {refs})")
-        goals = session.execute(
-            select(tables["plan_goals"]).where(tables["plan_goals"].c.concern_id == concern.id)
-        ).all()
-        for goal in goals:
-            target = f" → {goal.target_value}" if goal.target_value else ""
-            print(f"      goal: {goal.statement}{target}")
-            interventions = session.execute(
-                select(tables["plan_interventions"]).where(tables["plan_interventions"].c.goal_id == goal.id)
-            ).all()
-            for item in interventions:
-                owner = f" [{item.owner_role}]" if item.owner_role else ""
-                print(f"          {item.intervention_type}: {item.statement}{owner}")
+
+def _patient(session, mrn: str):
+    from hdh.core.models import Patient
+
+    patient = session.query(Patient).filter(Patient.mrn == mrn).first()
+    if patient is None:
+        raise SystemExit(f"no patient {mrn}")
+    return patient
+
+
+def _cmd_plans(session, args) -> None:
+    """Every saved plan for one patient, newest first."""
+    from hdh.modules.careplan.persist import _standing, plans_for
+
+    patient = _patient(session, args.mrn)
+    plans = plans_for(session, patient.id)
+    if not plans:
+        raise SystemExit(f"{args.mrn} has no saved care plan")
+    print()
+    print(f"care plans for {args.mrn}")
+    for plan in plans:
+        standing = _standing(plan["superseded_by"], plan["current"])
+        supersedes = f"  supersedes #{plan['supersedes']}" if plan["supersedes"] else ""
+        when = plan["created_at"].strftime("%Y-%m-%d") if plan["created_at"] else "—"
+        print(f"  #{plan['id']:<5}{when}  {plan['status']:<13}{standing}{supersedes}")
+        print(f"         {plan['title']}")

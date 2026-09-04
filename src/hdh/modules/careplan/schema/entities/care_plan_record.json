@@ -56,6 +56,11 @@
       "comment": "Which prompt set produced this plan, as '<id>@<version>'. Nullable: plans written before prompts were versioned cannot say, and inventing a value for them would be worse than an honest NULL."
     },
     {
+      "name": "supersedes_id",
+      "type": "Integer",
+      "comment": "The plan this one replaces, or NULL. Set when a decided plan is amended: the decided record is never rewritten, so a revision becomes a new row pointing back at what it supersedes. Maps to FHIR CarePlan.replaces. Note what this deliberately does NOT do — it does not change the superseded plan's status. That plan WAS approved; superseding it does not un-approve it, and rewriting the field would destroy the fact the immutability exists to preserve. Whether a plan is still in force is derived from the absence of a successor, not stored. Deliberately NOT a foreign key, though it points at this table's own id. It would be the registry's only self-referential FK, which is a cycle for the SQLite->PostgreSQL copier — and that copier breaks cycles by looking for use_alter, which the registry has no way to express. The value is written only from a row just read, and a dangling one degrades to 'no successor', which is what NULL already means. An index, not a constraint."
+    },
+    {
       "name": "deferred",
       "type": "JSON"
     },
@@ -79,6 +84,12 @@
       "name": "ix_care_plan_status",
       "columns": [
         "status"
+      ]
+    },
+    {
+      "name": "ix_care_plan_supersedes",
+      "columns": [
+        "supersedes_id"
       ]
     }
   ],

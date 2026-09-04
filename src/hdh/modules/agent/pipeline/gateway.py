@@ -163,6 +163,14 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "save_care_plan",
         "approve_care_plan",
         "reject_care_plan",
+        # Reading a saved plan back. Without `get_care_plan` the model
+        # reached for `show_care_plan`, which reads the review checkpoint,
+        # and reported "no care plan in progress" as "No saved care plan
+        # exists" for a patient who had one. Same failure as the record
+        # tools above, one question further on.
+        "get_care_plan",
+        "list_care_plans",
+        "amend_care_plan",
         "care_plan_history",
         "get_patient_chart",
         "get_care_gaps",

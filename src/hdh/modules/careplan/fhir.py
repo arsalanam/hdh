@@ -15,6 +15,13 @@ This enricher adds the rest, and the mapping is the interesting part:
 | goal | `activity.detail.description` | contained Goal resources need ids that survive a round trip; the description carries the target so nothing is lost |
 | intervention | `activity.detail` | with `kind` from the intervention type and the owner in `performer` text |
 | deferred | `note` | a receiving system that cannot see what was set aside is reading a filtered plan, exactly as a human reviewer would be |
+| `supersedes_id` | `replaces` | the plan this one revised |
+
+**A superseded plan leaves as `revoked`, whatever it was.** hdh keeps its
+real status because it really was approved; FHIR has no value for "replaced"
+and the question a receiver is asking is only ever *may I act on this*. So
+the export answers that question, and `replaces` on the successor carries
+the rest.
 
 **Citations travel as extensions.** Every element in an hdh plan cites the
 document it came from, and dropping that on export would export the claim
@@ -70,7 +77,18 @@ class CarePlanEnricher:
         if session is None:
             return
 
-        resource.status = STATUS_MAP.get(str(entity.status), "draft")
+        # A superseded plan keeps its own status in hdh — it really was
+        # approved, and rewriting that would destroy what the supersede
+        # model exists to preserve. FHIR has no such value, and the
+        # distinction that must survive the export is actionable-or-not, so
+        # a replaced plan leaves as `revoked` however it was decided. The
+        # link itself travels in `replaces`.
+        from hdh.modules.careplan.persist import superseded_by
+
+        successor = superseded_by(session, entity.id)
+        resource.status = "revoked" if successor else STATUS_MAP.get(str(entity.status), "draft")
+        if entity.supersedes_id:
+            resource.replaces = [{"reference": f"CarePlan/{entity.supersedes_id}"}]
         rows = _plan_rows(session, entity.id)
         if not rows:
             return
