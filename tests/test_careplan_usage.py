@@ -154,3 +154,90 @@ def test_a_baseline_without_usage_still_serialises():
     from hdh.modules.careplan import evalset
 
     assert evalset.Report(cohort="default").as_dict()["usage"] == {}
+
+
+# ── cache traffic, and what it actually costs ────────────────────────────
+
+
+def _reply_cached(inp: int, out: int, write: int = 0, read: int = 0) -> _Response:
+    @dataclass
+    class _U:
+        input_tokens: int
+        output_tokens: int
+        cache_creation_input_tokens: int
+        cache_read_input_tokens: int
+
+    return _Response(usage=_U(inp, out, write, read))
+
+
+def test_cache_writes_and_reads_are_counted_separately():
+    """Folding them into `input_tokens` would make a large saving look like
+    a small one, because the API prices them differently."""
+    with usage.collecting() as ledger:
+        usage.record(_reply_cached(0, 10, write=1500), "concerns")
+        usage.record(_reply_cached(0, 10, read=1500), "concerns")
+    assert ledger.cache_write_tokens == 1500
+    assert ledger.cache_read_tokens == 1500
+    assert ledger.input_tokens == 0
+
+
+def test_billable_input_prices_each_kind():
+    """The number a before/after comparison rests on. Raw counts hide the
+    point of caching entirely."""
+    with usage.collecting() as ledger:
+        usage.record(_reply_cached(100, 5), "concerns")
+        usage.record(_reply_cached(0, 5, write=1000), "concerns")
+        usage.record(_reply_cached(0, 5, read=1000), "concerns")
+    # 100 + 1000*1.25 + 1000*0.1
+    assert ledger.billable_input == pytest.approx(1450.0)
+
+
+def test_a_cached_run_bills_less_than_it_reads():
+    """The property worth the whole exercise: more tokens offered to the
+    model, fewer tokens paid for."""
+    with usage.collecting() as ledger:
+        usage.record(_reply_cached(0, 5, write=1000), "grading")
+        for _ in range(5):
+            usage.record(_reply_cached(0, 5, read=1000), "grading")
+    offered = ledger.input_tokens + ledger.cache_write_tokens + ledger.cache_read_tokens
+    assert offered == 6000
+    assert ledger.billable_input < offered / 3
+
+
+def test_the_hit_rate_is_a_share_of_input_not_of_calls():
+    with usage.collecting() as ledger:
+        usage.record(_reply_cached(1000, 5), "concerns")
+        usage.record(_reply_cached(0, 5, read=3000), "concerns")
+    assert ledger.cache_hit_rate == pytest.approx(0.75)
+
+
+def test_a_response_without_cache_fields_still_records():
+    """A model or SDK that does not cache reports nothing, and that means
+    no cache traffic — which is what 0 says."""
+    with usage.collecting() as ledger:
+        usage.record(_reply(100, 10), "concerns")
+    assert ledger.cache_write_tokens == 0
+    assert ledger.cache_read_tokens == 0
+    assert ledger.billable_input == 100
+
+
+def test_the_summary_prices_the_saving_rather_than_counting_tokens():
+    """Raw traffic reads as MORE tokens, not fewer — a cache read is still a
+    token offered to the model. The saving only appears once priced."""
+    with usage.collecting() as ledger:
+        usage.record(_reply_cached(0, 5, write=1000), "grading")
+        for _ in range(5):
+            usage.record(_reply_cached(0, 5, read=1000), "grading")
+    text = "\n".join(usage.summarise(ledger))
+    assert "cache:" in text
+    assert "saved" in text
+    assert "uncached" in text
+
+
+def test_the_baseline_carries_the_cache_figures():
+    with usage.collecting() as ledger:
+        usage.record(_reply_cached(0, 5, read=1000), "grading")
+    payload = ledger.as_dict()
+    assert payload["cache_read_tokens"] == 1000
+    assert "billable_input" in payload
+    assert payload["by_stage"]["grading"]["cache_read_tokens"] == 1000

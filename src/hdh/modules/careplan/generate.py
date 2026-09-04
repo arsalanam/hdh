@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hdh.modules.careplan import usage
+from hdh.modules.careplan.caching import cached_text
 from hdh.modules.careplan.context import CarePlanContext
 from hdh.modules.careplan.prompts import prompt_set
 from hdh.modules.careplan.stratify import RiskFlag
@@ -262,7 +263,7 @@ def llm_selector(model: str | None = None, client=None) -> Selector:
         response = client.beta.messages.create(
             model=resolved,
             max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": cached_text(prompt, _stage_of(task.schema))}],
             output_config={"format": {"type": "json_schema", "schema": dict(task.schema)}},
         )
         # The stage is read from the schema rather than passed in: only a
