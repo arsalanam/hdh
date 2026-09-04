@@ -174,6 +174,20 @@ are too vague"*, *"write it up"* — or ask what it scores on:
 `hdh careplan rubrics`. The lowest dimension governs the verdict; the mean is
 only reported.
 
+Then it becomes a record: saved to the chart, approved or rejected with a
+reason, retrieved later by MRN, and revised.
+
+```bash
+hdh careplan plans --mrn MRN57649249    # #15 current · supersedes #14
+hdh careplan show  --mrn MRN57649249    # the plan in force, with its citations
+```
+
+**Amending an approved plan does not edit it.** The revision is written as a
+new plan that supersedes it, so what was signed off survives its own
+revision — and superseding does not un-approve the original, because it
+really was approved. Every step lands in the same audit trail a corrected
+condition writes to.
+
 📖 **[Care planning with the agent](docs/guides/care-planning-with-the-agent.md)** —
 every command, verified against a database built from scratch, with what it
 costs and what to do when it does not work.

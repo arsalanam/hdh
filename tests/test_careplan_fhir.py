@@ -181,3 +181,69 @@ def test_a_patient_without_a_plan_exports_cleanly(tmp_path):
     finally:
         session.close()
         engine.dispose()
+
+
+# ── a superseded plan, and the link between the two ──────────────────────
+
+
+@pytest.fixture()
+def superseded(planned):
+    """#1 approved, then amended into #2 which supersedes it."""
+    from hdh.modules.careplan.generate import ConcernDraft, GoalDraft, InterventionDraft
+    from hdh.modules.careplan.persist import amend_plan, decide, persist_reviewed_plan
+
+    session, patient, _first = planned
+    values = {
+        "concerns": [
+            ConcernDraft("Polypharmacy", "risk", ("med_safety/dup",)),
+            ConcernDraft("Falls risk", "risk", ("guidelines/falls",)),
+        ],
+        "goals": [
+            GoalDraft("Reduce to 4 agents", 0, "4 agents", ("med_safety/dup",)),
+            GoalDraft("No falls in 6 months", 1, "0", ("guidelines/falls",)),
+        ],
+        "interventions": [
+            InterventionDraft("Medication review", 0, "service", "GP", ("med_safety/dup",)),
+            InterventionDraft("Falls assessment", 1, "referral", "GP", ("guidelines/falls",)),
+        ],
+    }
+    old_id = persist_reviewed_plan(session, patient, values).plan_id
+    decide(session, old_id, True, "signed off")
+    new_id = amend_plan(session, old_id, {1}, "falls handled by the falls service").plan_id
+    return session, patient, old_id, new_id
+
+
+def test_a_superseded_plan_is_not_active(superseded):
+    """It was approved, so it would otherwise export as `active` and a
+    receiving system would act on a plan that has been replaced."""
+    _session, patient, _old, _new = superseded
+    revoked = [p for p in _care_plans(patient) if p["status"] == "revoked"]
+    assert len(revoked) == 1
+
+
+def test_the_successor_points_at_what_it_replaced(superseded):
+    _session, patient, _old, _new = superseded
+    successor = next(p for p in _care_plans(patient) if p.get("replaces"))
+    assert successor["replaces"][0]["reference"].startswith("CarePlan/")
+
+
+def test_the_replaces_reference_resolves_inside_the_bundle(superseded):
+    """The reference was `CarePlan/<row id>` while resource ids are
+    content-hashed, so it pointed at nothing. A dangling reference in an
+    exported bundle is worse than no reference: a receiver cannot tell it
+    from a resource it failed to fetch."""
+    _session, patient, _old, _new = superseded
+    plans = _care_plans(patient)
+    ids = {p["id"] for p in plans}
+    successor = next(p for p in plans if p.get("replaces"))
+    target = successor["replaces"][0]["reference"].split("/", 1)[1]
+    assert target in ids, f"replaces points at {target}, which is not in the bundle"
+
+
+def test_the_superseded_plan_is_the_one_pointed_at(superseded):
+    """Not merely *a* resource in the bundle — the right one."""
+    _session, patient, _old, _new = superseded
+    plans = _care_plans(patient)
+    successor = next(p for p in plans if p.get("replaces"))
+    target = successor["replaces"][0]["reference"].split("/", 1)[1]
+    assert next(p for p in plans if p["id"] == target)["status"] == "revoked"

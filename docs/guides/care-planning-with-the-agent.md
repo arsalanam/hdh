@@ -347,6 +347,11 @@ agent> wrote care-plan-mrn63193008.html — 0 elements cite nothing
 | that's wrong because… | `reject_care_plan_stage` | re-runs the stage with your reason |
 | what does it score on? | `show_care_plan_rubric` | dimensions and anchors, read-only |
 | write it up | `write_care_plan_page` | a self-contained HTML page |
+| save it | `save_care_plan` | writes it to the chart — see §9 |
+
+Everything above steers a plan that exists only in a review session. Until
+`save_care_plan` runs it is not in the chart, and closing the session loses
+it.
 
 Rejecting is cheap **because the later stages have not been built yet** —
 the graph stopped before them. That is why review happens between stages
@@ -371,6 +376,144 @@ stamped `origin=agent` for as long as the row exists.
 
 ---
 
+## 9 · After the review: the plan as a record
+
+Everything in §7 steers a *draft* — a plan living in a LangGraph checkpoint.
+`save_care_plan` turns it into rows, and from that point it is a record with
+a status, a decision and a trail.
+
+The distinction is not academic. Before there was a tool that reads a saved
+plan, the agent asked for one reached for `show_care_plan` — which reads the
+review session — and answered:
+
+```
+you> Show me the saved care plan for MRN57649249
+agent> **No saved care plan exists for Robert Wilson (MRN57649249).**
+```
+
+with the plan sitting in the table. Retrieval and review are different
+questions and now have different tools.
+
+> The plans in this section were seeded deterministically to exercise the
+> record path without paying to generate one, so their wording is
+> mechanical. §6 shows what a model-built plan actually reads like. The
+> transcripts are otherwise verbatim.
+
+### Retrieve one
+
+```
+you> Show me the saved care plan for MRN57649249
+```
+
+```
+## Saved Care Plan — MRN57649249
+
+**Care Plan #14 — Annual Chronic Care Review**
+**Status:** User-edited (current) | **Guideline set:** default@2
+
+| # | Condition | Goal | Intervention |
+|---|-----------|------|--------------|
+| 1 | Essential hypertension | Bring to target | Review treatment [GP] |
+| 2 | Type 2 diabetes mellitus without complications | Bring to target | Review treatment [GP] |
+| 3 | Hyperlipidemia, unspecified | Bring to target | Review treatment [GP] |
+| 4 | Unspecified osteoarthritis, unspecified site | Bring to target | Review treatment [GP] |
+
+### Deferred by Triage
+- **Seasonal allergic rhinitis** — stable; not actioned this cycle.
+```
+
+Or from the shell, by MRN rather than by plan id — which is what a clinician
+has in front of them:
+
+```bash
+hdh careplan show --mrn MRN57649249     # the plan in force
+hdh careplan show --id 14               # a specific one
+hdh careplan plans --mrn MRN57649249    # all of them
+```
+
+### Decide it, then amend it
+
+```
+you> Approve care plan 14 for MRN57649249 — reason: reviewed with the
+     patient at today's visit
+agent> **Care plan #14 for MRN57649249 has been approved.**
+```
+
+A plan is decided **once**. Asking again is refused rather than overwritten,
+because a second decision means something upstream lost track.
+
+Amending a plan nobody has decided edits it in place. Amending a decided one
+does not touch it:
+
+```
+you> Amend the care plan for MRN57649249 to keep only concerns 1 and 2 —
+     the hyperlipidemia and osteoarthritis are being managed elsewhere
+```
+
+```
+**Plan #15** has been created (superseding approved Plan #14) retaining only:
+
+1. **Essential hypertension** — active management, target goal, GP review
+2. **Type 2 diabetes mellitus without complications** — active management
+
+**Removed** (managed elsewhere): Hyperlipidemia · Unspecified osteoarthritis
+
+The deferred item (seasonal allergic rhinitis — stable) carries over
+unchanged. Plan #14 is preserved untouched for audit purposes.
+```
+
+```bash
+$ hdh careplan plans --mrn MRN57649249
+care plans for MRN57649249
+  #15   2026-09-04  user_edited  current  supersedes #14
+  #14   2026-09-04  approved     superseded by #15
+  #13   2026-09-04  user_edited  not in force
+```
+
+**Superseding does not un-approve #14.** It really was approved, and
+rewriting that would destroy the record the arrangement exists to keep.
+Whether a plan is in force is derived from the absence of a successor, never
+stored.
+
+Three standings, and the third is a real state: `current` is the one to act
+on, `superseded by #N` was explicitly replaced, and **`not in force`** is a
+plan nothing replaced that is still not the current one — because plans can
+be saved independently and only an amendment links them. Saying "superseded"
+there would invent a link the record does not have.
+
+### Read the trail
+
+```
+you> Show the full history of care plan 14 for MRN57649249
+```
+
+```
+| # | Date & Time      | Event    | Detail                                    |
+| 1 | 2026-09-04 07:04 | Created  | 4 concerns, 4 goals, 4 interventions       |
+| 2 | 2026-09-04 07:06 | Approved | "Reviewed with the patient at today's visit"|
+| 3 | 2026-09-04 07:26 | Amended  | → Superseded by plan #15                   |
+```
+
+The trail is `chart_audit_events`, the same table a corrected condition
+writes to — one question (*who changed this, when, why*) and one place to
+look for the answer.
+
+| you say | tool |
+|---|---|
+| show me the saved plan | `get_care_plan` |
+| what plans does this patient have? | `list_care_plans` |
+| keep only concerns 1 and 2 | `amend_care_plan` |
+| approve it / reject it because… | `approve_care_plan` · `reject_care_plan` |
+| what happened to this plan? | `care_plan_history` |
+
+A saved plan also leaves as FHIR: `GET /Patient/{mrn}/$everything` carries
+the `CarePlan` with its goals, activities and citations. A superseded plan
+exports as `revoked` whatever it was decided, and the successor carries
+`replaces` — the value set is not ours to extend, and the only question a
+receiving system asks is whether it may act on the thing.
+
+---
+
 ## What it costs
 
 From the run above, one patient with nine chronic problems:
@@ -383,6 +526,12 @@ From the run above, one patient with nine chronic problems:
 
 Most of the wall clock is retrieval: each topic queries three corpora, and
 each query is an embedding plus a rerank round trip.
+
+For measurement runs that rebuild the same plan repeatedly, `HDH_CAREPLAN_CACHE=1`
+caches the prompt parts that actually repeat — measured at 60% off grading and
+40% off the concerns stage. It is off by default: a plan built for a clinician
+should not quietly depend on a billing optimisation, and it changes only how a
+prompt is billed, never how it is sampled.
 
 ---
 
