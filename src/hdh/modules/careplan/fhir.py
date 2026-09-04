@@ -88,7 +88,12 @@ class CarePlanEnricher:
         successor = superseded_by(session, entity.id)
         resource.status = "revoked" if successor else STATUS_MAP.get(str(entity.status), "draft")
         if entity.supersedes_id:
-            resource.replaces = [{"reference": f"CarePlan/{entity.supersedes_id}"}]
+            # `ctx.rid`, not the row id. Resource ids are content-hashed
+            # (`{mrn}-careplan-{hash}`), so `CarePlan/14` is a reference to
+            # nothing — a dangling pointer in an exported bundle is exactly
+            # the confident approximation this module refuses everywhere.
+            reference = ctx.rid("CarePlan", entity.supersedes_id)
+            resource.replaces = [{"reference": f"CarePlan/{reference}"}]
         rows = _plan_rows(session, entity.id)
         if not rows:
             return
