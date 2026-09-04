@@ -196,7 +196,7 @@ def test_selective_tool_exposure_by_intent():
     # chart maintenance is: it needs no loaded catalog, and what it does
     # need — a retrieval store — is built on first use rather than at
     # import, so listing the tools costs nothing.
-    assert len(everything) == 23
+    assert len(everything) == 26
 
 
 def test_selective_schema_revealing():

@@ -73,6 +73,10 @@ def test_agent_tools_build(db_session):
         "search_note_mentions",
         "apply_note",
         "amend_chart_entry",
+        # the record half: reading a saved plan back, and revising it
+        "get_care_plan",
+        "list_care_plans",
+        "amend_care_plan",
         "void_chart_entry",
         "chart_history",
         # care planning, steered stage by stage (S4b)

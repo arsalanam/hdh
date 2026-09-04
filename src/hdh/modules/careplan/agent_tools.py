@@ -295,7 +295,7 @@ def _save(desk: _Desk, session, mrn: str, title: str) -> str:
         return f"not saved: {decision.detail}"
     return (
         f"saved {decision.detail}. Status user_edited — approve or reject it to record "
-        f"a clinical decision. View it with `hdh careplan show {decision.plan_id}`."
+        f"a clinical decision. View it with `hdh careplan show --id {decision.plan_id}`."
     )
 
 
@@ -319,6 +319,77 @@ def _decide(session, mrn: str, plan_id: int, approved: bool, reason: str) -> str
     if problem:
         return problem
     return decide(session, resolved, approved, reason).detail
+
+
+def _get_saved(session, mrn: str, plan_id: int) -> str:
+    """A saved plan, read back from the record.
+
+    The tool this backs did not exist, and its absence did not read as an
+    absence. Asked to show a saved plan the agent reached for
+    `show_care_plan`, which reads the in-flight checkpoint, got "no care
+    plan in progress", and reported it as "No saved care plan exists" —
+    about a patient whose plan was sitting in the table. The validator
+    passed it, correctly by its own rules: the answer was grounded in what
+    the tool returned. The tool was answering a different question.
+    """
+    from hdh.modules.careplan.persist import load_plan, render_record
+
+    resolved, problem = _resolve_plan(session, mrn, plan_id)
+    if problem:
+        return problem
+    plan = load_plan(session, resolved)
+    if plan is None:
+        return f"no care plan #{resolved}"
+    return render_record(plan)
+
+
+def _list_saved(session, mrn: str) -> str:
+    """Every saved plan for a patient, so "the plan" can be disambiguated."""
+    from hdh.modules.careplan.persist import _standing, plans_for
+
+    patient = _patient_or_none(session, mrn)
+    if patient is None:
+        return f"no patient {mrn}"
+    plans = plans_for(session, patient.id)
+    if not plans:
+        return f"{mrn} has no saved care plan"
+    lines = [f"saved care plans for {mrn}:"]
+    for plan in plans:
+        standing = _standing(plan["superseded_by"], plan["current"])
+        supersedes = f", supersedes #{plan['supersedes']}" if plan["supersedes"] else ""
+        when = plan["created_at"].strftime("%Y-%m-%d") if plan["created_at"] else "—"
+        lines.append(f"  #{plan['id']}  {when}  {plan['status']:<12}{standing}{supersedes}  {plan['title']}")
+    return "\n".join(lines)
+
+
+def _amend_saved(session, mrn: str, keep: str, plan_id: int, reason: str) -> str:
+    """Narrow a saved plan, in place or by superseding it."""
+    from hdh.modules.careplan.persist import amend_plan, load_plan
+
+    resolved, problem = _resolve_plan(session, mrn, plan_id)
+    if problem:
+        return problem
+    plan = load_plan(session, resolved)
+    if plan is None:
+        return f"no care plan #{resolved}"
+    try:
+        # `_numbers` speaks the review stages' language and returns 0-based
+        # indices; `amend_plan` takes the numbers a reader sees. Converting
+        # here rather than changing either is deliberate — both are right
+        # for their own caller — but the boundary is exactly where an
+        # off-by-one hides, so a test drives this function, not amend_plan.
+        wanted = {index + 1 for index in _numbers(keep, len(plan["concerns"]))}
+    except ValueError as err:
+        return f"{err} — give the concern numbers to KEEP, as shown by get_care_plan"
+    if not wanted:
+        return (
+            f"nothing recognised in {keep!r} — give the concern numbers to KEEP, "
+            f"as shown by get_care_plan (plan #{resolved} has {len(plan['concerns'])})"
+        )
+    decision = amend_plan(session, resolved, wanted, reason)
+    if not decision:
+        return decision.detail
+    return f"{decision.detail}. {_get_saved(session, mrn, decision.plan_id or 0)}"
 
 
 def _history(session, mrn: str, plan_id: int) -> str:
@@ -520,4 +591,46 @@ def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
         """
         return _history(session, mrn, plan_id)
 
-    return [save_care_plan, approve_care_plan, reject_care_plan, care_plan_history]
+    @beta_tool
+    @guard
+    def get_care_plan(mrn: str, plan_id: int = 0) -> str:
+        """Show a care plan that was SAVED to the patient's record: its status, every concern, goal and intervention, and what each one cites. Use this whenever the user asks to see, retrieve or review a patient's care plan. This reads the record — `show_care_plan` reads a review session in progress, which is a different thing and will say "no care plan in progress" even when a saved plan exists.
+
+        Args:
+            mrn: The patient's medical record number.
+            plan_id: The plan to show; 0 uses the patient's current one.
+        """
+        return _get_saved(session, mrn, plan_id)
+
+    @beta_tool
+    @guard
+    def list_care_plans(mrn: str) -> str:
+        """List every care plan saved for a patient, newest first, with its status and whether it is still the current one. Use this when the user asks what plans a patient has, or when it is unclear which plan they mean.
+
+        Args:
+            mrn: The patient's medical record number.
+        """
+        return _list_saved(session, mrn)
+
+    @beta_tool
+    @guard
+    def amend_care_plan(mrn: str, keep: str, plan_id: int = 0, reason: str = "") -> str:
+        """Narrow a SAVED care plan to the concerns worth keeping, dropping the rest along with their goals and interventions. Numbers are the ones get_care_plan shows. If the plan has already been approved or rejected it is left untouched and a new plan is written that supersedes it, so the record of what was signed off survives. Only call this when the user has said which concerns to keep.
+
+        Args:
+            mrn: The patient's medical record number.
+            keep: The concern numbers to keep, e.g. "1, 3, 4".
+            plan_id: The plan to amend; 0 uses the patient's current one.
+            reason: Why it was amended, in the clinician's words.
+        """
+        return _amend_saved(session, mrn, keep, plan_id, reason)
+
+    return [
+        save_care_plan,
+        approve_care_plan,
+        reject_care_plan,
+        care_plan_history,
+        get_care_plan,
+        list_care_plans,
+        amend_care_plan,
+    ]
