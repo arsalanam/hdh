@@ -360,7 +360,7 @@ def llm_grader(model: str | None = None, client=None) -> Grader:
         response = client.beta.messages.create(
             model=resolved,
             max_tokens=1000,
-            messages=[{"role": "user", "content": cached_text(grading_prompt(task))}],
+            messages=[{"role": "user", "content": cached_text(grading_prompt(task), "grading")}],
             output_config={"format": {"type": "json_schema", "schema": dict(task.schema)}},
         )
         usage.record(response, "grading")

@@ -5,12 +5,25 @@ patient costs ~90,000 input tokens across 47 calls, and 45% of that is
 repetition: the patient situation sent 41 times (21,115 tokens) and the
 plan text re-sent to five extra grading dimensions (19,850).
 
-**The opportunity the eval harness creates.** `eval run --repeat 3` builds
-the same plan three times to measure the noise floor, and repeats for one
-case run consecutively. Retrieval is deterministic, so run 2 and run 3
-rebuild *byte-identical* prompts — not merely a shared prefix, the whole
-thing. Cached, that is one write at 1.25x and two reads at 0.1x instead of
-three full charges.
+**What actually repeats, measured rather than assumed.** `eval run
+--repeat 3` builds the same plan three times, and a case's repeats run
+consecutively — so the first version of this cached every call, on the
+reasoning that deterministic retrieval would rebuild byte-identical prompts.
+
+The A/B said otherwise: 166,062 billable input tokens uncached against
+160,430 cached, a 3.4% saving, with 105,066 tokens *written* to the cache
+and only 36,670 read back. Almost all of it was misses, and a miss is not
+free — a write costs 1.25x.
+
+The reason is that only the **first** stage is reproducible. `concerns` is
+built from the situation and the topics, both deterministic, so run 2 and
+run 3 send exactly what run 1 sent. `goals` is built from the concerns the
+model just produced, and `interventions` from the goals — each is
+conditioned on the previous sampling, so no two runs agree and a breakpoint
+there is a pure 1.25x penalty on 30 of the 41 generation calls.
+
+So caching is applied **per stage**, and only to stages whose prompts a
+later run can actually reproduce.
 
 **And it does not disturb what the repeats are for.** Caching changes how a
 prompt is billed, never how it is sampled: the model still produces a
@@ -53,19 +66,36 @@ def enabled() -> bool:
     return (os.environ.get(ENV_VAR) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def cached_text(prompt: str) -> list[dict[str, Any]]:
-    """A user message body with a cache breakpoint at the end of it.
+#: Stages whose prompt a later run of the same case reproduces exactly.
+#:
+#: `concerns` only, and that is a measurement rather than a preference: it
+#: is built from the situation and the topics, both deterministic. `goals`
+#: is built from the concerns the model produced moments earlier and
+#: `interventions` from the goals, so each is conditioned on sampling and no
+#: two runs agree. Caching those cost 1.25x on every one of 30 calls and
+#: returned nothing — the difference between a 3.4% saving and a real one.
+#:
+#: `grading` is absent for a different reason: its six calls share a large
+#: block of plan text, but the prompt puts the dimension first, so the
+#: shared part is not a *prefix* and no breakpoint can reach it. Reordering
+#: it is lever B, and needs a prompt-set version bump.
+REPEATABLE_STAGES: frozenset[str] = frozenset({"concerns"})
+
+
+def cached_text(prompt: str, stage: str = "") -> list[dict[str, Any]] | str:
+    """A user message body, with a cache breakpoint only where one can pay.
 
     The breakpoint goes *after* the whole prompt rather than after a shared
-    prefix, deliberately: within one plan every call diverges immediately
-    into its own topic and menu, so there is no useful common prefix to cut
-    at. What repeats is the entire prompt, on the next run of the same case.
+    prefix: within one plan every call diverges immediately into its own
+    topic and menu, so there is no useful common prefix to cut at. What
+    repeats is the entire prompt, on the next run of the same case — and
+    only for the stages in :data:`REPEATABLE_STAGES`.
 
-    Returns a plain string body when caching is off, so a non-measurement
-    run sends exactly what it sent before.
+    Returns a plain string when caching is off or the stage cannot repeat,
+    so those calls send exactly what they sent before.
     """
-    if not enabled():
-        return prompt  # type: ignore[return-value]
+    if not enabled() or stage not in REPEATABLE_STAGES:
+        return prompt
     return [
         {
             "type": "text",
