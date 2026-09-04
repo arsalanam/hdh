@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from hdh.modules.careplan import usage
-from hdh.modules.careplan.caching import cached_text
+from hdh.modules.careplan.caching import cached_prefix
 from hdh.modules.careplan.facts import PlanEvidence, PlanFacts, compute_facts
 from hdh.modules.careplan.prompts import prompt_set
 from hdh.modules.careplan.rubric import Dimension, Rubric, select_rubric
@@ -324,20 +324,33 @@ def evaluate(
 #: sentences are load-bearing.
 
 
-def grading_prompt(task: GradingTask) -> str:
-    """The prompt for one dimension. Separated so a test can read it."""
-    return (
-        prompt_set()
-        .text("grading_instruction")
-        .format(
-            title=task.dimension.title,
-            question=task.dimension.question,
-            anchors="\n".join(task.dimension.anchor_lines()),
-            situation=task.situation,
-            plan=task.plan_text,
-            facts="\n".join(task.fact_lines) or "(this dimension declares no facts)",
-        )
+def grading_parts(task: GradingTask) -> tuple[str, str]:
+    """The prompt for one dimension, split at its cache boundary.
+
+    The first half is the situation and the plan, which all six dimensions
+    of a plan share byte-for-byte; the second is what makes this call about
+    *this* dimension. They are two texts in the prompt set rather than one
+    sliced apart here, because a boundary recovered by string surgery would
+    move silently the next time someone reworded the template — and a
+    prefix that differs by one character is a miss that still pays to write.
+    """
+    prompts = prompt_set()
+    situation = prompts.text("grading_situation").format(
+        situation=task.situation,
+        plan=task.plan_text,
     )
+    question = prompts.text("grading_question").format(
+        title=task.dimension.title,
+        question=task.dimension.question,
+        anchors="\n".join(task.dimension.anchor_lines()),
+        facts="\n".join(task.fact_lines) or "(this dimension declares no facts)",
+    )
+    return situation + "\n\n", question
+
+
+def grading_prompt(task: GradingTask) -> str:
+    """The whole prompt for one dimension, as the model receives it."""
+    return "".join(grading_parts(task))
 
 
 def llm_grader(model: str | None = None, client=None) -> Grader:
@@ -360,7 +373,7 @@ def llm_grader(model: str | None = None, client=None) -> Grader:
         response = client.beta.messages.create(
             model=resolved,
             max_tokens=1000,
-            messages=[{"role": "user", "content": cached_text(grading_prompt(task), "grading")}],
+            messages=[{"role": "user", "content": cached_prefix(*grading_parts(task), "grading")}],
             output_config={"format": {"type": "json_schema", "schema": dict(task.schema)}},
         )
         usage.record(response, "grading")

@@ -75,11 +75,19 @@ def enabled() -> bool:
 #: two runs agree. Caching those cost 1.25x on every one of 30 calls and
 #: returned nothing — the difference between a 3.4% saving and a real one.
 #:
-#: `grading` is absent for a different reason: its six calls share a large
-#: block of plan text, but the prompt puts the dimension first, so the
-#: shared part is not a *prefix* and no breakpoint can reach it. Reordering
-#: it is lever B, and needs a prompt-set version bump.
+#: `grading` is absent here but cached by :func:`cached_prefix` instead,
+#: because it repeats along a different axis: not the next run of the case,
+#: but the next of the six dimensions grading the same plan.
 REPEATABLE_STAGES: frozenset[str] = frozenset({"concerns"})
+
+#: Stages whose prompt begins with a block their sibling calls repeat.
+#:
+#: Grading sends the situation and the plan six times, once per dimension —
+#: 3,970 of each call's 5,258 tokens. Until `default@2` the per-dimension
+#: title and anchors sat in front of them, so the repeated part was not a
+#: *prefix* and no breakpoint could reach it. Reordering the prompt is what
+#: turned this from unreachable into the largest saving in the module.
+PREFIX_STAGES: frozenset[str] = frozenset({"grading"})
 
 
 def cached_text(prompt: str, stage: str = "") -> list[dict[str, Any]] | str:
@@ -102,4 +110,28 @@ def cached_text(prompt: str, stage: str = "") -> list[dict[str, Any]] | str:
             "text": prompt,
             "cache_control": {"type": "ephemeral", "ttl": TTL},
         }
+    ]
+
+
+def cached_prefix(prefix: str, suffix: str, stage: str = "") -> list[dict[str, Any]] | str:
+    """Two blocks with the breakpoint between them, so `prefix` is reused.
+
+    The one rule that matters is that `prefix` must be **byte-identical**
+    across the calls meant to share it; a single differing character makes
+    every call a miss that also pays the 1.25x write. That is why the split
+    lives in the prompt set as two texts rather than being sliced out of one
+    formatted string here.
+
+    Returns the plain concatenation when caching is off or the stage has no
+    shared prefix, so those calls send exactly what they always sent.
+    """
+    if not enabled() or stage not in PREFIX_STAGES:
+        return prefix + suffix
+    return [
+        {
+            "type": "text",
+            "text": prefix,
+            "cache_control": {"type": "ephemeral", "ttl": TTL},
+        },
+        {"type": "text", "text": suffix},
     ]

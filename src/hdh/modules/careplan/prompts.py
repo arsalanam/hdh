@@ -57,7 +57,14 @@ REQUIRED: Mapping[str, frozenset[str]] = MappingProxyType(
         "interventions": frozenset(),
         "feedback_preamble": frozenset({"feedback"}),
         "selection_envelope": frozenset({"instruction", "situation", "menu"}),
-        "grading_instruction": frozenset({"title", "question", "anchors", "situation", "plan", "facts"}),
+        # Grading is two prompts rather than one because the split *is* the
+        # cache boundary, and a boundary inferred by slicing a formatted
+        # string would move the moment someone reworded the template.
+        # `grading_situation` is identical across all six dimensions of a
+        # plan; `grading_question` is what differs. Concatenated they are
+        # the prompt that was always sent.
+        "grading_situation": frozenset({"situation", "plan"}),
+        "grading_question": frozenset({"title", "question", "anchors", "facts"}),
     }
 )
 

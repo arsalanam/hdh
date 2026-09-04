@@ -48,7 +48,11 @@ def test_the_default_set_loads_and_holds_every_prompt():
 
 
 def test_the_stamp_is_what_gets_recorded():
-    assert prompt_set().stamp == "default@1"
+    """`default@2` since the grading prompt was reordered to put the
+    situation and the plan first. The wording did not change, only the
+    order — but the order is part of what a model is asked, so it takes a
+    version and `compare` refuses across it like any other prompt change."""
+    assert prompt_set().stamp == "default@2"
 
 
 def test_every_prompt_the_code_asks_for_exists():

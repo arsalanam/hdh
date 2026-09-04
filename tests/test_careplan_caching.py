@@ -77,7 +77,7 @@ def test_both_model_backends_go_through_it():
     from hdh.modules.careplan import evaluate, generate
 
     assert "cached_text(" in inspect.getsource(generate.llm_selector)
-    assert "cached_text(" in inspect.getsource(evaluate.llm_grader)
+    assert "cached_prefix(" in inspect.getsource(evaluate.llm_grader)
 
 
 # ── caching only where a later run can reproduce the prompt ──────────────
@@ -140,4 +140,56 @@ def test_the_call_sites_pass_a_stage():
     from hdh.modules.careplan import evaluate, generate
 
     assert "cached_text(prompt, _stage_of(" in inspect.getsource(generate.llm_selector)
-    assert 'cached_text(grading_prompt(task), "grading")' in inspect.getsource(evaluate.llm_grader)
+    assert 'cached_prefix(*grading_parts(task), "grading")' in inspect.getsource(evaluate.llm_grader)
+
+
+# ── the shared prefix, which is what makes grading cacheable at all ──────
+#
+# Grading sends the situation and the plan six times, once per dimension —
+# 3,970 of each call's 5,258 tokens. Until `default@2` the per-dimension
+# title and anchors sat in front, so the repeated part was not a *prefix*
+# and no breakpoint could reach it.
+
+
+def test_a_prefix_stage_gets_the_breakpoint_between_the_halves(monkeypatch):
+    monkeypatch.setenv(caching.ENV_VAR, "1")
+    body = caching.cached_prefix("the invariant half", "the varying half", "grading")
+    assert [block["text"] for block in body] == ["the invariant half", "the varying half"]
+    assert body[0]["cache_control"]["ttl"] == "1h"
+    assert "cache_control" not in body[1], "a breakpoint on the tail caches what never repeats"
+
+
+def test_an_uncached_prefix_stage_sends_the_plain_concatenation(monkeypatch):
+    monkeypatch.delenv(caching.ENV_VAR, raising=False)
+    assert caching.cached_prefix("a", "b", "grading") == "ab"
+
+
+def test_a_stage_with_no_shared_prefix_is_not_split(monkeypatch):
+    monkeypatch.setenv(caching.ENV_VAR, "1")
+    assert caching.cached_prefix("a", "b", "goals") == "ab"
+
+
+def test_the_two_halves_of_grading_share_no_placeholder():
+    """The one property the saving rests on. A per-dimension slot leaking
+    into the invariant half would make every one of the six calls a miss
+    that still pays the 1.25x write — a saving of *less* than zero, and
+    nothing at runtime would say so."""
+    from hdh.modules.careplan.prompts import REQUIRED
+
+    invariant = REQUIRED["grading_situation"]
+    per_dimension = REQUIRED["grading_question"]
+    assert invariant == {"situation", "plan"}
+    assert not (invariant & per_dimension)
+
+
+def test_the_invariant_half_of_the_loaded_prompt_has_no_per_dimension_slot():
+    """Checked against the prompt set on disk, not just the contract: a set
+    that reworded `grading_situation` to mention the dimension would load
+    cleanly and silently cost money."""
+    import string
+
+    from hdh.modules.careplan.prompts import prompt_set
+
+    text = prompt_set().text("grading_situation")
+    slots = {name for _lit, name, _spec, _conv in string.Formatter().parse(text) if name}
+    assert slots == {"situation", "plan"}
