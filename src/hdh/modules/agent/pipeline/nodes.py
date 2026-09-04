@@ -19,7 +19,9 @@ def make_guardrails_node(deps: PipelineDeps):
             deps.trace("guardrails", f"REJECTED — {quota_reason}")
             return {"rejected": f"Usage limit: {quota_reason}."}
 
-        allowed, topic, usage = deps.check_topic(state["question"])
+        # With history: a follow-up is on topic if what it follows is. A
+        # bare "approve" judged alone is not a clinical question.
+        allowed, topic, usage = deps.check_topic(state["question"], state.get("history") or [])
         if not allowed:
             deps.trace("guardrails", f"REJECTED — off-topic ({topic})")
             topics = "; ".join(deps.config.allowed_topics)

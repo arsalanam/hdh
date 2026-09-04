@@ -154,6 +154,16 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "reject_care_plan_stage",
         "show_care_plan_rubric",
         "write_care_plan_page",
+        # The record half. Omitted when they were first written, and the
+        # agent responded by DESCRIBING a save it had never performed —
+        # "11 concerns, 19 goals, 30 interventions persisted" — with real
+        # counts read from show_care_plan, so the validator passed it.
+        # A tool nobody can reach is worse than a missing one: the model
+        # narrates the capability instead of refusing.
+        "save_care_plan",
+        "approve_care_plan",
+        "reject_care_plan",
+        "care_plan_history",
         "get_patient_chart",
         "get_care_gaps",
         "query_database",
@@ -307,14 +317,23 @@ class Gateway:
 
     # ── Real dependency implementations (injected into the graph) ────────────
 
-    def _check_topic(self, question: str) -> tuple[bool, str, dict]:
-        """Topic guard on the small model; cheap and preconfigured."""
+    def _check_topic(self, question: str, history: list[str] | None = None) -> tuple[bool, str, dict]:
+        """Topic guard on the small model; cheap and preconfigured.
+
+        Sees the recent conversation, for the same reason the intent
+        classifier does: a follow-up is on topic if what it follows is.
+        Judged alone, "approve" is not a clinical question and the guard
+        said so — which made the care-plan review loop unusable from the
+        turn where a reviewer starts answering in single words.
+        """
         prompt = GUARD_PROMPT.format(topics="\n".join(f"- {t}" for t in self.config.allowed_topics))
+        recent = (history or [])[-6:]
+        context = ("Recent conversation:\n" + "\n".join(recent) + "\n\n") if recent else ""
         message = self.client.messages.create(
             model=self.config.guard_model,
             max_tokens=64,
             system=prompt,
-            messages=[{"role": "user", "content": question}],
+            messages=[{"role": "user", "content": context + question}],
         )
         reply = _text_of(message).strip()
         allowed = reply.upper().startswith("ALLOWED")
@@ -403,7 +422,18 @@ class Gateway:
                     text = result if isinstance(result, str) else str(result)
                     slot = len(evidence) - len(results) + i
                     if 0 <= slot < len(evidence):
-                        evidence[slot]["result"] = text[:1200]
+                        # The same cap the executor saw, not a smaller one.
+                        #
+                        # This was a hard 1,200 chars while the drafting model
+                        # was given 6,000, so the validator judged claims
+                        # against strictly less than the drafter had — and
+                        # rejected true ones. Measured: a 4,690-char care plan
+                        # arrived as its first ~5 of 14 interventions, and the
+                        # validator refused three times, correctly, because
+                        # the evidence really did not contain what the draft
+                        # said. **A validator must never see less than the
+                        # thing it is validating saw.**
+                        evidence[slot]["result"] = text[: self.config.tool_result_cap]
         return findings, evidence, usage
 
     def _assemble(self, question: str, findings: str, evidence: list[dict]) -> tuple[str, dict]:

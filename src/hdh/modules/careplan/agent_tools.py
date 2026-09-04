@@ -242,6 +242,102 @@ def _write_page(desk: _Desk, mrn: str, path: str) -> str:
     return f"wrote {written}.{tail}"
 
 
+def _show(desk: _Desk, mrn: str) -> str:
+    graph, _services = desk.ready()
+    pause = review.where(graph, thread_config(_thread_for(mrn)))
+    if not pause.started:
+        return f"no care plan in progress for {mrn} — start one first"
+    return _render(mrn, pause)
+
+
+def _approve_stage(desk: _Desk, mrn: str) -> str:
+    graph, services = desk.ready()
+    config = thread_config(_thread_for(mrn))
+    try:
+        pause = review.approve(graph, config, services)
+    except review.ReviewError as err:
+        return str(err)
+    return _render(mrn, pause)
+
+
+def _reject_stage(desk: _Desk, mrn: str, feedback: str) -> str:
+    graph, services = desk.ready()
+    config = thread_config(_thread_for(mrn))
+    try:
+        pause = review.reject(graph, config, services, feedback=feedback)
+    except review.ReviewError as err:
+        return str(err)
+    return _render(mrn, pause)
+
+
+def _patient_or_none(session, mrn: str):
+    from hdh.core.models import Patient
+
+    return session.query(Patient).filter(Patient.mrn == mrn).first()
+
+
+def _save(desk: _Desk, session, mrn: str, title: str) -> str:
+    """Write the plan under review, and say what it became."""
+    from hdh.modules.careplan.persist import persist_reviewed_plan
+
+    patient = _patient_or_none(session, mrn)
+    if patient is None:
+        return f"no patient {mrn}"
+
+    graph, _services = desk.ready()
+    thread = _thread_for(mrn)
+    pause = review.where(graph, thread_config(thread))
+    if not pause.started:
+        return f"no care plan in progress for {mrn} — start one first"
+
+    decision = persist_reviewed_plan(session, patient, pause.values, thread_id=thread, title=title)
+    if not decision:
+        return f"not saved: {decision.detail}"
+    return (
+        f"saved {decision.detail}. Status user_edited — approve or reject it to record "
+        f"a clinical decision. View it with `hdh careplan show {decision.plan_id}`."
+    )
+
+
+def _resolve_plan(session, mrn: str, plan_id: int):
+    """The plan the user means: the one named, or the patient's latest."""
+    from hdh.modules.careplan.persist import latest_plan_id
+
+    patient = _patient_or_none(session, mrn)
+    if patient is None:
+        return None, f"no patient {mrn}"
+    resolved = plan_id or latest_plan_id(session, patient.id)
+    if not resolved:
+        return None, f"{mrn} has no saved care plan — save one first"
+    return resolved, ""
+
+
+def _decide(session, mrn: str, plan_id: int, approved: bool, reason: str) -> str:
+    from hdh.modules.careplan.persist import decide
+
+    resolved, problem = _resolve_plan(session, mrn, plan_id)
+    if problem:
+        return problem
+    return decide(session, resolved, approved, reason).detail
+
+
+def _history(session, mrn: str, plan_id: int) -> str:
+    from hdh.modules.careplan.persist import history
+
+    resolved, problem = _resolve_plan(session, mrn, plan_id)
+    if problem:
+        return problem
+    events = history(session, resolved)
+    if not events:
+        return f"plan #{resolved} has no recorded history"
+    lines = [f"history for care plan #{resolved}:"]
+    for event in events:
+        lines.append(f"  {event['when']:%Y-%m-%d %H:%M}  {event['action']:<8}{event['reason']}")
+        if event["after"]:
+            lines.append(f"      -> {event['after']}")
+    return "\n".join(lines)
+
+
 def build_careplan_tools(session, *, services: PlanServices | None = None, graph=None) -> list:
     """The agent's care-planning toolset.
 
@@ -300,11 +396,7 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
         Args:
             mrn: The patient's medical record number.
         """
-        graph, _services = desk.ready()
-        pause = review.where(graph, thread_config(_thread_for(mrn)))
-        if not pause.started:
-            return f"no care plan in progress for {mrn} — start one first"
-        return _render(mrn, pause)
+        return _show(desk, mrn)
 
     @beta_tool
     @guard
@@ -314,13 +406,7 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
         Args:
             mrn: The patient's medical record number.
         """
-        graph, services = desk.ready()
-        config = thread_config(_thread_for(mrn))
-        try:
-            pause = review.approve(graph, config, services)
-        except review.ReviewError as err:
-            return str(err)
-        return _render(mrn, pause)
+        return _approve_stage(desk, mrn)
 
     @beta_tool
     @guard
@@ -342,13 +428,7 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
             mrn: The patient's medical record number.
             feedback: What is wrong and what would be right. Required — without it the stage comes back the same.
         """
-        graph, services = desk.ready()
-        config = thread_config(_thread_for(mrn))
-        try:
-            pause = review.reject(graph, config, services, feedback=feedback)
-        except review.ReviewError as err:
-            return str(err)
-        return _render(mrn, pause)
+        return _reject_stage(desk, mrn, feedback)
 
     @beta_tool
     @guard
@@ -379,4 +459,65 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
         reject_care_plan_stage,
         show_care_plan_rubric,
         write_care_plan_page,
+        *_record_tools(desk, session, guard, beta_tool),
     ]
+
+
+def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
+    """Tools for the plan as a RECORD rather than as a draft.
+
+    Split from the review pack because they are a different
+    responsibility: those steer a plan that exists only in a checkpoint,
+    these turn it into a row, decide it, and read its history. The split is
+    also where a permission boundary would go if one ever arrives — a
+    reviewer who may amend a draft is not necessarily one who may sign it
+    off.
+    """
+
+    @beta_tool
+    @guard
+    def save_care_plan(mrn: str, title: str = "") -> str:
+        """Write the reviewed care plan to the patient's record and return its plan number. Use this once the user is satisfied with the stages — until it is called the plan exists only in the review session and is lost when that session ends. Recorded as user_edited, because a clinician shaped it.
+
+        Args:
+            mrn: The patient's medical record number.
+            title: Optional title; defaults to "Care plan — <mrn>".
+        """
+        return _save(desk, session, mrn, title)
+
+    @beta_tool
+    @guard
+    def approve_care_plan(mrn: str, plan_id: int = 0, reason: str = "") -> str:
+        """Record that a clinician approved a saved care plan. Only call this when the user has actually said so. A reason is optional but recorded — the next reader of this chart is entitled to know why a plan was signed off.
+
+        Args:
+            mrn: The patient's medical record number.
+            plan_id: The plan to approve; 0 uses the patient's most recent.
+            reason: Why it was approved, in the clinician's words.
+        """
+        return _decide(session, mrn, plan_id, True, reason)
+
+    @beta_tool
+    @guard
+    def reject_care_plan(mrn: str, reason: str, plan_id: int = 0) -> str:
+        """Record that a clinician rejected a saved care plan. A reason is REQUIRED — a rejection the record cannot explain is indistinguishable from one nobody made.
+
+        Args:
+            mrn: The patient's medical record number.
+            reason: What is wrong with the plan.
+            plan_id: The plan to reject; 0 uses the patient's most recent.
+        """
+        return _decide(session, mrn, plan_id, False, reason)
+
+    @beta_tool
+    @guard
+    def care_plan_history(mrn: str, plan_id: int = 0) -> str:
+        """Show every recorded change to a saved care plan: when it was written, amended, approved or rejected, by whom and why. Use this when the user asks what happened to a plan or who signed it off.
+
+        Args:
+            mrn: The patient's medical record number.
+            plan_id: The plan; 0 uses the patient's most recent.
+        """
+        return _history(session, mrn, plan_id)
+
+    return [save_care_plan, approve_care_plan, reject_care_plan, care_plan_history]

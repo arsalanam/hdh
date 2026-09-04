@@ -28,7 +28,7 @@ def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None):
     verdicts = list(verdicts if verdicts is not None else [(True, "grounded")])
     calls = {"executor": 0, "validator": 0}
 
-    def check_topic(question):
+    def check_topic(question, history=None):
         return on_topic, "clinical query" if on_topic else "cooking recipes", NO_USAGE
 
     def analyze_intent(question, history):
@@ -189,14 +189,14 @@ def test_selective_tool_exposure_by_intent():
     scoped = build_tools(None, include={"get_risk_scores", "query_database", "search_patients"})
     assert {t.name for t in scoped} == {"get_risk_scores", "query_database", "search_patients"}
     everything = build_tools(None)
-    # 6 core + 3 chart-maintenance + 7 care-planning + 3 refill, all always
+    # 6 core + 3 chart-maintenance + 11 care-planning + 3 refill, all always
     # available;
     # the ontology and comprehension toolsets need their catalogs and stay
     # absent here. Care planning is in the always-on set for the same reason
     # chart maintenance is: it needs no loaded catalog, and what it does
     # need — a retrieval store — is built on first use rather than at
     # import, so listing the tools costs nothing.
-    assert len(everything) == 19
+    assert len(everything) == 23
 
 
 def test_selective_schema_revealing():
@@ -382,3 +382,100 @@ def test_every_intent_names_tables_that_exist():
     for intent, tables in INTENT_TABLES.items():
         missing = set(tables) - real
         assert not missing, f"intent {intent!r} names missing tables: {sorted(missing)}"
+
+
+# ── the guard reads the conversation, not just the sentence ──────────────
+
+
+def test_the_guard_is_given_the_conversation():
+    """A follow-up is on topic if what it follows is.
+
+    Judged alone, "approve" is not a clinical question — and the guard said
+    so, which made the care-plan review loop unusable from the turn where a
+    reviewer starts answering in single words. Measured on a real session:
+    turns 1 and 2 passed, turns 4 and 5 were rejected as "clinical judgment
+    call" and "output format request".
+    """
+    import dataclasses
+
+    from hdh.modules.agent.pipeline.nodes import make_guardrails_node
+
+    seen: list = []
+    base, _calls = make_deps()
+
+    def watching(question, history=None):
+        seen.append(list(history or []))
+        return base.check_topic(question, history)
+
+    # PipelineDeps is frozen — the point of it being the injection seam.
+    deps = dataclasses.replace(base, check_topic=watching)
+    make_guardrails_node(deps)(
+        {"question": "approve", "history": ["Q: build a care plan", "A: 7 concerns, paused"]}
+    )
+    assert seen and seen[0], "the guard was given no history — a bare 'approve' cannot be judged"
+
+
+def test_care_planning_vocabulary_is_on_topic():
+    """The guard's allowed topics have to cover the words a reviewer uses
+    while steering a plan, not just the words used to start one."""
+    from hdh.modules.agent.pipeline.state import DEFAULT_ALLOWED_TOPICS
+
+    topics = " ".join(DEFAULT_ALLOWED_TOPICS).lower()
+    assert "care plan" in topics
+    assert "amending" in topics or "amend" in topics
+    assert "refill" in topics
+
+
+def test_the_validator_never_sees_less_evidence_than_the_drafter():
+    """A validator judging against less than the drafter had rejects true
+    claims, and the failure looks like the model hallucinating.
+
+    Measured: evidence was cut to 1,200 chars while the executor's tool
+    results were capped at 6,000. A 4,690-char care plan reached the
+    validator as its first ~5 of 14 interventions, so it refused three times
+    — correctly, because the evidence really did not contain what the draft
+    described. The draft was right; the evidence was starved.
+    """
+    import inspect
+
+    from hdh.modules.agent.pipeline import gateway
+
+    source = inspect.getsource(gateway.Gateway._run_tools)
+    assert "text[:1200]" not in source, "evidence is capped below the tool-result cap"
+    assert "self.config.tool_result_cap" in source, (
+        "evidence should be capped at the same size the executor was given"
+    )
+
+
+def test_every_care_plan_tool_is_reachable_from_its_intent(db_session):
+    """The reverse of the check above, and the direction that actually bit.
+
+    `test_every_intent_names_a_tool_that_is_defined_somewhere` catches an
+    intent naming a tool nobody wrote. It cannot catch a tool nobody named —
+    and that is what happened twice: #141 for the whole care-plan pack, and
+    again one PR later for `save_care_plan` and its siblings.
+
+    The failure mode is worse than an error. Asked to save a plan with no
+    save tool in reach, the agent DESCRIBED a save it had never performed,
+    quoting real counts it had read from `show_care_plan`, and the validator
+    passed it because every number was grounded. Nothing was written.
+    """
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+    from hdh.modules.careplan.agent_tools import build_careplan_tools
+
+    pack = {tool.name for tool in build_careplan_tools(db_session)}
+    assert pack, "no care-plan tools built — this test would be vacuous"
+    unreachable = pack - INTENT_TOOLS["care_plan"]
+    assert not unreachable, (
+        f"care-plan tools no intent exposes: {sorted(unreachable)} — "
+        f"the agent will narrate the capability instead of using it"
+    )
+
+
+def test_every_refill_tool_is_reachable_from_its_intent(db_session):
+    from hdh.modules.agent.pipeline.gateway import INTENT_TOOLS
+    from hdh.modules.agent.refill_tools import build_refill_tools
+
+    pack = {tool.name for tool in build_refill_tools(db_session)}
+    assert pack, "no refill tools built — this test would be vacuous"
+    assert not pack - INTENT_TOOLS["medication"]

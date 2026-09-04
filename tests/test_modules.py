@@ -83,6 +83,11 @@ def test_agent_tools_build(db_session):
         "reject_care_plan_stage",
         "show_care_plan_rubric",
         "write_care_plan_page",
+        # persistence, approval and the audit trail
+        "save_care_plan",
+        "approve_care_plan",
+        "reject_care_plan",
+        "care_plan_history",
         # medication refills, milestone C
         "list_medication_orders",
         "check_medication_refill",
@@ -98,6 +103,33 @@ def test_fhir_api_app(db_session):
     paths = {r.path for r in app.routes}
     assert "/metadata" in paths
     assert "/Patient/{mrn}" in paths
+    assert "/CarePlan" in paths
+
+
+def test_the_capability_statement_declares_every_resource_served(db_session):
+    """A capability statement that omits a served resource is worse than one
+    that omits the endpoint: a client trusts it and never asks."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from hdh.modules.fhir_api.server import create_app
+
+    client = TestClient(create_app(db_path=":memory:"))
+    declared = {r["type"] for r in client.get("/metadata").json()["rest"][0]["resource"]}
+    assert {"Patient", "CarePlan"} <= declared
+
+
+def test_care_plan_search_requires_a_patient(db_session):
+    """Returning every plan in the dataset for a bare GET would be a
+    different endpoint, and not one anybody asked for."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from hdh.modules.fhir_api.server import create_app
+
+    client = TestClient(create_app(db_path=":memory:"))
+    # No patient named at all: a bare GET must not mean "every plan".
+    assert client.get("/CarePlan").status_code == 400
 
 
 def test_gap_finder_registry():
