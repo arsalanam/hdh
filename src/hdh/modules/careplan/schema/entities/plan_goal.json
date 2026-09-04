@@ -3,26 +3,104 @@
   "tablename": "plan_goals",
   "module": "careplan_module",
   "columns": [
-    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
-    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
-    {"name": "concern_id", "type": "Integer", "foreign_key": "health_concerns.id", "nullable": false},
-    {"name": "statement", "type": "Text", "nullable": false},
-    {"name": "measure_system", "type": "String", "length": 20},
-    {"name": "measure_code", "type": "String", "length": 40},
-    {"name": "target_value", "type": "Text"},
-    {"name": "target_due", "type": "Date"},
-    {"name": "expressed_by", "type": "Enum", "values": ["patient", "clinician"], "nullable": false},
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "care_plan_id",
+      "type": "Integer",
+      "foreign_key": "care_plan_records.id",
+      "nullable": false
+    },
+    {
+      "name": "concern_id",
+      "type": "Integer",
+      "foreign_key": "health_concerns.id",
+      "nullable": false
+    },
+    {
+      "name": "statement",
+      "type": "Text",
+      "nullable": false
+    },
+    {
+      "name": "measure_system",
+      "type": "String",
+      "length": 20
+    },
+    {
+      "name": "measure_code",
+      "type": "String",
+      "length": 40
+    },
+    {
+      "name": "target_value",
+      "type": "Text"
+    },
+    {
+      "name": "target_due",
+      "type": "Date"
+    },
+    {
+      "name": "expressed_by",
+      "type": "Enum",
+      "values": [
+        "patient",
+        "clinician"
+      ],
+      "nullable": false
+    },
     {
       "name": "status",
       "type": "Enum",
-      "values": ["proposed", "active", "achieved", "not_achieved", "cancelled"],
+      "values": [
+        "proposed",
+        "active",
+        "achieved",
+        "not_achieved",
+        "cancelled"
+      ],
       "nullable": false
     },
-    {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
-    {"name": "evidence_refs", "type": "JSON"}
+    {
+      "name": "source",
+      "type": "Enum",
+      "values": [
+        "ai",
+        "human"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "evidence_refs",
+      "type": "JSON"
+    }
   ],
   "indexes": [
-    {"name": "ix_goal_plan", "columns": ["care_plan_id"]},
-    {"name": "ix_goal_concern", "columns": ["concern_id"]}
-  ]
+    {
+      "name": "ix_goal_plan",
+      "columns": [
+        "care_plan_id"
+      ]
+    },
+    {
+      "name": "ix_goal_concern",
+      "columns": [
+        "concern_id"
+      ]
+    }
+  ],
+  "semantics": {
+    "purpose": "A goal under one concern. Interventions hang off it.",
+    "columns": {
+      "target_value": "The measurable target, and often an empty string — an empty target is the honest answer when nothing retrieved supports a number, not missing data.",
+      "evidence_refs": "JSON: the corpus chunks cited."
+    },
+    "joins": [
+      "plan_goals.concern_id -> health_concerns.id"
+    ]
+  }
 }

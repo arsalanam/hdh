@@ -3,20 +3,82 @@
   "tablename": "health_concerns",
   "module": "careplan_module",
   "columns": [
-    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
-    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "care_plan_id",
+      "type": "Integer",
+      "foreign_key": "care_plan_records.id",
+      "nullable": false
+    },
     {
       "name": "concern_type",
       "type": "Enum",
-      "values": ["condition", "risk", "sdoh", "functional"],
+      "values": [
+        "condition",
+        "risk",
+        "sdoh",
+        "functional"
+      ],
       "nullable": false
     },
-    {"name": "statement", "type": "Text", "nullable": false},
-    {"name": "code_system", "type": "String", "length": 20},
-    {"name": "code", "type": "String", "length": 40},
-    {"name": "priority", "type": "Integer"},
-    {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
-    {"name": "evidence_refs", "type": "JSON"}
+    {
+      "name": "statement",
+      "type": "Text",
+      "nullable": false
+    },
+    {
+      "name": "code_system",
+      "type": "String",
+      "length": 20
+    },
+    {
+      "name": "code",
+      "type": "String",
+      "length": 40
+    },
+    {
+      "name": "priority",
+      "type": "Integer"
+    },
+    {
+      "name": "source",
+      "type": "Enum",
+      "values": [
+        "ai",
+        "human"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "evidence_refs",
+      "type": "JSON"
+    }
   ],
-  "indexes": [{"name": "ix_concern_plan", "columns": ["care_plan_id"]}]
+  "indexes": [
+    {
+      "name": "ix_concern_plan",
+      "columns": [
+        "care_plan_id"
+      ]
+    }
+  ],
+  "semantics": {
+    "purpose": "One concern within a care plan — the problem the plan is addressing. Goals hang off it.",
+    "also_called": [
+      "concerns",
+      "plan problems"
+    ],
+    "columns": {
+      "evidence_refs": "JSON holding the corpus chunks this concern cites. An element citing nothing is what the plan is graded down for, so this being empty is a finding, not a gap in the data.",
+      "source": "Whether the element came from the model or a human."
+    },
+    "joins": [
+      "health_concerns.care_plan_id -> care_plan_records.id"
+    ]
+  }
 }

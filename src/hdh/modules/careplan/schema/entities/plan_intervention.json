@@ -3,26 +3,101 @@
   "tablename": "plan_interventions",
   "module": "careplan_module",
   "columns": [
-    {"name": "id", "type": "Integer", "primary_key": true, "autoincrement": true},
-    {"name": "care_plan_id", "type": "Integer", "foreign_key": "care_plan_records.id", "nullable": false},
-    {"name": "goal_id", "type": "Integer", "foreign_key": "plan_goals.id", "nullable": false},
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "care_plan_id",
+      "type": "Integer",
+      "foreign_key": "care_plan_records.id",
+      "nullable": false
+    },
+    {
+      "name": "goal_id",
+      "type": "Integer",
+      "foreign_key": "plan_goals.id",
+      "nullable": false
+    },
     {
       "name": "intervention_type",
       "type": "Enum",
-      "values": ["medication", "service", "referral", "education", "monitoring"],
+      "values": [
+        "medication",
+        "service",
+        "referral",
+        "education",
+        "monitoring"
+      ],
       "nullable": false
     },
-    {"name": "statement", "type": "Text", "nullable": false},
-    {"name": "code_system", "type": "String", "length": 20},
-    {"name": "code", "type": "String", "length": 40},
-    {"name": "owner_role", "type": "Text"},
-    {"name": "schedule", "type": "Text"},
-    {"name": "request_id", "type": "Integer", "foreign_key": "service_requests.id"},
-    {"name": "source", "type": "Enum", "values": ["ai", "human"], "nullable": false},
-    {"name": "evidence_refs", "type": "JSON"}
+    {
+      "name": "statement",
+      "type": "Text",
+      "nullable": false
+    },
+    {
+      "name": "code_system",
+      "type": "String",
+      "length": 20
+    },
+    {
+      "name": "code",
+      "type": "String",
+      "length": 40
+    },
+    {
+      "name": "owner_role",
+      "type": "Text"
+    },
+    {
+      "name": "schedule",
+      "type": "Text"
+    },
+    {
+      "name": "request_id",
+      "type": "Integer",
+      "foreign_key": "service_requests.id"
+    },
+    {
+      "name": "source",
+      "type": "Enum",
+      "values": [
+        "ai",
+        "human"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "evidence_refs",
+      "type": "JSON"
+    }
   ],
   "indexes": [
-    {"name": "ix_intervention_plan", "columns": ["care_plan_id"]},
-    {"name": "ix_intervention_goal", "columns": ["goal_id"]}
-  ]
+    {
+      "name": "ix_intervention_plan",
+      "columns": [
+        "care_plan_id"
+      ]
+    },
+    {
+      "name": "ix_intervention_goal",
+      "columns": [
+        "goal_id"
+      ]
+    }
+  ],
+  "semantics": {
+    "purpose": "What will actually be done, under one goal. The leaf of the plan.",
+    "columns": {
+      "intervention_type": "'medication', 'service', 'referral', 'monitoring' or 'education'.",
+      "owner_role": "Who does it, as a role ('GP', 'practice nurse') — not a reference to a named practitioner.",
+      "evidence_refs": "JSON: the corpus chunks cited."
+    },
+    "joins": [
+      "plan_interventions.goal_id -> plan_goals.id"
+    ]
+  }
 }

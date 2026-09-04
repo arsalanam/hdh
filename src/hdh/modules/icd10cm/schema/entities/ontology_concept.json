@@ -3,27 +3,132 @@
   "tablename": "ontology_concepts",
   "module": "icd10cm_module",
   "columns": [
-    { "name": "id", "type": "String", "length": 64, "primary_key": true },
-    { "name": "ontology", "type": "String", "length": 16, "nullable": false },
-    { "name": "code", "type": "String", "length": 32, "nullable": false },
-    { "name": "kind", "type": "Enum", "values": ["chapter", "block", "category", "subcategory", "code", "concept"], "nullable": false },
-    { "name": "display", "type": "String", "length": 512, "nullable": false },
-    { "name": "short_display", "type": "String", "length": 128 },
-    { "name": "is_billable", "type": "Boolean" },
-    { "name": "hierarchy_depth", "type": "Integer" },
-    { "name": "path", "type": "String", "length": 1024 },
-    { "name": "laterality", "type": "String", "length": 1 },
-    { "name": "laterality_group", "type": "String", "length": 64 },
-    { "name": "episode", "type": "String", "length": 1 },
-    { "name": "episode_group", "type": "String", "length": 64 },
-    { "name": "properties", "type": "JSON" },
-    { "name": "effective_fy", "type": "Integer" },
-    { "name": "retired_fy", "type": "Integer" }
+    {
+      "name": "id",
+      "type": "String",
+      "length": 64,
+      "primary_key": true
+    },
+    {
+      "name": "ontology",
+      "type": "String",
+      "length": 16,
+      "nullable": false
+    },
+    {
+      "name": "code",
+      "type": "String",
+      "length": 32,
+      "nullable": false
+    },
+    {
+      "name": "kind",
+      "type": "Enum",
+      "values": [
+        "chapter",
+        "block",
+        "category",
+        "subcategory",
+        "code",
+        "concept"
+      ],
+      "nullable": false
+    },
+    {
+      "name": "display",
+      "type": "String",
+      "length": 512,
+      "nullable": false
+    },
+    {
+      "name": "short_display",
+      "type": "String",
+      "length": 128
+    },
+    {
+      "name": "is_billable",
+      "type": "Boolean"
+    },
+    {
+      "name": "hierarchy_depth",
+      "type": "Integer"
+    },
+    {
+      "name": "path",
+      "type": "String",
+      "length": 1024
+    },
+    {
+      "name": "laterality",
+      "type": "String",
+      "length": 1
+    },
+    {
+      "name": "laterality_group",
+      "type": "String",
+      "length": 64
+    },
+    {
+      "name": "episode",
+      "type": "String",
+      "length": 1
+    },
+    {
+      "name": "episode_group",
+      "type": "String",
+      "length": 64
+    },
+    {
+      "name": "properties",
+      "type": "JSON"
+    },
+    {
+      "name": "effective_fy",
+      "type": "Integer"
+    },
+    {
+      "name": "retired_fy",
+      "type": "Integer"
+    }
   ],
   "indexes": [
-    { "name": "ux_concept_ontology_code", "columns": ["ontology", "code"], "unique": true },
-    { "name": "ix_concept_path", "columns": ["path"] },
-    { "name": "ix_concept_laterality_group", "columns": ["laterality_group"] },
-    { "name": "ix_concept_episode_group", "columns": ["episode_group"] }
-  ]
+    {
+      "name": "ux_concept_ontology_code",
+      "columns": [
+        "ontology",
+        "code"
+      ],
+      "unique": true
+    },
+    {
+      "name": "ix_concept_path",
+      "columns": [
+        "path"
+      ]
+    },
+    {
+      "name": "ix_concept_laterality_group",
+      "columns": [
+        "laterality_group"
+      ]
+    },
+    {
+      "name": "ix_concept_episode_group",
+      "columns": [
+        "episode_group"
+      ]
+    }
+  ],
+  "semantics": {
+    "purpose": "One code in a terminology — ICD-10-CM, SNOMED CT, LOINC or RxNorm — with its description.",
+    "also_called": [
+      "codes",
+      "terminology",
+      "the code list"
+    ],
+    "use_when": "Rarely by SQL. Prefer the icd/snomed/loinc/rxnorm tools: they know each vocabulary's rules, and this table cannot answer subsumption at all.",
+    "columns": {
+      "path": "ICD-10-CM only. It is NOT populated for other vocabularies, so a hierarchy query written against it silently returns nothing for SNOMED."
+    }
+  }
 }

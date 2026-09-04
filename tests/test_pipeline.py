@@ -231,7 +231,7 @@ def test_tool_result_clipping():
 
 
 def test_every_intent_table_is_a_real_table():
-    """`_schema_summary` filters by name, so a stale entry does not fail — it
+    """`_semantic_schema` filters by name, so a stale entry does not fail — it
     silently drops the table from the SQL tool's schema description and the
     executor never learns the table exists.
 
