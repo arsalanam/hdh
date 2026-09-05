@@ -686,6 +686,21 @@ class Allergy(Base):
     #: interchangeable to whoever prescribes next.
     reaction: Mapped[str | None] = mapped_column(String(100))
     severity: Mapped[AllergySeverity | None] = mapped_column(SAEnum(AllergySeverity))
+    #: 'medication' | 'food' | 'environment' | 'biologic'. What kind of
+    #: thing this is, which decides who needs to see it: a prescriber cares
+    #: about the first, a caterer about the second.
+    category: Mapped[str | None] = mapped_column(String(16))
+    #: 'low' | 'high'. NOT the same as `severity`, and the distinction is
+    #: the clinically important one: severity is how bad the reaction that
+    #: happened was, criticality is the risk that the next one kills them. A
+    #: mild rash to penicillin can still be high criticality.
+    criticality: Mapped[str | None] = mapped_column(String(16))
+    #: 'confirmed' | 'unconfirmed' | 'refuted'. A refuted allergy is one
+    #: that was investigated and found not to exist — it stays on the record
+    #: precisely so nobody re-adds it, and must never be rendered as live.
+    verification: Mapped[str | None] = mapped_column(String(16))
+    #: 'active' | 'inactive' | 'resolved'. Outgrown allergies are real.
+    clinical_status: Mapped[str | None] = mapped_column(String(16), default="active")
     #: When it was first recorded on this chart.
     noted_date: Mapped[date | None] = mapped_column(Date)
     #: When the reaction last actually occurred, which is a different
@@ -887,7 +902,14 @@ class MedicationStatement(Base):
 
 
 class Procedure(Base):
-    """A performed procedure/intervention, optionally tied to a visit."""
+    """A performed procedure, here or elsewhere.
+
+    **`visit_id` being NULL is meaningful, not missing.** A row with no
+    visit is surgical history recorded from outside this practice — a past
+    appendectomy has no encounter here — and the nullable column has always
+    allowed it while nothing recorded one. Any query joining procedures to
+    visits silently drops exactly that history.
+    """
 
     __tablename__ = "procedures"
 
@@ -895,6 +917,18 @@ class Procedure(Base):
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
     visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"))
     description: Mapped[str] = mapped_column(String(200))
+    #: The coded procedure. Free-text `description` is what gets typed; a
+    #: code is what another system can act on, and the two are not the same
+    #: thing — "repair" and "revision" read alike and bill differently.
+    code: Mapped[str | None] = mapped_column(String(32))
+    #: Which vocabulary `code` belongs to — 'SNOMED' or 'CPT'. A bare code
+    #: cannot say, and the two overlap numerically.
+    code_standard: Mapped[str | None] = mapped_column(String(16))
+    body_site: Mapped[str | None] = mapped_column(String(80))
+    #: 'left' | 'right' | 'bilateral'. Separate from `body_site` because it
+    #: is the field that makes a wrong-side procedure detectable, and
+    #: burying it in free text makes it unqueryable.
+    laterality: Mapped[str | None] = mapped_column(String(16))
     performed_date: Mapped[date | None] = mapped_column(Date)
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
     #: The request this fulfils. NULL means "happened without being ordered"
@@ -987,7 +1021,18 @@ class MedicationDispense(Base):
 
 
 class Immunization(Base):
-    """One administered vaccine dose."""
+    """One vaccine event — given, refused, or contraindicated.
+
+    A declined vaccine was previously unrecordable, and its absence looked
+    identical to never having been offered. That is the wrong silence: a
+    patient who refuses influenza vaccine every year is a different clinical
+    picture from one nobody has asked, and a care gap that cannot tell them
+    apart will keep proposing the same thing.
+
+    `administered_date` is therefore nullable. A refusal has no
+    administration date, and inventing one to satisfy a constraint would
+    record a dose that was never given.
+    """
 
     __tablename__ = "immunizations"
 
@@ -995,8 +1040,17 @@ class Immunization(Base):
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
     vaccine: Mapped[str] = mapped_column(String(100))
     cvx_code: Mapped[str | None] = mapped_column(String(10))
-    administered_date: Mapped[date] = mapped_column(Date)
+    #: NULL when nothing was administered — see `status`.
+    administered_date: Mapped[date | None] = mapped_column(Date)
     dose_number: Mapped[int | None] = mapped_column(Integer)
+    #: 'completed' | 'refused' | 'contraindicated'. Defaults to completed,
+    #: so every row written before this existed keeps its meaning.
+    status: Mapped[str | None] = mapped_column(String(16), default="completed")
+    #: Why, when it was not given. A refusal with no reason is a note that
+    #: the next clinician cannot act on.
+    reason: Mapped[str | None] = mapped_column(Text)
+    #: When the refusal or contraindication was recorded.
+    recorded_date: Mapped[date | None] = mapped_column(Date)
 
     patient: Mapped["Patient"] = relationship(back_populates="immunizations")
 

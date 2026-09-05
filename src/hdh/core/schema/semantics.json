@@ -11,7 +11,8 @@
       "mrn": "The medical record number a clinician actually says out loud. Prefer it over id when a human named a patient.",
       "sex": "Enum stored by NAME: 'MALE' or 'FEMALE'. Compare to the string, not to a number.",
       "date_of_birth": "Age is derived from this, not stored."
-    }
+    },
+    "chart": true
   },
   "conditions": {
     "purpose": "The unified problem list AND the encounter diagnoses, in one table. `chronic` is what separates them.",
@@ -31,7 +32,8 @@
     "joins": [
       "conditions.patient_id -> patients.id",
       "conditions.visit_id -> visits.id"
-    ]
+    ],
+    "chart": true
   },
   "visits": {
     "purpose": "One encounter. Most clinical rows are anchored to a visit rather than directly to a patient.",
@@ -44,14 +46,16 @@
     },
     "joins": [
       "visits.patient_id -> patients.id"
-    ]
+    ],
+    "chart": true
   },
   "vitals": {
     "purpose": "Measurements taken at a visit — blood pressure, pulse, weight.",
     "use_when": "Asked about a trend or a most-recent reading. Order by the visit date, not by id.",
     "joins": [
       "vitals.visit_id -> visits.id"
-    ]
+    ],
+    "chart": true
   },
   "lab_results": {
     "purpose": "Resulted laboratory values.",
@@ -60,7 +64,8 @@
     },
     "joins": [
       "lab_results.visit_id -> visits.id"
-    ]
+    ],
+    "chart": true
   },
   "prescriptions": {
     "purpose": "What was prescribed at a visit. A prescription is an event, not a statement that the patient is taking it today.",
@@ -77,7 +82,8 @@
     },
     "joins": [
       "prescriptions.visit_id -> visits.id"
-    ]
+    ],
+    "chart": true
   },
   "medication_statements": {
     "purpose": "What the patient is understood to be taking now, as distinct from what was prescribed at some past visit.",
@@ -89,11 +95,13 @@
     "use_when": "Asked what a patient is on today. This is the answer; prescriptions is the history.",
     "joins": [
       "medication_statements.patient_id -> patients.id"
-    ]
+    ],
+    "chart": true
   },
   "medication_dispenses": {
     "purpose": "Fills actually issued against an order — the record that a supply left the pharmacy.",
-    "use_when": "Asked about refills taken, adherence, or when a patient last collected something."
+    "use_when": "Asked about refills taken, adherence, or when a patient last collected something.",
+    "chart": true
   },
   "service_requests": {
     "purpose": "The orders table. One row per thing asked for — a lab, an imaging study, a referral, a follow-up — whatever its kind.",
@@ -112,7 +120,8 @@
     "joins": [
       "service_requests.patient_id -> patients.id",
       "service_requests.visit_id -> visits.id"
-    ]
+    ],
+    "chart": true
   },
   "visit_notes": {
     "purpose": "The narrative text written at a visit.",
@@ -120,7 +129,8 @@
       "notes",
       "the note"
     ],
-    "use_when": "Asked what a clinician wrote. For structured findings EXTRACTED from a note, use note_records instead — this table is the prose."
+    "use_when": "Asked what a clinician wrote. For structured findings EXTRACTED from a note, use note_records instead — this table is the prose.",
+    "chart": true
   },
   "allergies": {
     "purpose": "One allergy or intolerance the patient is known to have. A record of something that happened to them, not a flag.",
@@ -129,7 +139,7 @@
       "adverse reactions",
       "NKDA"
     ],
-    "use_when": "Before anything is prescribed, and whenever asked what a patient reacts to. IMPORTANT: no rows means no KNOWN allergies — that is this chart's contract, because every allergy here is recorded when it exists. Do not read an empty result as 'not asked'.",
+    "use_when": "Before anything is prescribed, and whenever asked what a patient reacts to. IMPORTANT: no rows means no KNOWN allergies — that is this chart's contract, because every allergy here is recorded when it exists. Do not read an empty result as 'not asked'. To list what to prescribe around, exclude voided_at IS NOT NULL, verification = 'refuted', and clinical_status NOT IN ('active') — three different ways a row stops being live.",
     "columns": {
       "substance": "Free text, as a clinician typed it. Match loosely; the coded form is drug_code.",
       "drug_code": "The coded substance where known. NULL is common and is not a data error.",
@@ -138,11 +148,16 @@
       "reaction": "What it actually did. 'anaphylaxis' and 'rash' are both severe-sounding words and only one is an emergency.",
       "noted_date": "When it was written down.",
       "last_happened": "When it last occurred, which is a different question from noted_date.",
-      "voided_at": "Non-NULL means entered in error. EXCLUDE these — a voided allergy is not a resolved one."
+      "voided_at": "Non-NULL means entered in error. EXCLUDE these — a voided allergy is not a resolved one.",
+      "category": "'medication' | 'food' | 'environment' | 'biologic'. Who needs to see it: a prescriber cares about the first.",
+      "criticality": "'low' | 'high'. NOT severity. Severity is how bad the reaction that happened was; criticality is the risk the NEXT one kills them. A mild rash to penicillin can be high criticality.",
+      "verification": "'confirmed' | 'unconfirmed' | 'refuted'. A REFUTED allergy was investigated and found not to exist. It stays on the record so nobody re-adds it — never treat it as live.",
+      "clinical_status": "'active' | 'inactive' | 'resolved'. Outgrown allergies are real. Only 'active' (or NULL, for rows predating this column) is live."
     },
     "joins": [
       "allergies.patient_id -> patients.id"
-    ]
+    ],
+    "chart": true
   },
   "immunizations": {
     "purpose": "Vaccines administered to this patient.",
@@ -151,14 +166,18 @@
       "shots",
       "immunisation history"
     ],
-    "use_when": "Asked what a patient has had, or whether they are due. Absence of a row is absence of a RECORD — for vaccines given elsewhere this chart may simply not know, which is not the same as the patient not having had it.",
+    "use_when": "Asked what a patient has had, is due, or has declined. Counting rows as doses given is wrong now that refusals live here: filter status = 'completed' or NULL. A patient who refuses influenza vaccine every year is a different clinical picture from one nobody asked, and the table can finally tell them apart.",
     "columns": {
       "cvx_code": "The CVX vaccine code, where known.",
-      "dose_number": "Which dose in a series, where a series applies."
+      "dose_number": "Which dose in a series, where a series applies.",
+      "status": "'completed' | 'refused' | 'contraindicated'. NULL means completed (rows predating this column). A REFUSAL is a clinical fact, not a missing dose.",
+      "reason": "Why it was not given.",
+      "administered_date": "NULL for anything not administered — check `status` before reading an absent date as missing data."
     },
     "joins": [
       "immunizations.patient_id -> patients.id"
-    ]
+    ],
+    "chart": true
   },
   "procedures": {
     "purpose": "Procedures performed, including past surgical history.",
@@ -170,12 +189,17 @@
     "use_when": "Asked what has been done to a patient. NOTE visit_id is nullable and that is meaningful: a row with no visit is history recorded from elsewhere — a past appendectomy has no encounter in this practice — and filtering on a join to visits silently drops exactly that surgical history.",
     "columns": {
       "description": "Free text. There is no procedure code column yet.",
-      "visit_id": "NULL means it was not performed here. Not missing data."
+      "visit_id": "NULL means it was not performed here. Not missing data.",
+      "code": "The coded procedure, where known. `description` is what was typed; this is what another system can act on.",
+      "code_standard": "'SNOMED' or 'CPT'. The two overlap numerically, so a bare code is not interpretable.",
+      "body_site": "Where.",
+      "laterality": "'left' | 'right' | 'bilateral'. Its own column because it is what makes a wrong-side procedure detectable; in free text it is unqueryable."
     },
     "joins": [
       "procedures.patient_id -> patients.id",
       "procedures.visit_id -> visits.id (nullable)"
-    ]
+    ],
+    "chart": true
   },
   "family_history": {
     "purpose": "Conditions recorded in the patient's relatives, with the relationship.",
@@ -190,7 +214,8 @@
     },
     "joins": [
       "family_history.patient_id -> patients.id"
-    ]
+    ],
+    "chart": true
   },
   "functional_status": {
     "purpose": "What this patient can actually do, one row per domain, as of now.",
@@ -210,6 +235,96 @@
     },
     "joins": [
       "functional_status.patient_id -> patients.id"
+    ],
+    "chart": true
+  },
+  "patient_identifiers": {
+    "purpose": "Every way this person is identified — MRN, national number, member number.",
+    "also_called": [
+      "identifiers",
+      "NHS number",
+      "member number"
+    ],
+    "use_when": "Asked to find or confirm a patient by something other than the MRN. `patients.mrn` still holds the primary; this table holds the rest.",
+    "columns": {
+      "kind": "'mrn' | 'national' | 'member' | 'driver_licence' | 'passport' | 'other'.",
+      "issuer": "Who issues it. A member number means nothing without its payer."
+    },
+    "joins": [
+      "patient_identifiers.patient_id -> patients.id"
+    ],
+    "chart": true
+  },
+  "patient_addresses": {
+    "purpose": "Where this person lives, and where they used to.",
+    "also_called": [
+      "address",
+      "where they live"
+    ],
+    "use_when": "Asked where a patient lives. A row with a `period_end` is a FORMER address — including it as current is how a letter goes to the wrong house.",
+    "columns": {
+      "use": "'home' | 'mailing' | 'work' | 'temp'.",
+      "period_end": "Non-NULL means they have moved out. Filter it for the current address."
+    },
+    "joins": [
+      "patient_addresses.patient_id -> patients.id"
+    ],
+    "chart": true
+  },
+  "patient_contacts": {
+    "purpose": "How to reach this person, in the order to try.",
+    "also_called": [
+      "phone",
+      "email",
+      "contact details"
+    ],
+    "use_when": "Asked how to contact a patient. `rank` 1 is the one to try first — a list with no order does not answer the question that was asked.",
+    "columns": {
+      "system": "'phone' | 'email' | 'sms' | 'other'.",
+      "use": "'home' | 'mobile' | 'work' | 'carer'.",
+      "rank": "1 first. NULL means nobody said."
+    },
+    "joins": [
+      "patient_contacts.patient_id -> patients.id"
+    ],
+    "chart": true
+  },
+  "patient_coverages": {
+    "purpose": "Who pays, and under which policy.",
+    "also_called": [
+      "insurance",
+      "payer",
+      "coverage"
+    ],
+    "use_when": "Asked who insures a patient or who to bill. `rank` 1 is primary and 2 secondary; billing the wrong one is not a detail.",
+    "columns": {
+      "rank": "1 = primary, 2 = secondary.",
+      "policy_holder": "Who holds the policy when it is not this patient — a child on a parent's plan is the ordinary case."
+    },
+    "joins": [
+      "patient_coverages.patient_id -> patients.id"
+    ],
+    "chart": true
+  },
+  "family_members": {
+    "purpose": "The relatives themselves. The clinical facts about them live in family_history.",
+    "chart": false,
+    "not_chart_because": "the people, joined to by family_history; the chart fact is the condition, not the relative",
+    "joins": [
+      "family_history.family_member_id -> family_members.id"
+    ]
+  },
+  "chart_audit_events": {
+    "purpose": "Who changed a chart row, when, and why. One trail for every entity.",
+    "also_called": [
+      "audit trail",
+      "history"
+    ],
+    "use_when": "Asked what happened to a record, or who signed something off. `entity` carries the row's type, so one query returns a patient's whole history.",
+    "chart": false,
+    "not_chart_because": "the trail OF changes to the chart, not chart content",
+    "joins": [
+      "chart_audit_events.patient_id -> patients.id"
     ]
   }
 }

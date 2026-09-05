@@ -204,6 +204,13 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "procedures",
         "family_history",
         "functional_status",
+        # The person's own details. M6's gate found these unreachable: they
+        # are chart content by any reading, and "what is this patient's
+        # phone number" could not be answered from the table that holds it.
+        "patient_identifiers",
+        "patient_addresses",
+        "patient_contacts",
+        "patient_coverages",
     ),
     "cohort_search": ("patients", "conditions", "visits", "prescriptions"),
     "risk": ("patients", "conditions", "visits", "vitals", "lab_results"),
