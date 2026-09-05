@@ -1,4 +1,4 @@
-# The Patient Chart — What a Person Is, and Where a Module Stops (Draft)
+# The Patient Chart — What a Person Is, and Where a Module Stops
 
 **Where it lives:** `hdh.core` — the chart is core by definition; this
 document is largely about defending that boundary ·
@@ -235,19 +235,102 @@ So that "complete" survives contact with the next module.
 
 ---
 
-## 6. Open questions
+## 6. Decisions
 
-1. **Is "no known allergies" a row or a column on the patient?** A row scales
-   to the same statement about family history and immunisation status; a
-   column is simpler and stops at allergies. This design leans to a row and
-   does not settle it.
-2. **How much functional status is worth modelling** before it becomes an
-   assessment instrument nobody fills in? The proposal is: only what changes
-   a plan, and only where a value was actually recorded.
-3. **Do identifiers, addresses and coverage move in one migration or three?**
-   Each is independently useful; together they are one coherent "person"
-   change and one re-baseline of the generator.
-4. **Does the generator produce any of this?** M3–M5 add columns the
-   synthetic generator must populate, or the tables ship empty and the
-   agent's answer changes from wrong to absent. That is an improvement, but
-   it is not the milestone.
+The four questions §5 left open, answered 2026-09-04.
+
+### 6.1 Each of these is a row, and absence means none
+
+Allergies, family history, immunisation status — records, not columns on the
+patient. The allergy record:
+
+```
+id · patient_id · substance · drug_code · code_standard
+     severity · reaction · noted_date · last_happened · notes · voided_at
+```
+
+`drug_code` carries the coded substance and `code_standard` says which
+vocabulary it belongs to, because a bare identifier cannot — and guessing
+from its shape is how a drug allergy becomes a food one. `last_happened` is
+separate from `noted_date`: when it was written down and when it last
+actually happened are different questions, and a severe reaction thirty
+years ago is weighed differently from one last month.
+
+**A patient with no allergy rows has no known allergies.** That is the
+chart's contract rather than an inference drawn at render time, and it holds
+because every chart here is generated or written through the chart tools,
+both of which record an allergy when there is one.
+
+*What this costs, recorded so it is a decision and not a surprise:* "never
+asked" is not representable. That is correct for a generated chart and
+becomes wrong the day charts are imported from a source that may simply not
+have asked — at which point this needs an explicit *asked, and none*
+assertion. The trigger is data import, not a date.
+
+What §2.1 identified is still fixed, because the defect was never the
+contract: the line asserted `NKDA` in the vocabulary of a clinician who had
+asked. It now reads `none recorded (NKDA)`, and a populated list carries the
+severity and reaction that were being dropped.
+
+### 6.2 The chart is current state; in-flight work carries its own status
+
+The principle, which reaches further than functional status:
+
+> Everything in the chart is **current**. Things that are in flight — a
+> fulfilment order, a referral request, a care plan — carry a status while
+> they are active, and when they complete, **their outcome merges into the
+> chart** and the tracking row has done its job.
+
+This is the requests-and-read-models rule the repository already runs on —
+*a request is intent, fulfilment is evidence, and the read model is written
+only on fulfilment* — stated as a property of the chart rather than of one
+subsystem. It is what makes "complete" a bounded target: the chart does not
+grow a column every time a module invents a workflow, because the workflow
+stays in the module and only its result lands here.
+
+Functional status follows from it. Record what is true of the person now,
+where a value was actually recorded, and only what changes a plan. An
+assessment in progress is not chart data; its conclusion is.
+
+### 6.3 Multiple migrations
+
+M3–M5 land as separate migrations rather than one "person" change. Each is
+independently useful and independently reversible, and 0018 and 0019 have
+already shown that a small add-column migration against a real database is
+where the surprises live.
+
+### 6.4 The generator comes last, deliberately
+
+Stub data while the milestones are built; the generator is updated once,
+afterwards, and the next generation produces realistic synthetic data across
+all of it.
+
+This means M3–M5 will ship with tables that are correct and largely empty,
+and the agent's answer will change from *wrong* to *absent*. That is an
+improvement and it is not the milestone — the milestone is when a generated
+chart populates them.
+
+---
+
+## 7. Where M1 and M2 landed
+
+Both shipped together, since M2 is wiring rather than modelling.
+
+**M1** — allergies carry severity and reaction to the page; a voided allergy
+is excluded rather than shown; an empty list says it came from an empty list;
+the record gains `drug_code`, `code_standard`, `last_happened` and `notes`
+(migration 0019).
+
+**M2** — `allergies`, `immunizations`, `procedures` and `family_history`
+reach the chart text and the intents that need them. Prescribing can see
+allergies; care gaps can see immunisations. Each declares its meaning under
+#93, including the two an agent gets wrong by reasoning: that an empty
+allergy list means none rather than unasked, and that a procedure with a
+NULL `visit_id` is history recorded from elsewhere — so joining procedures
+to visits silently drops exactly the surgical history someone asked for.
+
+Verified end to end: asked whether a patient with a recorded aspirin allergy
+could take an NSAID, the agent found the allergy and reasoned from its
+severity — the field that was in the row and not on the page.
+
+**M3–M6 remain open.**
