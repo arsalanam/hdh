@@ -168,6 +168,13 @@ answer *what has this agent done today*, *what changed since Friday*, or
 
 ## 6. Open questions
 
+> **Update:** [identity-and-authorization.md](identity-and-authorization.md)
+> now answers Q3 (the generator becomes a `system:generator` service
+> account) and supplies what A1/A2 were missing — a real person to put in
+> `actor_name` and `provider_id`, via Keycloak behind a `core.identity`
+> seam. The A-milestones interleave with its AU-milestones; A2 (the fill
+> writes a trail) still goes first, since it needs no identity machinery.
+
 1. **Is `patients` one editable entity, or several?** A name correction, an
    address change and a registered-GP change are different acts with
    different reviewers. One `Patient` spec is simpler; separate specs for
