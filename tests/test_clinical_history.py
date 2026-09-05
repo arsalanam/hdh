@@ -45,18 +45,60 @@ def _allergy_line(patient) -> str:
     return next(line for line in _text(patient).splitlines() if line.startswith("Allergies"))
 
 
+#: model class -> the Patient collection it belongs to.
+_COLLECTION = {
+    "Allergy": "allergies",
+    "Immunization": "immunizations",
+    "Procedure": "procedures",
+}
+
+
 def _clear_allergies(session, patient):
-    """This seed's patient already has allergies; these tests are about what
-    a specific row does, not about the generated ones."""
+    """Drop the generated allergies through the relationship.
+
+    Through `patient.allergies`, not a bulk `query.delete()`: `Allergy` is a
+    `delete-orphan` child, and deleting the rows out from under a loaded
+    collection leaves the ORM holding freed objects — the next append then
+    flushes in a state where SQLAlchemy can treat a sibling as an orphan and
+    silently drop it. That is the exact bug these tests exist to not have.
+    """
     patient.allergies.clear()
     session.commit()
-    session.refresh(patient)
+
+
+def _allergy_count(session, patient) -> int:
+    """Every allergy row, voided ones included.
+
+    `include_voided=True` is mandatory here and is the whole subtlety this
+    test tripped on. The `_hide_voided` session listener (chartedit
+    visibility) filters voided rows out of ORM *selects*, so a plain query
+    silently omits the voided one. Worse, whether it also filters a
+    *relationship* load differs across SQLAlchemy versions — which is why
+    `len(patient.allergies)` counted 4 on 3.13 and 3 on CI's 3.12. To assert
+    what actually PERSISTED, opt past the filter exactly as its docstring
+    says, and get the same answer on every version.
+    """
+    from hdh.core.models import Allergy
+
+    return (
+        session.query(Allergy).filter_by(patient_id=patient.id).execution_options(include_voided=True).count()
+    )
 
 
 def _add(session, patient, model, **kw):
-    session.add(model(patient_id=patient.id, **kw))
+    """Append a child THROUGH the relationship, never by bare FK.
+
+    `session.add(Allergy(patient_id=...))` sets the foreign key without
+    putting the row in `patient.allergies`. Against a `delete-orphan`
+    relationship whose collection is already loaded, the flush sees a child
+    the parent does not reference and DELETES it — no error, the row just
+    never lands. It cost a CI failure to find, because a stale in-memory
+    collection reported the row present while the database never had it.
+    """
+    row = model(**kw)
+    getattr(patient, _COLLECTION[model.__name__]).append(row)
     session.commit()
-    session.refresh(patient)
+    return row
 
 
 # ── an allergy stops being live in three different ways ──────────────────
@@ -95,7 +137,7 @@ def test_the_three_ways_are_distinct(chart):
     _add(session, patient, Allergy, substance="B", verification="refuted")
     _add(session, patient, Allergy, substance="C", clinical_status="resolved")
     _add(session, patient, Allergy, substance="D")
-    assert len(patient.allergies) == 4
+    assert _allergy_count(session, patient) == 4
     line = _allergy_line(patient)
     assert "D" in line
     for gone in ("A", "B", "C"):
