@@ -98,6 +98,8 @@
     },
     "joins": [
       "plan_interventions.goal_id -> plan_goals.id"
-    ]
+    ],
+    "chart": false,
+    "not_chart_because": "part of a care plan"
   }
 }

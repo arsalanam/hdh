@@ -223,7 +223,7 @@ def _allergy_line(patient) -> str:
     allergies recorded* so a reader can see it came from an empty list, not
     from someone having asked and written it down.
     """
-    live = [a for a in patient.allergies if getattr(a, "voided_at", None) is None]
+    live = [a for a in patient.allergies if _is_live_allergy(a)]
     if not live:
         return "none recorded (NKDA)"
     parts = []
@@ -231,14 +231,35 @@ def _allergy_line(patient) -> str:
         detail = ", ".join(
             bit
             for bit in (
+                # Criticality first: severity says how bad the last reaction
+                # was, criticality says whether the next one kills them, and
+                # a mild rash to penicillin can still be high criticality.
+                f"{allergy.criticality} criticality" if allergy.criticality else None,
                 getattr(allergy.severity, "value", None) or None,
                 allergy.reaction or None,
+                "UNCONFIRMED" if allergy.verification == "unconfirmed" else None,
             )
             if bit
         )
         coded = f" [{allergy.code_standard}:{allergy.drug_code}]" if allergy.drug_code else ""
         parts.append(f"{allergy.substance}{coded}" + (f" ({detail})" if detail else ""))
     return "; ".join(parts)
+
+
+def _is_live_allergy(allergy) -> bool:
+    """Whether this allergy is one to prescribe around today.
+
+    Three ways a row stops being live, and they are not the same thing:
+    voided (entered in error), refuted (investigated and found not to
+    exist), and resolved or inactive (outgrown). All three stay on the
+    record — a refuted allergy is kept precisely so nobody re-adds it — and
+    none of them may be rendered as a live allergy.
+    """
+    if getattr(allergy, "voided_at", None) is not None:
+        return False
+    if getattr(allergy, "verification", None) == "refuted":
+        return False
+    return getattr(allergy, "clinical_status", None) in (None, "active")
 
 
 def _append_function(lines: list, patient) -> None:
@@ -277,6 +298,16 @@ def _append_immunizations(lines: list, patient) -> None:
         return
     lines += ["IMMUNISATIONS", "-" * 40]
     for shot in shots:
+        status = getattr(shot, "status", None) or "completed"
+        if status != "completed":
+            # A refusal is a clinical fact and reads as one. Its absence
+            # looked identical to never having been offered, and those are
+            # different pictures — a care gap that cannot tell them apart
+            # proposes the same thing every year.
+            when = _date_str(getattr(shot, "recorded_date", None)) if shot.recorded_date else "date unknown"
+            why = f" — {shot.reason}" if shot.reason else ""
+            lines.append(f"  {when}  {shot.vaccine}: {status.upper()}{why}")
+            continue
         dose = f"  dose {shot.dose_number}" if shot.dose_number else ""
         code = f"  [CVX {shot.cvx_code}]" if shot.cvx_code else ""
         lines.append(f"  {_date_str(shot.administered_date)}  {shot.vaccine}{dose}{code}")
@@ -297,7 +328,12 @@ def _append_procedures(lines: list, patient) -> None:
     lines += ["PROCEDURES", "-" * 40]
     for item in done:
         history = "" if item.visit_id else "  (history — not performed here)"
-        lines.append(f"  {_date_str(item.performed_date)}  {item.description}{history}")
+        site = f"  {item.body_site}" if item.body_site else ""
+        # Laterality is its own field and its own render: it is what makes a
+        # wrong-side procedure visible to a reader.
+        side = f" ({item.laterality})" if item.laterality else ""
+        code = f"  [{item.code_standard}:{item.code}]" if item.code else ""
+        lines.append(f"  {_date_str(item.performed_date)}  {item.description}{site}{side}{code}{history}")
     lines.append("")
 
 

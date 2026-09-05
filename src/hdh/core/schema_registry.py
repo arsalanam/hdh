@@ -519,6 +519,45 @@ def table_semantics() -> dict[str, dict]:
     return out
 
 
+#: Tables whose membership of the patient chart nobody has decided.
+#:
+#: Populated by :func:`undeclared_chart_tables` rather than listed, because
+#: a list is the thing that goes stale.
+CHART_KEY = "chart"
+
+
+def chart_tables() -> frozenset[str]:
+    """The tables that ARE the patient chart.
+
+    Declared per entity rather than listed here, so the module that ships a
+    table decides whether it belongs to the person or to an episode of care
+    — the rule in docs/design/patient-chart-completeness.md §3.
+    """
+    return frozenset(name for name, block in table_semantics().items() if block.get(CHART_KEY) is True)
+
+
+def undeclared_chart_tables() -> frozenset[str]:
+    """Patient-scoped tables that have not said whether they are chart.
+
+    The gate M6 exists for. Four tables — allergies, immunizations,
+    procedures, family_history — were generated, populated and unreachable
+    by any route the agent had, and nothing failed. Every new module is
+    another chance to do it again, so a table that hangs off a patient must
+    now say which side of the boundary it is on, and saying nothing is what
+    fails.
+    """
+    from hdh.core.models import Base
+
+    meanings = table_semantics()
+    out = set()
+    for name, table in Base.metadata.tables.items():
+        if not any(fk.column.table.name == "patients" for col in table.columns for fk in col.foreign_keys):
+            continue
+        if CHART_KEY not in meanings.get(name, {}):
+            out.add(name)
+    return frozenset(out)
+
+
 def bootstrap_schema(module_names: list[str] | None = None) -> SchemaRegistry:
     """Run register → load_all → apply once per process.
 

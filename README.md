@@ -396,6 +396,34 @@ src/hdh/
 the core (and optional extras), never on each other's internals. Each module
 exposes `register_cli(subparsers)` to add its subcommands.
 
+### Where a new table goes
+
+> **The chart holds what is true of the person between encounters. A module
+> holds what is true of one episode of care.**
+
+Three tests, in order:
+
+1. **Does it outlive the episode?** A wheelchair does. A bed number does not.
+2. **Would a different service need it to be safe?** A penicillin allergy —
+   yes, anyone prescribing anything. A theatre list position — no.
+3. **Is it about the person, or about our handling of them?** Deafness is
+   about the person. A referral's triage priority is about our queue.
+
+An inpatient module would contribute back a procedure performed, an allergy
+discovered, a diagnosis confirmed, a change in function — and keep the ward,
+the transfers and the discharge process to itself. That asymmetry is what
+makes a *complete* chart a reachable state rather than a moving target.
+
+**Any table that hangs off `patients` must declare which side it is on**, as
+`"chart": true|false` in its entity's `semantics` block, with
+`not_chart_because` when it is false. Saying nothing fails
+`tests/test_chart_boundary.py`, and that is deliberate: four tables once
+shipped generated, populated and unreachable by any route the agent had, and
+nothing failed. Every new module is another chance to repeat it.
+
+Full reasoning and the milestone:
+[patient-chart-completeness.md](docs/design/patient-chart-completeness.md).
+
 ## Disease Coverage (39 conditions in two packs)
 
 **family-medicine-core** (32):

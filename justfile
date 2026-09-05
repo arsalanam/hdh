@@ -72,6 +72,28 @@ db-upgrade:
 db-stamp:
     {{run}} alembic stamp head
 
+# Any `hdh` command, with .env loaded — `just hdh show --mrn MRN12345678`
+#
+# Exists because `uv run hdh ...` does NOT read .env, so it reaches neither
+# ANTHROPIC_API_KEY nor HDH_DB_URL. That failure is the first row of the
+# care-planning guide's troubleshooting table, which is a sign it should
+# have been a recipe rather than a note.
+#
+# Flag-style arguments only. Recipes run under cmd.exe (see windows-shell
+# above), which does not preserve quotes through `*args`, so a multi-word
+# argument arrives as several. For `hdh agent "a question"`, start an
+# interactive session with `just hdh agent` instead, or export the keys and
+# call `uv run hdh` directly.
+hdh *args:
+    {{run}} hdh {{args}}
+
+
+# Fill the M3-M5 chart fields for one patient so they can be seen. The
+# generator does not write them yet (design decision 6.4), so those sections
+# are correct and empty until this runs.
+seed-demo mrn="MRN57649249":
+    {{run}} python scripts/seed_chart_demo.py --mrn {{mrn}}
+
 # ── Quality gates ────────────────────────────────────────────────────────────
 
 # Run unit tests

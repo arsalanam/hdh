@@ -63,6 +63,8 @@
     "use_when": "Asked what was FOUND in a note, or whether a note has been processed. For the prose a clinician wrote, use visit_notes — this table is the machine's reading of it.",
     "joins": [
       "note_records.patient_id -> patients.id"
-    ]
+    ],
+    "chart": false,
+    "not_chart_because": "comprehension's reading of a note; the note itself is visit_notes"
   }
 }

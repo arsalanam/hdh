@@ -377,4 +377,43 @@ The grader now knows that it does not know, which is the honest state and an
 improvement on counting interventions — but the feasibility dimension cannot
 discriminate between patients until the generator populates this.
 
-**M5–M6 remain open.**
+**M5 shipped** (migration 0023). Procedures carry `code`, `code_standard`,
+`body_site` and `laterality` — laterality as its own column because it is
+what makes a wrong-side procedure detectable, and in free text it is
+unqueryable. Immunisations carry `status`, `reason` and `recorded_date`, and
+`administered_date` becomes nullable: a refusal has no administration date,
+and inventing one to satisfy a constraint records a dose that was never
+given. Existing rows are stamped `completed` so nothing already written
+changes meaning.
+
+Allergies gain `category`, `criticality`, `verification` and
+`clinical_status`. The column worth the argument is **criticality against
+severity**: severity is how bad the reaction that happened was, criticality
+is the risk that the next one kills them, and a mild rash to penicillin can
+be high criticality. There are now three distinct ways an allergy stops
+being live — voided (entered in error), refuted (investigated, does not
+exist), resolved or inactive (outgrown) — and all three stay on the record
+while none renders as live. A refuted allergy is kept precisely so nobody
+re-adds it.
+
+**M6 shipped.** Chart membership is declared per entity as
+`"chart": true|false` in its `semantics` block, with `not_chart_because`
+required when false. `undeclared_chart_tables()` finds any table hanging off
+`patients` that has not said, and the gate fails on it — so a new module's
+table joins the chart by decision or stays out by decision, never by nobody
+noticing. Nineteen chart tables, all reachable, all declaring a purpose. §3's
+rule is now in the README beside the project structure, where a module author
+reads before deciding where a column goes.
+
+The gate found something immediately, in this milestone's own work: the four
+person tables from M3 were chart content that **no intent exposed**, so "what
+is this patient's phone number" could not be answered from the table that
+holds it. Fixed in the same change, which is the gate doing its job on the
+person who wrote it.
+
+**The milestone is complete.** What remains is not chart shape but chart
+*content*: the generator does not yet populate functional status, second
+identifiers, secondary coverage, coded procedures or immunisation refusals
+(decision 6.4), so those tables are correct and largely empty. The agent's
+answer has changed from wrong to absent, which is the improvement this
+milestone could make. Making it *present* is generator work.

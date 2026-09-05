@@ -125,6 +125,8 @@
     },
     "joins": [
       "care_plan_records.patient_id -> patients.id"
-    ]
+    ],
+    "chart": false,
+    "not_chart_because": "a care plan is a module's episode of work; what it produces lands in the chart, the plan itself does not"
   }
 }

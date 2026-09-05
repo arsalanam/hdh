@@ -79,6 +79,8 @@
     },
     "joins": [
       "health_concerns.care_plan_id -> care_plan_records.id"
-    ]
+    ],
+    "chart": false,
+    "not_chart_because": "part of a care plan"
   }
 }

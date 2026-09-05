@@ -548,6 +548,18 @@ class ProcedureEmitter:
         return out
 
 
+def _not_given_text(imm) -> str:
+    """What to put in `occurrence[x]` when nothing was administered.
+
+    FHIR makes occurrence required even for a `not-done` immunisation, so
+    something has to go there. A date it never happened on would be a lie;
+    the recorded date, labelled, is the honest answer.
+    """
+    status = getattr(imm, "status", None) or "not administered"
+    when = getattr(imm, "recorded_date", None)
+    return f"{status} (recorded {when.isoformat()})" if when else str(status)
+
+
 class ImmunizationEmitter:
     """CVX-coded immunization history (v0.4.0)."""
 
@@ -557,9 +569,17 @@ class ImmunizationEmitter:
         """Build Immunization resources (typed)."""
         out = []
         for imm in ctx.patient.immunizations:
+            # A refusal is a `not-done` Immunization, not a missing one.
+            # FHIR requires `occurrence[x]` even then — 1..1 — so a row with
+            # no administration date needs `occurrenceString`. Emitting
+            # `occurrenceDateTime=None` raised outright, which is how M5's
+            # nullable `administered_date` broke the whole bundle for any
+            # patient who had declined a vaccine.
+            given = (getattr(imm, "status", None) or "completed") == "completed"
+            occurred = _d(imm.administered_date) if imm.administered_date else None
             resource = Immunization(
                 id=ctx.rid("Immunization", imm.vaccine, imm.administered_date, imm.dose_number),
-                status="completed",
+                status="completed" if given else "not-done",
                 vaccineCode=CodeableConcept(
                     coding=(
                         [Coding(system=SYSTEMS["cvx"], code=imm.cvx_code, display=imm.vaccine)]
@@ -569,8 +589,19 @@ class ImmunizationEmitter:
                     text=imm.vaccine,
                 ),
                 patient=_patient_ref(ctx),
-                occurrenceDateTime=_d(imm.administered_date),
+                **(
+                    {"occurrenceDateTime": occurred}
+                    if occurred
+                    else {"occurrenceString": _not_given_text(imm)}
+                ),
             )
+            if not given:
+                # `statusReason` is where FHIR puts why something was not
+                # done. Without it a receiving system sees `not-done` and
+                # cannot tell a refusal from a contraindication.
+                resource.statusReason = CodeableConcept(
+                    text=(imm.reason or getattr(imm, "status", None) or "not administered")
+                )
             if imm.dose_number is not None:
                 resource.protocolApplied = [
                     ImmunizationProtocolApplied(doseNumberPositiveInt=imm.dose_number)

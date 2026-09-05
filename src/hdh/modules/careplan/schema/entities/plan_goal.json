@@ -101,6 +101,8 @@
     },
     "joins": [
       "plan_goals.concern_id -> health_concerns.id"
-    ]
+    ],
+    "chart": false,
+    "not_chart_because": "part of a care plan"
   }
 }
