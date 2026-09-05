@@ -10,17 +10,18 @@ This writes a realistic set for a single MRN and touches nothing else.
 Re-running replaces what a previous run added rather than duplicating it,
 so it is safe to run repeatedly while testing.
 
-    uv run python scripts/seed_chart_demo.py            # MRN57649249
-    MRN=MRN12345678 uv run python scripts/seed_chart_demo.py
+    just seed-demo                    # MRN57649249
+    just seed-demo MRN12345678
 
 Then:
 
-    hdh show --mrn <MRN>
+    just hdh show --mrn <MRN>
 
 It is a demo aid, not part of the generator. When the generator populates
 these fields this script stops being necessary.
 """
 
+import argparse
 import os
 import pathlib
 import sys
@@ -49,7 +50,9 @@ from hdh.core.models import (  # noqa: E402
     get_session,
 )
 
-MRN = os.environ.get("MRN", "MRN57649249")
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--mrn", default=os.environ.get("MRN", "MRN57649249"))
+MRN = parser.parse_args().mrn
 s = get_session(get_engine())
 p = s.query(Patient).filter(Patient.mrn == MRN).first()
 if p is None:
