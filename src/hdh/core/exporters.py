@@ -210,6 +210,77 @@ def export_fhir(session: Session, output_dir: str = "exports/fhir", limit: int |
 # ─── 3. Plain-Text Clinical Notes Exporter ────────────────────────────────────
 
 
+def _allergy_line(patient) -> str:
+    """Allergies, with what each one actually did.
+
+    The severity and the reaction were in the row and not on the page: a
+    chart reading `Allergies: Aspirin` is the same string whether that was
+    a mild stomach upset or anaphylaxis, and the agent prescribing next
+    cannot tell. Both are stored; both are now rendered.
+
+    `NKDA` for an empty list is the chart's contract rather than a guess —
+    see :class:`hdh.core.models.Allergy`. It is stated as *no known
+    allergies recorded* so a reader can see it came from an empty list, not
+    from someone having asked and written it down.
+    """
+    live = [a for a in patient.allergies if getattr(a, "voided_at", None) is None]
+    if not live:
+        return "none recorded (NKDA)"
+    parts = []
+    for allergy in live:
+        detail = ", ".join(
+            bit
+            for bit in (
+                getattr(allergy.severity, "value", None) or None,
+                allergy.reaction or None,
+            )
+            if bit
+        )
+        coded = f" [{allergy.code_standard}:{allergy.drug_code}]" if allergy.drug_code else ""
+        parts.append(f"{allergy.substance}{coded}" + (f" ({detail})" if detail else ""))
+    return "; ".join(parts)
+
+
+def _append_immunizations(lines: list, patient) -> None:
+    """Immunisations, which the chart generated and never showed.
+
+    Zero mentions in this function before now, while the rows sat in the
+    database — so an agent asked what a patient had been given answered from
+    an absence it had no way to recognise as one.
+    """
+    shots = sorted(
+        patient.immunizations,
+        key=lambda i: (i.administered_date is None, i.administered_date),
+        reverse=True,
+    )
+    if not shots:
+        return
+    lines += ["IMMUNISATIONS", "-" * 40]
+    for shot in shots:
+        dose = f"  dose {shot.dose_number}" if shot.dose_number else ""
+        code = f"  [CVX {shot.cvx_code}]" if shot.cvx_code else ""
+        lines.append(f"  {_date_str(shot.administered_date)}  {shot.vaccine}{dose}{code}")
+    lines.append("")
+
+
+def _append_procedures(lines: list, patient) -> None:
+    """Procedures, including those with no visit — a past appendectomy has
+    no encounter in this practice, and `procedures.visit_id` has always been
+    nullable precisely so it can be recorded anyway."""
+    done = sorted(
+        patient.procedures,
+        key=lambda p: (p.performed_date is None, p.performed_date),
+        reverse=True,
+    )
+    if not done:
+        return
+    lines += ["PROCEDURES", "-" * 40]
+    for item in done:
+        history = "" if item.visit_id else "  (history — not performed here)"
+        lines.append(f"  {_date_str(item.performed_date)}  {item.description}{history}")
+    lines.append("")
+
+
 def patient_to_text(patient: Patient) -> str:
     """Produce a plain-text chart summary readable by an LLM."""
     lines = []
@@ -227,7 +298,7 @@ def patient_to_text(patient: Patient) -> str:
         f"DOB          : {_date_str(patient.date_of_birth)}  |  Age: {patient.age}  |  Sex: {sex_label}",
         f"Blood Type   : {patient.blood_type}",
         f"Insurance    : {patient.insurance_name}  (ID: {patient.insurance_id})",
-        "Allergies    : " + (", ".join(a.substance for a in patient.allergies) or "NKDA"),
+        "Allergies    : " + _allergy_line(patient),
         "",
         "FAMILY HISTORY",
         "-" * 40,
@@ -237,6 +308,9 @@ def patient_to_text(patient: Patient) -> str:
     lines.append(f"Smoker       : {'Yes' if patient.smoker else 'No'}")
     lines.append(f"BMI (baseline): {patient.bmi_baseline}")
     lines.append("")
+
+    _append_immunizations(lines, patient)
+    _append_procedures(lines, patient)
 
     if any(c.chronic for c in patient.conditions):
         lines += ["ACTIVE CHRONIC CONDITIONS", "-" * 40]

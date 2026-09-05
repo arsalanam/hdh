@@ -1,19 +1,25 @@
 {
   "_comment": "What the base tables MEAN, for the agent that has to query them. Structure is generated from live ORM metadata and never drifts; meaning cannot be generated, so it is declared here beside the models it describes. Module-declared tables carry their own `semantics` block in their entity JSON, because the module that owns an entity owns its description.",
-
   "patients": {
     "purpose": "One row per person. Everything else in the chart hangs off patients.id.",
-    "also_called": ["patient list", "demographics", "the panel"],
+    "also_called": [
+      "patient list",
+      "demographics",
+      "the panel"
+    ],
     "columns": {
       "mrn": "The medical record number a clinician actually says out loud. Prefer it over id when a human named a patient.",
       "sex": "Enum stored by NAME: 'MALE' or 'FEMALE'. Compare to the string, not to a number.",
       "date_of_birth": "Age is derived from this, not stored."
     }
   },
-
   "conditions": {
     "purpose": "The unified problem list AND the encounter diagnoses, in one table. `chronic` is what separates them.",
-    "also_called": ["problem list", "diagnoses", "problems"],
+    "also_called": [
+      "problem list",
+      "diagnoses",
+      "problems"
+    ],
     "use_when": "Asked what a patient has. Filter chronic = true for the ongoing problem list; without that filter you also get every acute diagnosis ever recorded at a visit, which will overstate a patient's burden.",
     "columns": {
       "chronic": "true = an ongoing problem. false = a diagnosis made at one visit.",
@@ -22,71 +28,168 @@
       "icd10_code": "Billing code. For hierarchy or subsumption questions use the icd/snomed tools, not LIKE on this column.",
       "visit_id": "The visit that recorded it."
     },
-    "joins": ["conditions.patient_id -> patients.id", "conditions.visit_id -> visits.id"]
+    "joins": [
+      "conditions.patient_id -> patients.id",
+      "conditions.visit_id -> visits.id"
+    ]
   },
-
   "visits": {
     "purpose": "One encounter. Most clinical rows are anchored to a visit rather than directly to a patient.",
-    "also_called": ["encounters", "appointments"],
+    "also_called": [
+      "encounters",
+      "appointments"
+    ],
     "columns": {
       "visit_type": "Enum stored by NAME: 'ACUTE', 'FOLLOW_UP', 'PREVENTIVE', 'URGENT'."
     },
-    "joins": ["visits.patient_id -> patients.id"]
+    "joins": [
+      "visits.patient_id -> patients.id"
+    ]
   },
-
   "vitals": {
     "purpose": "Measurements taken at a visit — blood pressure, pulse, weight.",
     "use_when": "Asked about a trend or a most-recent reading. Order by the visit date, not by id.",
-    "joins": ["vitals.visit_id -> visits.id"]
+    "joins": [
+      "vitals.visit_id -> visits.id"
+    ]
   },
-
   "lab_results": {
     "purpose": "Resulted laboratory values.",
     "columns": {
       "status": "Enum stored by NAME: 'NORMAL', 'HIGH', 'LOW', 'CRITICAL'. This is the flag on the result, not whether the test was performed."
     },
-    "joins": ["lab_results.visit_id -> visits.id"]
+    "joins": [
+      "lab_results.visit_id -> visits.id"
+    ]
   },
-
   "prescriptions": {
     "purpose": "What was prescribed at a visit. A prescription is an event, not a statement that the patient is taking it today.",
-    "also_called": ["medications", "meds", "drugs"],
+    "also_called": [
+      "medications",
+      "meds",
+      "drugs"
+    ],
     "use_when": "Asked what was prescribed and when. For what a patient is currently ON, prefer medication_statements — a prescription from three years ago is not current therapy.",
     "columns": {
       "drug_class": "Free text from the formulary, and it spells one family several ways ('NSAID' and 'COX-2 NSAID'). Match with care.",
       "voided_at": "Non-NULL means the row was retracted. Exclude it unless the question is about corrections.",
       "refills": "How many were authorised, not how many remain."
     },
-    "joins": ["prescriptions.visit_id -> visits.id"]
+    "joins": [
+      "prescriptions.visit_id -> visits.id"
+    ]
   },
-
   "medication_statements": {
     "purpose": "What the patient is understood to be taking now, as distinct from what was prescribed at some past visit.",
-    "also_called": ["current medications", "med list", "active meds"],
+    "also_called": [
+      "current medications",
+      "med list",
+      "active meds"
+    ],
     "use_when": "Asked what a patient is on today. This is the answer; prescriptions is the history.",
-    "joins": ["medication_statements.patient_id -> patients.id"]
+    "joins": [
+      "medication_statements.patient_id -> patients.id"
+    ]
   },
-
   "medication_dispenses": {
     "purpose": "Fills actually issued against an order — the record that a supply left the pharmacy.",
     "use_when": "Asked about refills taken, adherence, or when a patient last collected something."
   },
-
   "service_requests": {
     "purpose": "The orders table. One row per thing asked for — a lab, an imaging study, a referral, a follow-up — whatever its kind.",
-    "also_called": ["orders", "requests", "referrals", "the order queue"],
+    "also_called": [
+      "orders",
+      "requests",
+      "referrals",
+      "the order queue"
+    ],
     "use_when": "Asked what was ordered, what is outstanding, or whether something was followed up. One table with a discriminator, not four: filter by kind rather than looking for a per-kind table.",
     "columns": {
       "kind": "Which sort of request this is. Filter on it — the table holds every kind together.",
       "status": "Enum stored by NAME: 'DRAFT', 'ACTIVE', 'COMPLETED', 'REVOKED'. Outstanding work is ACTIVE; REVOKED was called off, not fulfilled.",
       "fulfilled_by_id": "Links to whatever satisfied the request. NULL means nothing has."
     },
-    "joins": ["service_requests.patient_id -> patients.id", "service_requests.visit_id -> visits.id"]
+    "joins": [
+      "service_requests.patient_id -> patients.id",
+      "service_requests.visit_id -> visits.id"
+    ]
   },
-
   "visit_notes": {
     "purpose": "The narrative text written at a visit.",
-    "also_called": ["notes", "the note"],
+    "also_called": [
+      "notes",
+      "the note"
+    ],
     "use_when": "Asked what a clinician wrote. For structured findings EXTRACTED from a note, use note_records instead — this table is the prose."
+  },
+  "allergies": {
+    "purpose": "One allergy or intolerance the patient is known to have. A record of something that happened to them, not a flag.",
+    "also_called": [
+      "allergy list",
+      "adverse reactions",
+      "NKDA"
+    ],
+    "use_when": "Before anything is prescribed, and whenever asked what a patient reacts to. IMPORTANT: no rows means no KNOWN allergies — that is this chart's contract, because every allergy here is recorded when it exists. Do not read an empty result as 'not asked'.",
+    "columns": {
+      "substance": "Free text, as a clinician typed it. Match loosely; the coded form is drug_code.",
+      "drug_code": "The coded substance where known. NULL is common and is not a data error.",
+      "code_standard": "Which vocabulary drug_code belongs to — RxNorm for a drug, SNOMED otherwise. A code without this is not interpretable.",
+      "severity": "Enum stored by NAME: 'MILD', 'MODERATE', 'SEVERE'. How bad the reaction was, not how likely it is to recur.",
+      "reaction": "What it actually did. 'anaphylaxis' and 'rash' are both severe-sounding words and only one is an emergency.",
+      "noted_date": "When it was written down.",
+      "last_happened": "When it last occurred, which is a different question from noted_date.",
+      "voided_at": "Non-NULL means entered in error. EXCLUDE these — a voided allergy is not a resolved one."
+    },
+    "joins": [
+      "allergies.patient_id -> patients.id"
+    ]
+  },
+  "immunizations": {
+    "purpose": "Vaccines administered to this patient.",
+    "also_called": [
+      "vaccines",
+      "shots",
+      "immunisation history"
+    ],
+    "use_when": "Asked what a patient has had, or whether they are due. Absence of a row is absence of a RECORD — for vaccines given elsewhere this chart may simply not know, which is not the same as the patient not having had it.",
+    "columns": {
+      "cvx_code": "The CVX vaccine code, where known.",
+      "dose_number": "Which dose in a series, where a series applies."
+    },
+    "joins": [
+      "immunizations.patient_id -> patients.id"
+    ]
+  },
+  "procedures": {
+    "purpose": "Procedures performed, including past surgical history.",
+    "also_called": [
+      "surgeries",
+      "operations",
+      "surgical history"
+    ],
+    "use_when": "Asked what has been done to a patient. NOTE visit_id is nullable and that is meaningful: a row with no visit is history recorded from elsewhere — a past appendectomy has no encounter in this practice — and filtering on a join to visits silently drops exactly that surgical history.",
+    "columns": {
+      "description": "Free text. There is no procedure code column yet.",
+      "visit_id": "NULL means it was not performed here. Not missing data."
+    },
+    "joins": [
+      "procedures.patient_id -> patients.id",
+      "procedures.visit_id -> visits.id (nullable)"
+    ]
+  },
+  "family_history": {
+    "purpose": "Conditions recorded in the patient's relatives, with the relationship.",
+    "also_called": [
+      "family history",
+      "FHx"
+    ],
+    "use_when": "Asked about inherited or familial risk. This is about a RELATIVE, never about the patient — counting these rows as the patient's own problems overstates their burden.",
+    "columns": {
+      "relationship_type": "Whose condition it is — mother, father, sibling.",
+      "onset_age": "The relative's age at onset, where known. Early onset in a first-degree relative is what usually matters."
+    },
+    "joins": [
+      "family_history.patient_id -> patients.id"
+    ]
   }
 }

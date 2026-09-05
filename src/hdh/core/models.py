@@ -576,16 +576,44 @@ class ServiceRequest(Base):
 
 
 class Allergy(Base):
-    """A structured allergy: substance, reaction, severity."""
+    """One allergy, as a record of something that happened to this person.
+
+    **Absence means none.** A patient with no rows here has no known
+    allergies — that is the chart's contract, not an inference drawn at
+    render time. It holds because every chart in hdh is generated or
+    written through the chart tools, both of which record an allergy when
+    there is one. It would stop holding the day charts are imported from a
+    source that may simply not have asked, and that is the day this needs
+    an explicit "asked, and none" assertion rather than a comment.
+
+    `substance` stays free text because that is what a clinician types and
+    what an imported record carries; `drug_code` + `code_standard` carry the
+    coded form when one is known, rather than pretending the text was ever
+    a code.
+    """
 
     __tablename__ = "allergies"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
     substance: Mapped[str] = mapped_column(String(100))
+    #: The coded substance, when it is known. RxNorm for a drug, SNOMED
+    #: otherwise — which is what `code_standard` records, because a bare
+    #: code cannot say which vocabulary it belongs to.
+    drug_code: Mapped[str | None] = mapped_column(String(32))
+    code_standard: Mapped[str | None] = mapped_column(String(16))
+    #: What it did. Kept, and kept rendered: severity says how bad, this
+    #: says what happened, and "anaphylaxis" and "rash" are not
+    #: interchangeable to whoever prescribes next.
     reaction: Mapped[str | None] = mapped_column(String(100))
     severity: Mapped[AllergySeverity | None] = mapped_column(SAEnum(AllergySeverity))
+    #: When it was first recorded on this chart.
     noted_date: Mapped[date | None] = mapped_column(Date)
+    #: When the reaction last actually occurred, which is a different
+    #: question from when someone wrote it down — a severe reaction thirty
+    #: years ago and one last month are weighed differently.
+    last_happened: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     patient: Mapped["Patient"] = relationship(back_populates="allergies")

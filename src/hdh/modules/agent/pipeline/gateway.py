@@ -188,11 +188,26 @@ INTENT_TOOLS: dict[str, set[str]] = {
     },
 }
 
+# Four tables were generated, populated, and exposed by NO intent:
+# allergies, immunizations, procedures and family_history. An allergy
+# question routed to `patient_lookup`, where the SQL tool could not see the
+# table — while the chart summary said "NKDA". The data was in Postgres the
+# whole time with nothing connecting it to a question.
 INTENT_TABLES: dict[str, tuple[str, ...]] = {
-    "patient_lookup": ("patients", "conditions", "visits", "prescriptions"),
+    "patient_lookup": (
+        "patients",
+        "conditions",
+        "visits",
+        "prescriptions",
+        "allergies",
+        "immunizations",
+        "procedures",
+        "family_history",
+    ),
     "cohort_search": ("patients", "conditions", "visits", "prescriptions"),
     "risk": ("patients", "conditions", "visits", "vitals", "lab_results"),
-    "care_gaps": ("patients", "conditions", "visits", "prescriptions"),
+    # Immunisation status IS a care gap, and the table was unreachable here.
+    "care_gaps": ("patients", "conditions", "visits", "prescriptions", "immunizations"),
     "coding": ("conditions", "visits", "patients", "ontology_concepts", "ontology_edges"),
     "charting": (
         "patients",
@@ -207,6 +222,10 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "patients",
         "conditions",
         "prescriptions",
+        "allergies",
+        "procedures",
+        "immunizations",
+        "family_history",
         "care_plan_records",
         "health_concerns",
         "plan_goals",
@@ -218,6 +237,9 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "service_requests",
         "medication_dispenses",
         "medication_statements",
+        # A prescribing question is precisely when an allergy matters, and
+        # this intent could not see the table.
+        "allergies",
     ),
 }
 
