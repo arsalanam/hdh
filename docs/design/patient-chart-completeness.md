@@ -333,4 +333,24 @@ Verified end to end: asked whether a patient with a recorded aspirin allergy
 could take an NSAID, the agent found the allergy and reasoned from its
 severity — the field that was in the row and not on the page.
 
-**M3–M6 remain open.**
+**M3 shipped** — identifiers, addresses, contacts and coverage are records;
+`preferred_name`, `gender_identity`, `pronouns` and a registered provider are
+columns on the person. Migrations 0020 (tables, with a backfill from the flat
+columns) and 0021 (columns), separately as decided.
+
+The flat columns remain the primary value while readers move over, which is a
+real cost: `patients.phone` and the rank-1 contact are the same fact twice. A
+test asserts they agree, so the duplication cannot drift silently, and
+removing the flat columns is its own migration once nothing reads them.
+
+Writing it turned up the **third incarnation** of this repository's oldest
+bug. `patient.sex` is not reliably the `Sex` enum — a freshly built instance
+carries `Sex.FEMALE`, one reloaded after a flush carries the raw column value
+`'F'`, and both are `str` subclasses so neither raises. The FHIR emitter
+tested `str(sex).endswith("FEMALE")`, which is right for `'Sex.FEMALE'` and
+wrong for `'F'`, so **female patients were exported as male** on every path
+that produced a raw string — three of eight in a sample. `patient_to_text`
+called `sex.label`, which raises outright on `'F'`. Comparisons now live on
+the enum as `Sex.coerce`, where `is_male` and `label` already were.
+
+**M4–M6 remain open.**

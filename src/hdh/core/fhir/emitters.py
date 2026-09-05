@@ -100,6 +100,95 @@ def _encounter_ref(ctx: ExportContext, visit) -> Reference:
     return Reference(**ctx.encounter_ref(visit))
 
 
+def _gender(sex) -> str:
+    """FHIR administrative gender, or `unknown` when the chart cannot say.
+
+    `unknown` is a legal value and the honest one. Defaulting to a sex is
+    how this went wrong the first three times.
+    """
+    from hdh.core.models import Sex
+
+    resolved = Sex.coerce(sex)
+    if resolved is None:
+        return "unknown"
+    return "male" if resolved.is_male else "female"
+
+
+def _identifiers(p) -> list:
+    """Every identifier, with the MRN guaranteed present.
+
+    The MRN is emitted from the column rather than from the rows, because it
+    is this chart's anchor and must survive a database whose rows have not
+    been backfilled. Row identifiers are appended, deduplicated on value so
+    the backfilled MRN row does not produce it twice.
+    """
+    out = [Identifier(system=SYSTEMS["mrn"], value=p.mrn)]
+    seen = {p.mrn}
+    for row in getattr(p, "identifiers", []) or []:
+        if row.value in seen:
+            continue
+        seen.add(row.value)
+        out.append(Identifier(system=row.issuer or None, value=row.value))
+    return out
+
+
+def _names(p) -> list:
+    """The legal name, and the one they answer to when it differs.
+
+    FHIR has a `use` for exactly this, and emitting only the official name
+    means every downstream letter uses it.
+    """
+    names = [HumanName(use="official", family=p.last_name, given=[p.first_name])]
+    preferred = getattr(p, "preferred_name", None)
+    if preferred and preferred != p.first_name:
+        names.append(HumanName(use="usual", family=p.last_name, given=[preferred]))
+    return names
+
+
+def _addresses(p) -> list:
+    """Row addresses when there are any, the flat columns otherwise.
+
+    An address with a `period_end` is where they used to live, and it still
+    belongs in the export — a receiving system that cannot see a former
+    address cannot tell a moved patient from a mistyped one.
+    """
+    rows = getattr(p, "addresses", []) or []
+    if rows:
+        return [
+            Address(
+                use=row.use if row.use in ("home", "work", "temp", "billing") else None,
+                line=[row.line] if row.line else None,
+                city=row.city,
+                state=row.state,
+                postalCode=row.postal_code,
+                country=row.country,
+            )
+            for row in rows
+        ]
+    if not p.address:
+        return []
+    return [Address(line=[p.address], city=p.city, state=p.state, postalCode=p.zip_code)]
+
+
+def _telecom(p) -> list:
+    """Contacts in rank order — which number to try first is the question."""
+    rows = sorted(
+        getattr(p, "contacts", []) or [],
+        key=lambda c: (c.rank is None, c.rank or 0),
+    )
+    if rows:
+        return [
+            ContactPoint(
+                system=row.system if row.system in ("phone", "email", "sms", "fax", "url") else "other",
+                value=row.value,
+                use=row.use if row.use in ("home", "work", "temp", "mobile") else None,
+                rank=row.rank,
+            )
+            for row in rows
+        ]
+    return [ContactPoint(system="phone", value=p.phone)] if p.phone else []
+
+
 class PatientEmitter:
     """The Patient resource (id stays the MRN — the chart's anchor)."""
 
@@ -112,12 +201,18 @@ class PatientEmitter:
             (
                 FhirPatient(
                     id=p.mrn,
-                    identifier=[Identifier(system=SYSTEMS["mrn"], value=p.mrn)],
-                    name=[HumanName(use="official", family=p.last_name, given=[p.first_name])],
-                    gender="female" if str(p.sex).endswith("FEMALE") else "male",
+                    identifier=_identifiers(p),
+                    name=_names(p),
+                    # `Sex.coerce`, because `patient.sex` is not reliably
+                    # this enum: some load paths hand back the raw column
+                    # value `'F'`. The test here used to be
+                    # `str(sex).endswith("FEMALE")`, which is right for
+                    # `Sex.FEMALE` and wrong for `'F'` — so every patient on
+                    # that path was exported male, including female ones.
+                    gender=_gender(p.sex),
                     birthDate=_d(p.date_of_birth),
-                    address=[Address(line=[p.address], city=p.city, state=p.state, postalCode=p.zip_code)],
-                    telecom=[ContactPoint(system="phone", value=p.phone)],
+                    address=_addresses(p),
+                    telecom=_telecom(p),
                 ),
                 p,
             )

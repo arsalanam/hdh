@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from .models import Patient
+from .models import Patient, Sex
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -288,7 +288,12 @@ def patient_to_text(patient: Patient) -> str:
     # `Sex.label`, not a substring test: "MALE" is a substring of "FEMALE",
     # so the old expression rendered every patient as Male — including in
     # the chart text the agent reads and reasons over.
-    sex_label = patient.sex.label if patient.sex is not None else "Unknown"
+    # `Sex.coerce`, because `patient.sex` is not reliably the enum: a
+    # freshly built instance carries `Sex.FEMALE`, one reloaded after a
+    # flush carries the raw column value `'F'`, and `.label` on the second
+    # raises. The chart the agent reads crashed outright on that path.
+    resolved_sex = Sex.coerce(patient.sex)
+    sex_label = resolved_sex.label if resolved_sex is not None else "Unknown"
     lines += [
         "=" * 70,
         "PATIENT CHART SUMMARY",
