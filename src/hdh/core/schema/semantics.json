@@ -191,5 +191,25 @@
     "joins": [
       "family_history.patient_id -> patients.id"
     ]
+  },
+  "functional_status": {
+    "purpose": "What this patient can actually do, one row per domain, as of now.",
+    "also_called": [
+      "function",
+      "disability",
+      "ADLs",
+      "mobility"
+    ],
+    "use_when": "Asked what a patient can manage, or whether a plan is realistic for them. CRITICAL: no row for a domain means it was never assessed — that is NOT the same as normal, and is the opposite of the allergies rule. Nothing in this system asks about function, so silence is ignorance. Do not infer independence from an absent row.",
+    "columns": {
+      "domain": "'mobility' | 'vision' | 'hearing' | 'communication' | 'adl' | 'iadl' | 'cognition'.",
+      "level": "One ordinal scale across every domain: 'independent' | 'aided' (an aid or adaptation is enough) | 'assisted' (another person is needed) | 'dependent' (cannot).",
+      "aid": "What they already use. A plan proposing an aid the patient has is proposing nothing.",
+      "assessed_date": "When it was assessed. A level with no date is a claim about now made from an unknown time.",
+      "voided_at": "Non-NULL means the assessment was entered in error. EXCLUDE these."
+    },
+    "joins": [
+      "functional_status.patient_id -> patients.id"
+    ]
   }
 }

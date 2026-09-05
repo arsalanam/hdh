@@ -203,6 +203,7 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "immunizations",
         "procedures",
         "family_history",
+        "functional_status",
     ),
     "cohort_search": ("patients", "conditions", "visits", "prescriptions"),
     "risk": ("patients", "conditions", "visits", "vitals", "lab_results"),
@@ -230,6 +231,8 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "health_concerns",
         "plan_goals",
         "plan_interventions",
+        # What `feasibility_burden` is graded on.
+        "functional_status",
     ),
     "medication": (
         "patients",
