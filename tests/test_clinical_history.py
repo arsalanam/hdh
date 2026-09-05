@@ -260,3 +260,76 @@ def test_the_agent_is_warned_that_immunisation_rows_are_no_longer_all_doses():
     bootstrap_schema()
     note = table_semantics()["immunizations"]["use_when"]
     assert "Counting rows as doses given is wrong" in note
+
+
+# ── the export has to survive what M5 made recordable ────────────────────
+
+
+def _bundle(patient) -> dict:
+    from hdh.core.exporters import patient_to_fhir_bundle
+
+    return patient_to_fhir_bundle(patient)
+
+
+def test_a_refusal_does_not_break_the_whole_bundle(chart):
+    """Found by exporting a real patient rather than by a unit test.
+
+    FHIR requires `occurrence[x]` on an Immunization even when it is
+    `not-done` — 1..1 — so `occurrenceDateTime=None` raises. M5 made
+    `administered_date` nullable, and from that moment ANY patient with a
+    declined vaccine failed the entire export, not just that resource.
+    """
+    from hdh.core.models import Immunization
+
+    session, patient = chart
+    _add(
+        session,
+        patient,
+        Immunization,
+        vaccine="Influenza, seasonal",
+        status="refused",
+        reason="declines every year",
+        recorded_date=date(2026, 10, 1),
+    )
+    resources = [e["resource"] for e in _bundle(patient)["entry"]]
+    assert resources, "the bundle built at all"
+
+
+def test_a_refusal_exports_as_not_done_with_a_reason(chart):
+    """`not-done` alone cannot tell a refusal from a contraindication."""
+    from hdh.core.models import Immunization
+
+    session, patient = chart
+    _add(
+        session,
+        patient,
+        Immunization,
+        vaccine="Zoster",
+        status="contraindicated",
+        reason="immunosuppressed",
+        recorded_date=date(2026, 2, 2),
+    )
+    shots = [
+        r
+        for r in (e["resource"] for e in _bundle(patient)["entry"])
+        if r["resourceType"] == "Immunization" and r["status"] == "not-done"
+    ]
+    assert shots
+    assert shots[0]["statusReason"]["text"] == "immunosuppressed"
+    assert "contraindicated" in shots[0]["occurrenceString"]
+
+
+def test_an_administered_dose_still_exports_with_a_real_date(chart):
+    """The fix must not turn every immunisation into a string."""
+    from hdh.core.models import Immunization
+
+    session, patient = chart
+    _add(
+        session, patient, Immunization, vaccine="Tdap", administered_date=date(2025, 4, 2), status="completed"
+    )
+    shots = [
+        r
+        for r in (e["resource"] for e in _bundle(patient)["entry"])
+        if r["resourceType"] == "Immunization" and r["status"] == "completed"
+    ]
+    assert shots and any(r.get("occurrenceDateTime") for r in shots)
