@@ -1,6 +1,6 @@
 {
   "rubric_id": "multimorbid-elderly",
-  "version": 1,
+  "version": 2,
   "title": "Multimorbid older adult",
   "match": {
     "min_age": 65,
@@ -122,7 +122,10 @@
         "intervention_count",
         "burden_limit",
         "burden_flagged",
-        "bare_goals"
+        "bare_goals",
+        "function_assessed",
+        "needs_help_with",
+        "aids_in_use"
       ],
       "anchors": {
         "1": "The plan asks something this patient's circumstances rule out.",

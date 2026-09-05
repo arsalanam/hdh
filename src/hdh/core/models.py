@@ -309,6 +309,9 @@ class Patient(Base):
     coverages: Mapped[list["PatientCoverage"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan"
     )
+    functional_status: Mapped[list["FunctionalStatus"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
 
     @property
     def display_name(self) -> str:
@@ -804,6 +807,56 @@ class PatientCoverage(Base):
     period_end: Mapped[date | None] = mapped_column(Date)
 
     patient: Mapped["Patient"] = relationship(back_populates="coverages")
+
+
+class FunctionalStatus(Base):
+    """What this person can actually do, in one domain, as of now.
+
+    The gap this fills has a consumer already waiting. The care-plan rubric
+    grades `feasibility_burden` — *"Could this patient actually carry out
+    this plan?"* — from an intervention count against a flat limit of eight.
+    Four interventions for someone who cannot leave the house scored the
+    same as four for someone who drives, because nothing in the chart said
+    which this was.
+
+    **Current state, one row per domain**, per the chart's rule that
+    everything here is true of the person now. A reassessment updates the
+    row rather than appending one; the trail of how it changed belongs to
+    `chart_audit_events`, which is where every other correction goes.
+
+    **Absent means unassessed, and that is not a synonym for normal.** This
+    is the opposite of the allergy contract deliberately: an allergy nobody
+    recorded is an allergy nobody has, because the chart tools always ask.
+    Nothing asks about function, so silence here is ignorance, and a plan
+    must not read it as independence.
+    """
+
+    __tablename__ = "functional_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    #: 'mobility' | 'vision' | 'hearing' | 'communication' | 'adl' | 'iadl'
+    #: | 'cognition'. Free text with documented values: a deployed enum is
+    #: the thing this repository has been bitten by (migration 0002), and
+    #: a functional domain is exactly what a specialty module extends.
+    domain: Mapped[str] = mapped_column(String(24))
+    #: One ordinal scale across every domain, so a plan can compare them:
+    #: 'independent' | 'aided' | 'assisted' | 'dependent'. `aided` means an
+    #: aid or adaptation is enough; `assisted` means another person.
+    level: Mapped[str] = mapped_column(String(16))
+    #: What they use — 'walking frame', 'hearing aid'. The aid IS the
+    #: intervention half the time, so recording it stops a plan proposing
+    #: what the patient already has.
+    aid: Mapped[str | None] = mapped_column(String(80))
+    detail: Mapped[str | None] = mapped_column(Text)
+    code: Mapped[str | None] = mapped_column(String(32))
+    code_standard: Mapped[str | None] = mapped_column(String(16))
+    #: When it was assessed. A functional level with no date is a claim
+    #: about now made from an unknown time.
+    assessed_date: Mapped[date | None] = mapped_column(Date)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    patient: Mapped["Patient"] = relationship(back_populates="functional_status")
 
 
 class MedicationStatement(Base):

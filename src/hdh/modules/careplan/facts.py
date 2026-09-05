@@ -241,6 +241,26 @@ _REGISTRY: tuple[Fact, ...] = (
         lambda e: len(e.interventions) >= BURDEN_LIMIT,
     ),
     Fact("bare_goals", "goals with no intervention of their own", _bare_goals),
+    # What `feasibility_burden` was being graded WITHOUT. The dimension asks
+    # "could this patient actually carry out this plan?" and the only facts
+    # it had were counts, so four interventions for someone who cannot leave
+    # the house scored the same as four for someone who drives.
+    Fact(
+        "function_assessed",
+        "whether this patient's functional status has been assessed at all "
+        "(false means unknown, NOT independent)",
+        lambda e: bool(getattr(getattr(e.context, "social", None), "function", None)),
+    ),
+    Fact(
+        "needs_help_with",
+        "functional domains where another person is required, or the task cannot be done",
+        lambda e: list(getattr(getattr(e.context, "social", None), "needs_help", ()) or ()),
+    ),
+    Fact(
+        "aids_in_use",
+        "aids and adaptations the patient already has — proposing one of these is proposing nothing",
+        lambda e: list(getattr(getattr(e.context, "social", None), "aids", ()) or ()),
+    ),
     Fact("citations", "distinct knowledge chunks the plan cites", _citations),
     Fact("elements_without_evidence", "AI-authored elements carrying no citation", _without_evidence),
     Fact("orphan_elements", "elements pointing outside this plan's graph", _orphans),

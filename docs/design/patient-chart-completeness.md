@@ -353,4 +353,28 @@ that produced a raw string — three of eight in a sample. `patient_to_text`
 called `sex.label`, which raises outright on `'F'`. Comparisons now live on
 the enum as `Sex.coerce`, where `is_male` and `label` already were.
 
-**M4–M6 remain open.**
+**M4 shipped** — `functional_status`, one row per domain, holding current
+state (migration 0022). Domains: mobility, vision, hearing, communication,
+adl, iadl, cognition. One ordinal scale across all of them —
+`independent` / `aided` / `assisted` / `dependent` — so a plan can compare
+them, plus the aid already in use, because proposing a walking frame to
+someone who has one is proposing nothing.
+
+`feasibility_burden` finally receives facts bearing on the question it asks:
+`function_assessed`, `needs_help_with`, `aids_in_use`. Both rubrics move to
+version 2, since what the grader is told has changed.
+
+**The contract here is the opposite of the allergy one, deliberately.** No
+allergy rows means no known allergies, because the chart tools always ask.
+No functional-status row means *nobody asked*, because nothing does — so
+absence is ignorance, never independence. There is no backfill for exactly
+that reason: inventing `independent` rows for two hundred patients would
+manufacture the reassurance this milestone exists to stop.
+
+*What it does not yet buy.* The generator does not produce functional status
+(decision 6.4), so every cohort patient reports `function_assessed: false`.
+The grader now knows that it does not know, which is the honest state and an
+improvement on counting interventions — but the feasibility dimension cannot
+discriminate between patients until the generator populates this.
+
+**M5–M6 remain open.**

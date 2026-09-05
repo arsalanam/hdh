@@ -1,6 +1,6 @@
 {
   "rubric_id": "default",
-  "version": 1,
+  "version": 2,
   "title": "General care plan",
   "match": {},
   "scale": {
@@ -108,7 +108,10 @@
         "intervention_count",
         "burden_limit",
         "burden_flagged",
-        "bare_goals"
+        "bare_goals",
+        "function_assessed",
+        "needs_help_with",
+        "aids_in_use"
       ],
       "anchors": {
         "1": "The plan asks more of the patient than anyone could sustain, or asks for something their circumstances rule out.",

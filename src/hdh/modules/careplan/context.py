@@ -13,6 +13,7 @@ be re-derived tomorrow.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -74,6 +75,27 @@ class SocialView:
     lives_alone_basis: str
     smoker: bool | None
     marital_status: str | None
+    #: domain -> level, for the domains actually assessed. An absent domain
+    #: is unassessed, which is NOT independence — the same discipline as
+    #: `lives_alone`, and for the same reason: a plan that assumes capacity
+    #: nobody measured is understating what it is asking of someone.
+    function: Mapping[str, str] = field(default_factory=dict)
+    #: What they already use — a plan proposing a walking frame to someone
+    #: who has one is proposing nothing.
+    aids: tuple[str, ...] = ()
+
+    @property
+    def needs_help(self) -> tuple[str, ...]:
+        """Domains where another person is required, or the task cannot be
+        done at all. The subset that changes what a plan may ask."""
+        return tuple(
+            domain for domain, level in sorted(self.function.items()) if level in ("assisted", "dependent")
+        )
+
+    @property
+    def function_assessed(self) -> bool:
+        """Whether anything is known. False means silence, not capability."""
+        return bool(self.function)
 
 
 @dataclass(frozen=True)
@@ -151,6 +173,19 @@ def _risk_score(session, mrn: str) -> float | None:
     return float(value) if value is not None else None
 
 
+def _live_function(patient) -> list:
+    """Assessed, not voided. A voided assessment is one that never happened."""
+    return [row for row in getattr(patient, "functional_status", []) or [] if row.voided_at is None]
+
+
+def _function(patient) -> dict[str, str]:
+    return {row.domain: row.level for row in _live_function(patient)}
+
+
+def _aids(patient) -> tuple[str, ...]:
+    return tuple(sorted({row.aid for row in _live_function(patient) if row.aid}))
+
+
 def build_context(session, patient, as_of: date | None = None) -> CarePlanContext:
     """Node 1: read the chart, keep what a plan uses.
 
@@ -209,6 +244,8 @@ def build_context(session, patient, as_of: date | None = None) -> CarePlanContex
             lives_alone_basis=basis,
             smoker=patient.smoker,
             marital_status=patient.marital_status,
+            function=_function(patient),
+            aids=_aids(patient),
         ),
         risk_score=_risk_score(session, patient.mrn),
     )

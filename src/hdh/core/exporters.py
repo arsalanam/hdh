@@ -241,6 +241,26 @@ def _allergy_line(patient) -> str:
     return "; ".join(parts)
 
 
+def _append_function(lines: list, patient) -> None:
+    """What this person can do, when anyone has asked.
+
+    Silence here means unassessed, not independent — the opposite of the
+    allergy contract, and deliberately so. So the section is omitted rather
+    than printed empty: a heading saying nothing reads as "checked, fine",
+    which is the reassurance this milestone exists to stop manufacturing.
+    """
+    rows = [r for r in getattr(patient, "functional_status", []) or [] if r.voided_at is None]
+    if not rows:
+        return
+    lines += ["FUNCTIONAL STATUS", "-" * 40]
+    for row in sorted(rows, key=lambda r: r.domain):
+        aid = f"  (uses: {row.aid})" if row.aid else ""
+        when = f"  [assessed {_date_str(row.assessed_date)}]" if row.assessed_date else ""
+        detail = f"  — {row.detail}" if row.detail else ""
+        lines.append(f"  {row.domain:<14}{row.level}{aid}{detail}{when}")
+    lines.append("")
+
+
 def _append_immunizations(lines: list, patient) -> None:
     """Immunisations, which the chart generated and never showed.
 
@@ -314,6 +334,7 @@ def patient_to_text(patient: Patient) -> str:
     lines.append(f"BMI (baseline): {patient.bmi_baseline}")
     lines.append("")
 
+    _append_function(lines, patient)
     _append_immunizations(lines, patient)
     _append_procedures(lines, patient)
 
