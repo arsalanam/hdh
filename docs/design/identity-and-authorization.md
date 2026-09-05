@@ -172,17 +172,60 @@ is one event write with the actor already in hand.
 
 ---
 
-## 4. Open questions
+## 4. Decisions (2026-09-05)
 
-1. **Seed users.** The realm file will ship demo accounts (one per role).
-   Are the 3 seeded `providers` the right people to link them to, or should
-   the generator grow named clinicians per practice?
-2. **Can a `clinician` approve a plan they authored?** §2.5 makes
-   author≠approver *expressible*. Should it be *enforced* for the demo, or
-   is one-user-does-both acceptable until there are real multi-user flows?
-3. **Session lifetime.** Keycloak defaults (5-minute access / 30-minute
-   refresh idle) are aggressive for a CLI. Proposal: 8-hour refresh idle —
-   a working day — unless there is a reason to model something stricter.
-4. **Does `hdh agent` refuse outright without login, or run read-only?**
-   §2.7 implies read-only-with-warning. The alternative — refuse, so nobody
-   builds a habit of anonymous sessions — is defensible too.
+The four questions §3 left open, answered.
+
+### 4.1 The generator grows named clinicians per practice
+
+Demo accounts do not link to the three thin seeded `providers`; the
+generator produces named clinicians and the realm's demo users map onto
+them, so "Dr. Chen approved this plan" is a person who also appears as a
+`registered_provider_id` and in `Procedure.provider_id`.
+
+*The consequence, so it is planned rather than discovered:* this is a
+generator change, and a generator change moves what the pinned seed
+produces — cohort version bump, `compare` refusal, re-baseline. That
+composes cleanly with #156, which requires a re-baseline anyway: land the
+named-clinician generator change **before or with** the re-baseline, so one
+bump covers both.
+
+### 4.2 Roles carry basic permission sets; author-approves-own is allowed
+
+Every role gets a small permission set as data. For now the `clinician`
+role holds **create, view, edit and approve** — one user can author and
+approve the same plan.
+
+Author≠approver stays *expressible* and unenforced: because the mapping is
+data at the entity×action grain, tightening it later — removing `approve`
+from the authoring role, or adding a not-own-work rule — is a configuration
+change and a test, not a redesign. That is the payoff §2.5 was bought for.
+
+### 4.3 Sessions: 8-hour access, 3-day refresh, both from env
+
+| | default | env |
+|---|---|---|
+| access-token / SSO session | 8 hours | `HDH_AUTH_SESSION_HOURS` |
+| refresh-token idle | 3 days | `HDH_AUTH_REFRESH_DAYS` |
+
+Applied to the realm at `just deps` import time, so changing them is an
+`.env` edit and a container restart — no admin-console clicking. Generous
+by design; see 4.4 for what that generosity buys.
+
+### 4.4 `hdh agent` refuses outright without login
+
+No anonymous agent sessions, ever — nobody builds the habit, and every
+agent action has an actor from the first turn. The refusal names the fix:
+
+```
+hdh agent: not logged in. Run `hdh login` first.
+```
+
+The generous session and refresh defaults in 4.3 are the other half of this
+decision: refusing outright is only reasonable when login is a
+once-a-morning event rather than a recurring interruption.
+
+Direct CLI *reads* (`hdh show`, `hdh stats`) stay open per §2.7 — the
+question and the answer were about the agent, and gating a read-only
+quickstart would tax the first five minutes of every new user for no
+attribution gain. Every mutation requires login regardless of surface.
