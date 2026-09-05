@@ -338,7 +338,7 @@ def generate_patient(
         fake.state_abbr(),
         fake.zipcode(),
     )
-    return Patient(
+    patient = Patient(
         mrn=_random_mrn(),
         first_name=fname,
         last_name=surname or fake.last_name(),
@@ -360,6 +360,42 @@ def generate_patient(
         smoker=age >= 18 and random.random() < 0.15,
         bmi_baseline=_baseline_bmi(age),
     )
+    # The row form of the same facts, written at the same moment. M3 keeps
+    # the flat columns as the primary value while readers move over, and a
+    # generator that wrote only one of the two would create charts where
+    # they disagree on day one — which is the drift a test now guards.
+    _mirror_person_records(patient)
+    return patient
+
+
+def _mirror_person_records(patient: Patient) -> None:
+    """Write the identifier, address, contact and coverage rows.
+
+    Not realistic multiplicity — that arrives when the generator is updated
+    for M3-M5 (design decision 6.4). This writes exactly what the flat
+    columns already hold, so the two agree from birth.
+    """
+    from hdh.core.models import PatientAddress, PatientContact, PatientCoverage, PatientIdentifier
+
+    patient.identifiers.append(PatientIdentifier(kind="mrn", value=patient.mrn))
+    if patient.address:
+        patient.addresses.append(
+            PatientAddress(
+                use="home",
+                line=patient.address,
+                city=patient.city,
+                state=patient.state,
+                postal_code=patient.zip_code,
+            )
+        )
+    if patient.phone:
+        patient.contacts.append(PatientContact(system="phone", use="home", value=patient.phone, rank=1))
+    if patient.email:
+        patient.contacts.append(PatientContact(system="email", use="home", value=patient.email, rank=2))
+    if patient.insurance_name:
+        patient.coverages.append(
+            PatientCoverage(rank=1, payer_name=patient.insurance_name, member_id=patient.insurance_id)
+        )
 
 
 def generate_allergies(session, patient: Patient) -> list[str]:

@@ -304,3 +304,115 @@ def test_0009_adds_code_columns_to_the_medication_rows(alembic_cfg):
         assert {"code_system", "code"} <= columns, table
     command.upgrade(cfg, "head")  # idempotent
     engine.dispose()
+
+
+# ── 0020: the person tables, and the backfill that nearly lost 164 rows ──
+
+
+def _person_db(cfg):
+    """A database with the real tables, stamped just before 0020.
+
+    `create_all` builds the schema (the migrations do not create `patients`
+    — the registry does), then the tables 0020 owns are dropped so the
+    migration creates and backfills them the way it would on a real
+    database.
+    """
+    from sqlalchemy import text as sql
+
+    from hdh.core.schema_registry import bootstrap_schema
+
+    bootstrap_schema()
+    from hdh.core.models import Base
+
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        for table in ("patient_coverages", "patient_contacts", "patient_addresses", "patient_identifiers"):
+            conn.execute(sql(f"DROP TABLE IF EXISTS {table}"))
+    command.stamp(cfg, "0019")
+    return engine
+
+
+def _seed_patient(engine, **overrides):
+    from sqlalchemy import text as sql
+
+    values = {
+        "mrn": "MRN00000001",
+        "date_of_birth": "1970-01-01",
+        "sex": "F",
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "address": "1 Analytical Way",
+        "city": "London",
+        "state": "LDN",
+        "zip_code": "E1",
+        "phone": "0100 000000",
+        "email": "ada@example.test",
+        "insurance_name": "Aetna",
+        "insurance_id": "ABC-123",
+    }
+    values.update(overrides)
+    columns = ", ".join(values)
+    binds = ", ".join(f":{k}" for k in values)
+    with engine.begin() as conn:
+        conn.execute(sql(f"INSERT INTO patients ({columns}) VALUES ({binds})"), values)
+
+
+def _counts(engine, table, column):
+    from sqlalchemy import text as sql
+
+    with engine.connect() as conn:
+        return dict(conn.execute(sql(f"SELECT {column}, count(*) FROM {table} GROUP BY {column}")).all())
+
+
+def test_0020_backfills_every_contact_kind_not_just_the_first(alembic_cfg):
+    """Two statements write to `patient_contacts`. The first version of the
+    backfill guarded on "is this table empty", so inserting the phone rows
+    made it non-empty and the email insert was skipped — 164 email contacts
+    went missing on the live database, and the table looked plausibly full
+    at exactly one row per patient."""
+    cfg, tmp_path, _versions = alembic_cfg
+    engine = _person_db(cfg)
+    _seed_patient(engine)
+    command.upgrade(cfg, "0020")
+    assert _counts(engine, "patient_contacts", "system") == {"phone": 1, "email": 1}
+
+
+def test_0020_backfills_the_other_three_tables(alembic_cfg):
+    cfg, tmp_path, _versions = alembic_cfg
+    engine = _person_db(cfg)
+    _seed_patient(engine)
+    command.upgrade(cfg, "0020")
+    assert _counts(engine, "patient_identifiers", "kind") == {"mrn": 1}
+    assert _counts(engine, "patient_addresses", "use") == {"home": 1}
+    assert _counts(engine, "patient_coverages", "rank") == {1: 1}
+
+
+def test_0020_skips_blank_values(alembic_cfg):
+    """An empty email is not a contact, and a row saying so is worse than no
+    row because it reads as a recorded fact."""
+    cfg, tmp_path, _versions = alembic_cfg
+    engine = _person_db(cfg)
+    _seed_patient(engine, email="", insurance_name="")
+    command.upgrade(cfg, "0020")
+    assert _counts(engine, "patient_contacts", "system") == {"phone": 1}
+    assert _counts(engine, "patient_coverages", "rank") == {}
+
+
+def test_0020_downgrade_then_upgrade_does_not_duplicate(alembic_cfg):
+    """The repair path actually taken on the live database."""
+    cfg, tmp_path, _versions = alembic_cfg
+    engine = _person_db(cfg)
+    _seed_patient(engine)
+    command.upgrade(cfg, "0020")
+    command.downgrade(cfg, "0019")
+    command.upgrade(cfg, "0020")
+    assert _counts(engine, "patient_contacts", "system") == {"phone": 1, "email": 1}
+
+
+def test_0021_adds_the_person_columns(alembic_cfg):
+    cfg, tmp_path, _versions = alembic_cfg
+    engine = _person_db(cfg)
+    command.upgrade(cfg, "head")
+    columns = {c["name"] for c in inspect(engine).get_columns("patients")}
+    assert {"preferred_name", "gender_identity", "pronouns", "registered_provider_id"} <= columns

@@ -54,6 +54,33 @@ class Sex(str, enum.Enum):
     MALE = "M"
     FEMALE = "F"
 
+    @classmethod
+    def coerce(cls, value) -> "Sex | None":
+        """A `Sex` from whatever a caller is holding.
+
+        Necessary because `patient.sex` is *not always* this enum. A freshly
+        constructed instance carries `Sex.FEMALE`; one reconstituted by
+        SQLAlchemy on some paths carries the raw column value, `'F'`. Both
+        are `str` subclasses, so both survive `str(...)` and neither raises,
+        which is what let the difference go unnoticed.
+
+        It mattered. The FHIR patient emitter tested
+        `str(sex).endswith("FEMALE")` — correct for `Sex.FEMALE`, whose str
+        is `'Sex.FEMALE'`, and **wrong for `'F'`**, which ends in neither.
+        Every patient arriving as a raw string was exported as male. That is
+        the third time this enum has been compared by substring and the
+        third wrong answer; comparisons belong here, not at call sites.
+        """
+        if value is None or isinstance(value, cls):
+            return value
+        text = str(value).strip().upper()
+        text = text.rsplit(".", 1)[-1]  # 'SEX.FEMALE' -> 'FEMALE'
+        if text in ("F", "FEMALE"):
+            return cls.FEMALE
+        if text in ("M", "MALE"):
+            return cls.MALE
+        return None
+
     @property
     def is_male(self) -> bool:
         """Male, decided by identity rather than by substring.
@@ -224,6 +251,21 @@ class Patient(Base):
         ForeignKey("family_members.id", use_alter=True, name="fk_patients_emergency_contact")
     )
     # Lifestyle
+    #: The name this person actually answers to, when it is not their legal
+    #: first name. Empty is the ordinary case and means "use first_name".
+    preferred_name: Mapped[str | None] = mapped_column(String(80))
+    #: Recorded separately from `sex`, which is administrative. They agree
+    #: for most people, and the chart must be able to say so when they do
+    #: not — inferring one from the other is how a system misgenders someone
+    #: in every letter it sends.
+    gender_identity: Mapped[str | None] = mapped_column(String(60))
+    #: Recorded rather than inferred, for the same reason. A name does not
+    #: carry pronouns and neither does an administrative sex.
+    pronouns: Mapped[str | None] = mapped_column(String(40))
+    #: The clinician this patient is registered with. Care-plan
+    #: interventions already carry an `owner_role`; this is who that role
+    #: resolves to for this person.
+    registered_provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
     smoker: Mapped[bool | None] = mapped_column(Boolean, default=False)
     bmi_baseline: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
@@ -255,6 +297,40 @@ class Patient(Base):
     emergency_contact: Mapped["FamilyMember | None"] = relationship(
         foreign_keys=[emergency_contact_id], post_update=True
     )
+    identifiers: Mapped[list["PatientIdentifier"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    addresses: Mapped[list["PatientAddress"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    contacts: Mapped[list["PatientContact"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+    coverages: Mapped[list["PatientCoverage"]] = relationship(
+        back_populates="patient", cascade="all, delete-orphan"
+    )
+
+    @property
+    def display_name(self) -> str:
+        """What to call this person.
+
+        The preferred name if they gave one, their legal first name
+        otherwise. A system that writes to and about patients gets this
+        wrong by default, and getting it right costs one column and this
+        property.
+        """
+        return f"{self.preferred_name or self.first_name} {self.last_name}"
+
+    @property
+    def primary_coverage(self) -> "PatientCoverage | None":
+        """The payer to bill first, or None.
+
+        Rank order, not insertion order: a secondary policy added later is
+        still secondary, and reading `coverages[0]` would eventually bill
+        the wrong one.
+        """
+        ranked = sorted(self.coverages, key=lambda c: (c.rank is None, c.rank or 0))
+        return ranked[0] if ranked else None
 
     @property
     def age(self) -> int:
@@ -617,6 +693,117 @@ class Allergy(Base):
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     patient: Mapped["Patient"] = relationship(back_populates="allergies")
+
+
+class PatientIdentifier(Base):
+    """One way this person is identified, by whoever issues it.
+
+    `patients.mrn` stays where it is — it is this chart's anchor and half
+    the code joins on it. What could not be recorded before is a *second*
+    identifier: a national number, a member number, the id a referring
+    practice uses. Those are rows because a person accumulates them, and
+    the alternative is a column per issuer.
+
+    `kind` and `issuer` are free text with documented values rather than an
+    enum. Extending a PostgreSQL enum needs a migration on every deployed
+    database — migration 0002 is the standing reminder of how that goes —
+    and an identifier type is exactly the field a new deployment invents a
+    value for.
+    """
+
+    __tablename__ = "patient_identifiers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    #: 'mrn' | 'national' | 'member' | 'driver_licence' | 'passport' | 'other'
+    kind: Mapped[str] = mapped_column(String(32))
+    value: Mapped[str] = mapped_column(String(64))
+    #: Who issues it. A member number means nothing without its payer, and a
+    #: national number means nothing without its country.
+    issuer: Mapped[str | None] = mapped_column(String(120))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+
+    patient: Mapped["Patient"] = relationship(back_populates="identifiers")
+
+
+class PatientAddress(Base):
+    """Somewhere this person lives, or lived.
+
+    `period_end` is what makes this more than a second address column: an
+    address with an end date is where they used to live, which is the
+    difference between a stale chart and a chart that knows it is stale.
+    """
+
+    __tablename__ = "patient_addresses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    #: 'home' | 'mailing' | 'work' | 'temp'
+    use: Mapped[str] = mapped_column(String(16), default="home")
+    line: Mapped[str | None] = mapped_column(String(200))
+    city: Mapped[str | None] = mapped_column(String(80))
+    state: Mapped[str | None] = mapped_column(String(40))
+    postal_code: Mapped[str | None] = mapped_column(String(16))
+    country: Mapped[str | None] = mapped_column(String(60))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+
+    patient: Mapped["Patient"] = relationship(back_populates="addresses")
+
+
+class PatientContact(Base):
+    """A way to reach this person — or the person who answers for them.
+
+    `rank` says which to try first. A chart that holds three numbers and no
+    order is not obviously better than one that holds a single number, and
+    "which one do I ring" is the whole question at the point of use.
+    """
+
+    __tablename__ = "patient_contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    #: 'phone' | 'email' | 'sms' | 'other'
+    system: Mapped[str] = mapped_column(String(16))
+    #: 'home' | 'mobile' | 'work' | 'carer'
+    use: Mapped[str | None] = mapped_column(String(16))
+    value: Mapped[str] = mapped_column(String(120))
+    #: 1 is the one to try first.
+    rank: Mapped[int | None] = mapped_column(Integer)
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+
+    patient: Mapped["Patient"] = relationship(back_populates="contacts")
+
+
+class PatientCoverage(Base):
+    """Who pays, and under which policy.
+
+    Secondary coverage is the reason this is a table. `rank` 1 is primary,
+    2 secondary; a patient with both is common and was previously
+    unrecordable, and which one is billed first is not a detail.
+
+    `policy_holder` exists because the person covered is often not the
+    person who holds the policy — a child on a parent's plan is the ordinary
+    case, not the exception.
+    """
+
+    __tablename__ = "patient_coverages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    #: 1 = primary, 2 = secondary, and so on.
+    rank: Mapped[int] = mapped_column(Integer, default=1)
+    payer_name: Mapped[str] = mapped_column(String(120))
+    member_id: Mapped[str | None] = mapped_column(String(64))
+    group_number: Mapped[str | None] = mapped_column(String(64))
+    #: Who holds the policy, when that is not this patient.
+    policy_holder: Mapped[str | None] = mapped_column(String(120))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+
+    patient: Mapped["Patient"] = relationship(back_populates="coverages")
 
 
 class MedicationStatement(Base):
