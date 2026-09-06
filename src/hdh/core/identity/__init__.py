@@ -5,13 +5,14 @@ behind it), the ``IdentityProvider`` protocol, and the on-disk session
 helpers. Keycloak is the default provider; ``FakeProvider`` is what the
 tests use, so nothing here needs a container.
 
-Enforcement (does this identity hold the permission) and account↔provider
-linking arrive in AU3 and AU2 — this milestone establishes the seam and the
-`login / logout / whoami` commands, nothing more.
+Enforcement (does this identity hold the permission) arrives in AU3.
+Account↔provider linking (AU2) is here: ``resolve_actor`` turns an identity
+into the chart ``Actor`` that carries a ``provider_id``.
 """
 
 from __future__ import annotations
 
+from hdh.core.identity.accounts import cli_actor, link, provider_for, resolve_actor
 from hdh.core.identity.fake import FakeProvider
 from hdh.core.identity.identity import (
     AuthError,
@@ -35,11 +36,15 @@ __all__ = [
     "FakeProvider",
     "Identity",
     "IdentityProvider",
+    "cli_actor",
     "clear",
     "current_identity",
     "current_session",
     "default_provider",
+    "link",
     "load",
+    "provider_for",
+    "resolve_actor",
     "save",
 ]
 
