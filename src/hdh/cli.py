@@ -469,6 +469,12 @@ def main():
     elif args.command == "add-spike":
         cmd_add_spike(session, args.condition, args.multiplier, args.month, args.n)
 
+    elif args.command == "identity-seed":
+        from hdh.core.identity.seed import seed_demo_identities
+
+        n = seed_demo_identities(session)
+        print(f"linked {n} demo accounts to provider profiles.")
+
     elif args.command == "show":
         cmd_show(session, args.mrn)
 

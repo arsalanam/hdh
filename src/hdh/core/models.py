@@ -215,6 +215,37 @@ class Provider(Base):
     specialty: Mapped["Specialty | None"] = relationship()
 
 
+class UserAccount(Base):
+    """The link between an authenticated identity and a provider profile.
+
+    The identity system (Keycloak, ``core.identity``) owns *who a person is*
+    and *what they may do*; this table is the one thing the chart needs from
+    it — which provider a Keycloak subject writes as, so an audit event
+    carries a ``provider_id`` and not just a name (design AU2).
+
+    Keyed on ``subject`` — Keycloak's stable ``sub`` — rather than username,
+    because a username can be reassigned and a subject cannot; attribution
+    that survives a rename is the whole point. ``provider_id`` is nullable:
+    an account can authenticate and be attributed by name before it is tied
+    to a clinical profile, which is the state every account is in until the
+    generator grows named clinicians (§4.1).
+
+    Deliberately NOT the store of credentials, roles, or sessions — those
+    live in Keycloak and never touch the chart database. This is a foreign
+    key with a username beside it for readability, nothing more.
+    """
+
+    __tablename__ = "user_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    subject: Mapped[str] = mapped_column(String(64), unique=True)
+    username: Mapped[str] = mapped_column(String(120))
+    provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    provider: Mapped["Provider | None"] = relationship()
+
+
 # ─── Patient and family ──────────────────────────────────────────────────────
 
 

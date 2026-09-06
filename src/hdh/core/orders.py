@@ -74,17 +74,13 @@ def run(session, args) -> None:
         _release(session, args)
 
 
-def _actor():
-    import getpass
+def _actor(session):
+    """Who a CLI order/edit is attributed to: the signed-in identity, or the
+    OS user when nobody has run `hdh login` (AU2). One helper, in
+    core.identity, keeps the provider coupling out of this module."""
+    from hdh.core.identity import cli_actor
 
-    from hdh.core.chartedit import Actor
-    from hdh.core.models import EditSource
-
-    try:
-        name = getpass.getuser()
-    except Exception:  # noqa: BLE001 — headless environments have no user
-        name = "cli"
-    return Actor(name=name, source=EditSource.CLI)
+    return cli_actor(session)
 
 
 def _patient(session, mrn: str):
@@ -196,7 +192,7 @@ def _add(session, args) -> None:
         return
     session.add(request)
     session.flush()  # the audit event needs the row id
-    record_creation(session, _actor(), "ServiceRequest", request, reason="entered at the CLI")
+    record_creation(session, _actor(session), "ServiceRequest", request, reason="entered at the CLI")
     session.commit()
     print(f"✅ order #{request.id} ({_value(kind)}, draft): {args.display}")
 
@@ -233,7 +229,7 @@ def _release(session, args) -> None:
         )
         for row in drafts
     ]
-    outcomes = apply_edits(session, _actor(), edits, dry_run=args.dry_run)
+    outcomes = apply_edits(session, _actor(session), edits, dry_run=args.dry_run)
     for outcome in outcomes:
         print(("✅ " if outcome.applied else "⚠️  ") + outcome.detail)
     if not all(outcome.applied for outcome in outcomes):
