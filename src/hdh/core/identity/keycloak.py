@@ -34,6 +34,13 @@ DEFAULT_CLIENT = "hdh-cli"
 
 @dataclass(frozen=True)
 class KeycloakConfig:
+    """Where the realm lives and which client the CLI presents as.
+
+    Every field is env-overridable (:meth:`from_env`) so a deployment points
+    at its own realm without a code change; the defaults match
+    docker-compose.deps.yml.
+    """
+
     base_url: str = DEFAULT_URL
     realm: str = DEFAULT_REALM
     client_id: str = DEFAULT_CLIENT
@@ -102,6 +109,11 @@ class KeycloakProvider:
         )
 
     def authenticate(self, username: str, password: str) -> AuthSession:
+        """A session from a username and password (OIDC resource-owner flow).
+
+        Raises :class:`AuthError` on bad credentials or an unreachable
+        server, never a raw HTTP error.
+        """
         return self._session(
             self._post(
                 self.config._endpoint("token"),
@@ -115,6 +127,7 @@ class KeycloakProvider:
         )
 
     def refresh(self, refresh_token: str) -> AuthSession:
+        """A fresh session from a valid refresh token, or :class:`AuthError`."""
         return self._session(
             self._post(
                 self.config._endpoint("token"),
@@ -127,6 +140,8 @@ class KeycloakProvider:
         )
 
     def logout(self, refresh_token: str) -> None:
+        """Revoke the refresh token, best effort — never raises on a network
+        failure, so the caller can clear the local session regardless."""
         try:
             self._post(
                 self.config._endpoint("logout"),
