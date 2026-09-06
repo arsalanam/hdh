@@ -365,12 +365,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_auth_cli(sub)
 
-    # identity-seed (AU2): link the demo accounts to provider profiles
-    sub.add_parser(
-        "identity-seed",
-        help="Link the demo Keycloak users to provider profiles (idempotent)",
-    )
-
     # list-conditions
     sub.add_parser("list-conditions", help="List all available condition codes")
 

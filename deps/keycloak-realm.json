@@ -40,7 +40,6 @@
   ],
   "users": [
     {
-      "id": "0a11e5e0-0000-4000-a000-000000000001",
       "username": "dr.chen",
       "enabled": true,
       "firstName": "Grace",
@@ -60,7 +59,6 @@
       ]
     },
     {
-      "id": "0a11e5e0-0000-4000-a000-000000000002",
       "username": "dr.okafor",
       "enabled": true,
       "firstName": "Ada",
@@ -79,7 +77,6 @@
       ]
     },
     {
-      "id": "0a11e5e0-0000-4000-a000-000000000003",
       "username": "nurse.reed",
       "enabled": true,
       "firstName": "Sam",
@@ -98,7 +95,6 @@
       ]
     },
     {
-      "id": "0a11e5e0-0000-4000-a000-000000000004",
       "username": "clerk.diaz",
       "enabled": true,
       "firstName": "Robin",
@@ -117,7 +113,6 @@
       ]
     },
     {
-      "id": "0a11e5e0-0000-4000-a000-000000000005",
       "username": "admin",
       "enabled": true,
       "firstName": "System",

@@ -24,8 +24,6 @@ import json
 import os
 import pathlib
 
-from hdh.core.identity.demo import DEMO_ACCOUNTS
-
 OUT = pathlib.Path(__file__).resolve().parents[1] / "deps" / "keycloak-realm.json"
 
 #: Realm role -> the permission grain AU3 will enforce. Recorded here as
@@ -39,13 +37,16 @@ ROLES = {
     "admin": "user/provider administration; no clinical writes",
 }
 
-
-# The demo users come from core.identity.demo — the one source of truth the
-# DB seed also reads, so a username that logs in is always one the chart can
-# attribute. Their subjects are pinned there (not minted by Keycloak) so the
-# seed can link on them before anyone logs in.
-def _demo_accounts():
-    return DEMO_ACCOUNTS
+#: One demo account per role. Named people, not role labels, because AU2
+#: links them to generated clinicians and "Dr. Chen approved this" should
+#: read like a person (decision §4.1).
+USERS = [
+    ("dr.chen", "Grace", "Chen", ["clinician", "prescriber"]),
+    ("dr.okafor", "Ada", "Okafor", ["prescriber"]),
+    ("nurse.reed", "Sam", "Reed", ["nurse"]),
+    ("clerk.diaz", "Robin", "Diaz", ["clerk"]),
+    ("admin", "System", "Administrator", ["admin"]),
+]
 
 
 def _seconds() -> tuple[int, int]:
@@ -77,19 +78,16 @@ def build_realm() -> dict:
         ],
         "users": [
             {
-                # `id` pins the Keycloak subject so `user_accounts` can link
-                # on it before first login (see core.identity.demo).
-                "id": acct.subject,
-                "username": acct.username,
+                "username": username,
                 "enabled": True,
-                "firstName": acct.first_name,
-                "lastName": acct.last_name,
-                "email": f"{acct.username}@hdh.local",
+                "firstName": first,
+                "lastName": last,
+                "email": f"{username}@hdh.local",
                 "emailVerified": True,
-                "credentials": [{"type": "password", "value": acct.username, "temporary": False}],
-                "realmRoles": list(acct.roles),
+                "credentials": [{"type": "password", "value": username, "temporary": False}],
+                "realmRoles": roles,
             }
-            for acct in _demo_accounts()
+            for username, first, last, roles in USERS
         ],
     }
 
@@ -101,7 +99,7 @@ def main() -> None:
     print(
         f"wrote {OUT.relative_to(pathlib.Path.cwd())} "
         f"(access {session_seconds}s, refresh {refresh_seconds}s, "
-        f"{len(_demo_accounts())} users, {len(ROLES)} roles)"
+        f"{len(USERS)} users, {len(ROLES)} roles)"
     )
 
 
