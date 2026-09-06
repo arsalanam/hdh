@@ -215,6 +215,66 @@ def record_fill(session, order, when: date, *, origin, days_supply=None, quantit
     )
     session.add(dispense)
     session.flush()
+    _audit_fill(session, dispense, order, origin)
     # Re-read rather than subtract: remaining is derived, and the decision
     # above was taken before this fill existed.
     return decide_refill(session, order, when), dispense
+
+
+#: How a fill's provenance maps onto the audit trail's actor vocabulary.
+#:
+#: `RequestOrigin` says where a row came from; `EditSource` says which
+#: surface made a change. They overlap but are not the same enum, and the
+#: fill is the one place both are in scope. GENERATED and EXTERNAL are
+#: absent deliberately — a generated fill is bulk construction and never
+#: reaches here (the generator bulk-inserts dispenses), and an external one
+#: would arrive through the interchange importer's own audit, not this path.
+_ORIGIN_TO_SOURCE = {
+    "agent": "agent",
+    "clinician": "cli",
+    "comprehension": "pipeline",
+}
+
+
+def _audit_fill(session, dispense, order, origin) -> None:
+    """Write the `create` event a fill was missing (attribution A2).
+
+    A fill was attributed on the row (`dispense.origin`) and nowhere in the
+    trail, so `hdh chart history` — and "everything an agent did to this
+    patient" — could not see it. That is the action with the most direct
+    physical consequence, so it is the worst thing to have been silent.
+
+    The actor here is still provenance, not a person: `actor_name` is the
+    origin and `provider_id` is None until identity lands (AU2), at which
+    point a real `Identity` replaces both. Recording the trail now, and the
+    name later, is the right order — the event that never happened cannot be
+    backfilled.
+    """
+    from hdh.core.models import AuditAction, ChartAuditEvent
+
+    origin_value = getattr(origin, "value", origin)
+    source = _ORIGIN_TO_SOURCE.get(origin_value)
+    if source is None:
+        # Not a surface that edits a chart (generated/external). Nothing to
+        # attribute, and inventing a source would be worse than the silence.
+        return
+
+    session.add(
+        ChartAuditEvent(
+            actor_name=f"refill ({origin_value})",
+            actor_source=source,
+            patient_id=dispense.patient_id,
+            entity="MedicationDispense",
+            row_id=dispense.id,
+            action=AuditAction.CREATE,
+            reason=f"refill dispensed against order #{order.id}",
+            before=None,
+            after={
+                "drug_name": dispense.drug_name,
+                "dispensed_date": dispense.dispensed_date.isoformat() if dispense.dispensed_date else None,
+                "days_supply": dispense.days_supply,
+                "origin": origin_value,
+            },
+        )
+    )
+    session.flush()
