@@ -99,6 +99,11 @@ hdh *args:
 seed-demo mrn="MRN57649249":
     {{run}} python scripts/seed_chart_demo.py --mrn {{mrn}}
 
+# Link the demo Keycloak users to provider profiles, so a signed-in write
+# carries a provider_id and not just a name (AU2). Idempotent.
+seed-identities:
+    {{run}} hdh identity-seed
+
 # ── Quality gates ────────────────────────────────────────────────────────────
 
 # Run unit tests

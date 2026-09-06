@@ -50,17 +50,11 @@ def run(session, args) -> None:
         _edit(session, args)
 
 
-def _actor():
-    import getpass
+def _actor(session):
+    """The signed-in identity, or the OS user when not logged in (AU2)."""
+    from hdh.core.identity import cli_actor
 
-    from hdh.core.chartedit import Actor
-    from hdh.core.models import EditSource
-
-    try:
-        name = getpass.getuser()
-    except Exception:  # noqa: BLE001 — headless environments have no user
-        name = "cli"
-    return Actor(name=name, source=EditSource.CLI)
+    return cli_actor(session)
 
 
 def _patient(session, mrn: str):
@@ -110,7 +104,7 @@ def _edit(session, args) -> None:
         entity = "Visit" if args.visit is not None else args.entity
         edit = ChartEdit(entity, row_id, EditAction.VOID, {}, args.reason)
 
-    outcomes = apply_edits(session, _actor(), [edit], dry_run=args.dry_run)
+    outcomes = apply_edits(session, _actor(session), [edit], dry_run=args.dry_run)
     for outcome in outcomes:
         print(("✅ " if outcome.applied else "⚠️  ") + outcome.detail)
     if not all(o.applied for o in outcomes):

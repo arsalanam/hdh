@@ -313,7 +313,7 @@ def _chart_review_item(session, args) -> str:
         row.snomed_display = (mention.properties or {}).get("display") or mention.text
     session.add(row)
     session.flush()
-    actor = _actor()
+    actor = _actor(session)
     record_creation(
         session,
         Actor(name=actor.name, source=EditSource.CLI, provider_id=None),

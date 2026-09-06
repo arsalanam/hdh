@@ -365,6 +365,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_auth_cli(sub)
 
+    # identity-seed (AU2): link the demo accounts to provider profiles
+    sub.add_parser(
+        "identity-seed",
+        help="Link the demo Keycloak users to provider profiles (idempotent)",
+    )
+
     # list-conditions
     sub.add_parser("list-conditions", help="List all available condition codes")
 
@@ -468,6 +474,12 @@ def main():
 
     elif args.command == "add-spike":
         cmd_add_spike(session, args.condition, args.multiplier, args.month, args.n)
+
+    elif args.command == "identity-seed":
+        from hdh.core.identity.seed import seed_demo_identities
+
+        n = seed_demo_identities(session)
+        print(f"linked {n} demo accounts to provider profiles.")
 
     elif args.command == "show":
         cmd_show(session, args.mrn)

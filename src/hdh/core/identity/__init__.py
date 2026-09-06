@@ -12,6 +12,7 @@ linking arrive in AU3 and AU2 — this milestone establishes the seam and the
 
 from __future__ import annotations
 
+from hdh.core.identity.accounts import cli_actor, link, provider_for, resolve_actor
 from hdh.core.identity.fake import FakeProvider
 from hdh.core.identity.identity import (
     AuthError,
@@ -33,6 +34,10 @@ __all__ = [
     "AuthError",
     "AuthSession",
     "FakeProvider",
+    "cli_actor",
+    "link",
+    "provider_for",
+    "resolve_actor",
     "Identity",
     "IdentityProvider",
     "clear",
