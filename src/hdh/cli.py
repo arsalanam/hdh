@@ -360,6 +360,11 @@ def _build_parser() -> argparse.ArgumentParser:
     show_p = sub.add_parser("show", help="Print one patient's chart")
     show_p.add_argument("--mrn", required=True)
 
+    # authentication (AU1): login / logout / whoami — no DB session needed
+    from hdh.core.identity.cli import register_cli as register_auth_cli
+
+    register_auth_cli(sub)
+
     # list-conditions
     sub.add_parser("list-conditions", help="List all available condition codes")
 
@@ -412,6 +417,17 @@ def main():
     if args.command == "migrate":
         cmd_migrate(args)
         return
+
+    # Identity commands touch no chart, so they run before any engine opens
+    # — a login must work against a database that has not been built yet.
+    if args.command in ("login", "logout", "whoami"):
+        from hdh.core.identity import cli as auth_cli
+
+        if args.command == "login":
+            raise SystemExit(auth_cli.cmd_login(args))
+        if args.command == "logout":
+            raise SystemExit(auth_cli.cmd_logout(args))
+        raise SystemExit(auth_cli.cmd_whoami(args))
 
     engine = get_engine(args.db)
     session = get_session(engine)

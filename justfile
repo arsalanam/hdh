@@ -37,7 +37,12 @@ check-env:
 # ── Dependency containers (PostgreSQL + Redis) ───────────────────────────────
 
 # Start PostgreSQL + Redis containers and wait until healthy
-deps:
+# Render the Keycloak realm from HDH_AUTH_* env, so a lifetime change is
+# one .env edit (design §4.3). Run by `deps`; standalone for a quick re-render.
+keycloak-realm:
+    {{run}} python scripts/render_keycloak_realm.py
+
+deps: keycloak-realm
     docker compose -f docker-compose.deps.yml up -d --wait
 
 # Stop the dependency containers (data volume preserved)

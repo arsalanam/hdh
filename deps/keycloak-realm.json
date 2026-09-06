@@ -1,0 +1,134 @@
+{
+  "realm": "hdh",
+  "enabled": true,
+  "accessTokenLifespan": 28800,
+  "ssoSessionMaxLifespan": 259200,
+  "ssoSessionIdleTimeout": 259200,
+  "roles": {
+    "realm": [
+      {
+        "name": "prescriber",
+        "description": "medications, refills, plan approval"
+      },
+      {
+        "name": "clinician",
+        "description": "full chart write, care-plan authoring AND approval"
+      },
+      {
+        "name": "nurse",
+        "description": "vitals, immunizations, functional status, notes"
+      },
+      {
+        "name": "clerk",
+        "description": "demographics, contacts, coverage \u2014 the person record"
+      },
+      {
+        "name": "admin",
+        "description": "user/provider administration; no clinical writes"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "hdh-cli",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "dr.chen",
+      "enabled": true,
+      "firstName": "Grace",
+      "lastName": "Chen",
+      "email": "dr.chen@hdh.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dr.chen",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "clinician",
+        "prescriber"
+      ]
+    },
+    {
+      "username": "dr.okafor",
+      "enabled": true,
+      "firstName": "Ada",
+      "lastName": "Okafor",
+      "email": "dr.okafor@hdh.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dr.okafor",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "prescriber"
+      ]
+    },
+    {
+      "username": "nurse.reed",
+      "enabled": true,
+      "firstName": "Sam",
+      "lastName": "Reed",
+      "email": "nurse.reed@hdh.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nurse.reed",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "nurse"
+      ]
+    },
+    {
+      "username": "clerk.diaz",
+      "enabled": true,
+      "firstName": "Robin",
+      "lastName": "Diaz",
+      "email": "clerk.diaz@hdh.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "clerk.diaz",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "clerk"
+      ]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "firstName": "System",
+      "lastName": "Administrator",
+      "email": "admin@hdh.local",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin"
+      ]
+    }
+  ]
+}

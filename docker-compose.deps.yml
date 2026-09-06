@@ -5,6 +5,9 @@
 #                (hdh_test database is created for the integration tests)
 #   Redis      — reserved as the future Celery broker/beat backend
 #                (see docs/design/icd10cm-ontology-module.md §6)
+#   Keycloak   — identity provider for `hdh login` (design
+#                identity-and-authorization.md, AU1); realm imported
+#                from deps/keycloak-realm.json, seed users one per role
 services:
   postgres:
     # pgvector's image rather than plain postgres: same PostgreSQL 16, plus
@@ -36,6 +39,36 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  keycloak:
+    # Dev-mode Keycloak: in-memory H2, HTTP only, realm imported on boot.
+    # `start-dev` is right for local development and CI and wrong for
+    # production — a real deployment runs `start` against its own database
+    # behind TLS. The seam (core.identity) does not care which; only this
+    # file does.
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      # Rendered from HDH_AUTH_SESSION_HOURS / HDH_AUTH_REFRESH_DAYS by
+      # `just deps` (scripts/render_keycloak_realm.py) — session lifetimes
+      # are one .env edit, not an admin-console click (design §4.3).
+      - ./deps/keycloak-realm.json:/opt/keycloak/data/import/hdh-realm.json:ro
+    healthcheck:
+      # The realm endpoint on 8080, checked with bash's /dev/tcp — the image
+      # ships no curl, and the 9000 management/health port is off unless
+      # KC_HEALTH_ENABLED is set. A 200 from /realms/hdh means more than
+      # "up": the realm imported and is serving, which is what `hdh login`
+      # needs. `printf` (not `echo -e`) so the \r\n reach the socket as bytes.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /realms/hdh HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && head -1 <&3 | grep -q '200 OK'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 25s
 
 volumes:
   hdh-pgdata:
