@@ -181,7 +181,9 @@ def find_authorising_order(session, patient_id: int, drug_name: str, as_of: date
     return fallback
 
 
-def record_fill(session, order, when: date, *, origin, days_supply=None, quantity=None):
+def record_fill(  # quality: allow(no-god-class) — each keyword is a distinct fact of a fill
+    session, order, when: date, *, origin, days_supply=None, quantity=None, actor=None
+):
     """Record that a supply happened, if the order permits one.
 
     Returns ``(decision, dispense)``. The dispense is ``None`` when refused,
@@ -215,7 +217,7 @@ def record_fill(session, order, when: date, *, origin, days_supply=None, quantit
     )
     session.add(dispense)
     session.flush()
-    _audit_fill(session, dispense, order, origin)
+    _audit_fill(session, dispense, order, origin, actor)
     # Re-read rather than subtract: remaining is derived, and the decision
     # above was taken before this fill existed.
     return decide_refill(session, order, when), dispense
@@ -236,7 +238,7 @@ _ORIGIN_TO_SOURCE = {
 }
 
 
-def _audit_fill(session, dispense, order, origin) -> None:
+def _audit_fill(session, dispense, order, origin, actor=None) -> None:
     """Write the `create` event a fill was missing (attribution A2).
 
     A fill was attributed on the row (`dispense.origin`) and nowhere in the
@@ -259,10 +261,18 @@ def _audit_fill(session, dispense, order, origin) -> None:
         # attribute, and inventing a source would be worse than the silence.
         return
 
+    # A real actor (the signed-in identity, AU4) names the person and carries
+    # a provider_id; without one — the system/eval path — the origin is the
+    # honest label.
+    actor_name = actor.name if actor is not None else f"refill ({origin_value})"
+    actor_source = actor.source if actor is not None else source
+    provider_id = actor.provider_id if actor is not None else None
+
     session.add(
         ChartAuditEvent(
-            actor_name=f"refill ({origin_value})",
-            actor_source=source,
+            actor_name=actor_name,
+            actor_source=actor_source,
+            provider_id=provider_id,
             patient_id=dispense.patient_id,
             entity="MedicationDispense",
             row_id=dispense.id,

@@ -21,7 +21,7 @@ import json
 from sqlalchemy import select
 
 
-def build_rxnorm_tools(session) -> list:
+def build_rxnorm_tools(session, *, identity=None) -> list:
     """The agent's RxNorm tools bound to an open session (empty if no catalog)."""
     from anthropic import beta_tool
 

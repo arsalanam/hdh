@@ -100,6 +100,7 @@ class ChatSession:
     max_messages: int = 100  # auto-compact once history exceeds this
     keep_recent: int = 20  # messages kept verbatim after compaction
     summarizer: Callable[[str], str] | None = None  # override (default: the model)
+    identity: object = None  # the signed-in actor (AU4); None in a system context
     messages: list = field(default_factory=list)
     compactions: list = field(default_factory=list)
 
@@ -122,7 +123,7 @@ class ChatSession:
         if self._tools is None:
             from .tools import build_tools
 
-            self._tools = build_tools(self.db_session)
+            self._tools = build_tools(self.db_session, identity=self.identity)
         return self._tools
 
     # ── Conversation ─────────────────────────────────────────────────────────

@@ -84,7 +84,22 @@ class _Event:
     after: dict | None = None
 
 
-def _audit(session, event: _Event) -> None:
+def _default_actor():
+    """Attribution when no identity was supplied — a system/eval context.
+
+    The care-plan graph runs headless in the eval harness, where there is no
+    logged-in person; this names that honestly ("care-plan review") rather
+    than pretending a clinician acted. The agent path passes a real ``Actor``
+    built from the signed-in identity (AU4), and that is what a plan a
+    clinician actually touched carries.
+    """
+    from hdh.core.chartedit import Actor
+    from hdh.core.models import EditSource
+
+    return Actor(name="care-plan review", source=EditSource.AGENT, provider_id=None)
+
+
+def _audit(session, event: _Event, actor=None) -> None:
     """One event on the shared trail. Appended, never updated.
 
     ``action`` is the row-level vocabulary `AuditAction` already defines —
@@ -100,10 +115,12 @@ def _audit(session, event: _Event) -> None:
     """
     from hdh.core.models import ChartAuditEvent
 
+    actor = actor or _default_actor()
     session.add(
         ChartAuditEvent(
-            actor_name="care-plan review",
-            actor_source="agent",
+            actor_name=actor.name,
+            actor_source=actor.source,
+            provider_id=actor.provider_id,
             patient_id=event.patient_id,
             entity=ENTITY,
             row_id=event.plan_id,
@@ -116,7 +133,9 @@ def _audit(session, event: _Event) -> None:
     session.flush()
 
 
-def persist_reviewed_plan(session, patient, values, thread_id: str = "", title: str = "") -> Decision:
+def persist_reviewed_plan(
+    session, patient, values, thread_id: str = "", title: str = "", actor=None
+) -> Decision:
     """Write a reviewed plan graph and record that a human shaped it.
 
     ``values`` is the plan state from the graph — the same mapping the
@@ -158,6 +177,7 @@ def persist_reviewed_plan(session, patient, values, thread_id: str = "", title: 
                 "deferred": list(draft.deferred),
             },
         ),
+        actor,
     )
     session.commit()
     return Decision(
@@ -168,7 +188,7 @@ def persist_reviewed_plan(session, patient, values, thread_id: str = "", title: 
     )
 
 
-def decide(session, plan_id: int, approved: bool, reason: str = "") -> Decision:
+def decide(session, plan_id: int, approved: bool, reason: str = "", actor=None) -> Decision:
     """Record a clinician's approval or rejection of a written plan.
 
     A rejection **requires** a reason. An approval does not, but takes one:
@@ -222,6 +242,7 @@ def decide(session, plan_id: int, approved: bool, reason: str = "") -> Decision:
             before={"status": row.status},
             after={"status": new_status},
         ),
+        actor,
     )
     session.commit()
     return Decision(True, plan_id, f"plan #{plan_id} {new_status}")
@@ -410,7 +431,7 @@ def _draft_from(plan: dict, keep: set[int]) -> PlanDraft:
     )
 
 
-def amend_plan(session, plan_id: int, keep: set[int], reason: str = "") -> Decision:
+def amend_plan(session, plan_id: int, keep: set[int], reason: str = "", actor=None) -> Decision:
     """Narrow a saved plan to the concerns named, in place or by superseding.
 
     An undecided plan is edited in place. A decided one is **not touched**:
@@ -467,6 +488,7 @@ def amend_plan(session, plan_id: int, keep: set[int], reason: str = "") -> Decis
                 reason=reason.strip() or f"amended from #{plan_id}",
                 after={"status": USER_EDITED, "concerns": len(keep), "supersedes": plan_id},
             ),
+            actor,
         )
         _audit(
             session,
@@ -478,6 +500,7 @@ def amend_plan(session, plan_id: int, keep: set[int], reason: str = "") -> Decis
                 before={"status": row.status, "concerns": total, "superseded_by": None},
                 after={"status": row.status, "concerns": total, "superseded_by": new_id},
             ),
+            actor,
         )
         session.commit()
         return Decision(
@@ -511,6 +534,7 @@ def amend_plan(session, plan_id: int, keep: set[int], reason: str = "") -> Decis
             before={"status": row.status, "concerns": total},
             after={"status": row.status, "concerns": len(keep)},
         ),
+        actor,
     )
     session.commit()
     return Decision(True, plan_id, f"plan #{plan_id} amended: {len(keep)} of {total} concerns kept")

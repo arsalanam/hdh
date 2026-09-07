@@ -71,7 +71,7 @@ def _describe(session, order, as_of: date) -> str:
     )
 
 
-def build_refill_tools(session) -> list:
+def build_refill_tools(session, *, identity=None) -> list:
     """The agent's medication-refill toolset."""
     try:
         from anthropic import beta_tool
@@ -150,6 +150,21 @@ def build_refill_tools(session) -> list:
         if patient is None:
             return f"no patient {mrn}"
 
+        # Recording a fill is a prescribing act (AU4). A signed-in identity
+        # must hold `medication:fill`; without one this is a system context
+        # and the dispense keeps its origin-derived attribution.
+        actor = None
+        if identity is not None:
+            from hdh.core.identity import resolve_actor
+            from hdh.core.identity.permissions import NotAuthenticated, Unauthorized, require
+            from hdh.core.models import EditSource
+
+            try:
+                require(identity, "medication:fill")
+            except (Unauthorized, NotAuthenticated) as refusal:
+                return str(refusal)
+            actor = resolve_actor(session, identity, EditSource.AGENT)
+
         as_of = _as_of(session)
         order = find_authorising_order(session, patient.id, drug_name, as_of)
         decision, dispense = record_fill(
@@ -158,6 +173,7 @@ def build_refill_tools(session) -> list:
             as_of,
             origin=RequestOrigin.AGENT,
             days_supply=days_supply or None,
+            actor=actor,
         )
         if dispense is None:
             return f"refill refused for {drug_name}: {decision.reason}. Nothing was recorded."

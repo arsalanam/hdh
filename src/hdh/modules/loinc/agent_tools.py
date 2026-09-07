@@ -26,7 +26,7 @@ from sqlalchemy import select
 _SHOWN_AXES = ("component", "property", "system")
 
 
-def build_loinc_tools(session) -> list:
+def build_loinc_tools(session, *, identity=None) -> list:
     """The agent's LOINC tools bound to an open session (empty if no catalog)."""
     from anthropic import beta_tool
 
