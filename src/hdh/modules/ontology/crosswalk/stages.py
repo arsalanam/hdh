@@ -62,7 +62,9 @@ class ParseStage:
     def run(self, ctx: LoadContext) -> str:
         """Parse the delimited rows into candidate pairs; count the blanks."""
         spec = ctx.spec
-        with ctx.source_file.open(encoding="utf-8", errors="replace", newline="") as handle:
+        # utf-8-sig strips a leading BOM (PowerShell/Excel write one); without
+        # it the first header cell would be "﻿ICD_CODE" and match nothing.
+        with ctx.source_file.open(encoding="utf-8-sig", errors="replace", newline="") as handle:
             reader = csv.DictReader(handle, delimiter=spec.delimiter)
             missing = {spec.source_col, spec.target_col} - set(reader.fieldnames or [])
             if missing:

@@ -195,7 +195,9 @@ def spec_for(source_file: Path, name: str | None) -> MapSpec:
             raise LoadError(f"unknown map '{name}' — known: {', '.join(sorted(SPECS))}")
         return SPECS[name]
     try:
-        header = source_file.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+        # utf-8-sig strips a leading BOM: Windows PowerShell and Excel both
+        # write one, and it would otherwise corrupt the first header cell.
+        header = source_file.read_text(encoding="utf-8-sig", errors="replace").splitlines()[0]
     except (OSError, IndexError) as err:
         raise LoadError(f"cannot read a header from {source_file}: {err}") from None
     fields = {h.strip() for h in header.split("\t")}

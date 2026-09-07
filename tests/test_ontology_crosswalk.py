@@ -98,6 +98,16 @@ def test_dotless_icd_codes_are_dotted_to_match_the_catalog(loaded_db):
     assert "icd10cm:B99.9" in sources and "icd10cm:B999" not in sources
 
 
+def test_a_utf8_bom_header_still_infers_and_loads(loaded_db, tmp_path):
+    """PowerShell's `Set-Content -Encoding utf8` and Excel both prepend a BOM.
+    Left unstripped it corrupts the first header cell ('﻿ICD_CODE') and
+    inference matches nothing — the file loads via utf-8-sig either way."""
+    bom = tmp_path / "ICD10CM_SNOMED_MAP_BOM_20260301.txt"
+    bom.write_bytes(b"\xef\xbb\xbf" + NLM_MAP.read_bytes())
+    run_load(loaded_db, bom)  # no map_name: inference must survive the BOM
+    assert len(_maps_to(loaded_db, "NLM_UMLS")) == 2
+
+
 def test_the_map_is_inferred_from_the_header(loaded_db):
     """--map may be omitted: the header columns identify the spec."""
     run_load(loaded_db, NLM_MAP)  # no map_name
