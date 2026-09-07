@@ -15,7 +15,7 @@ import json
 from sqlalchemy import select
 
 
-def build_icd_tools(session) -> list:
+def build_icd_tools(session, *, identity=None) -> list:
     """The agent's ICD toolset bound to an open session (empty if no catalog)."""
     from anthropic import beta_tool
 

@@ -276,7 +276,35 @@ def _patient_or_none(session, mrn: str):
     return session.query(Patient).filter(Patient.mrn == mrn).first()
 
 
-def _save(desk: _Desk, session, mrn: str, title: str) -> str:
+def _authorize(session, identity, permission: str):
+    """Enforce ``permission`` and return the ``Actor`` to attribute to (AU4).
+
+    Three outcomes, all of which the tool can act on:
+      - a refusal STRING, when a signed-in identity lacks the permission —
+        the tool returns it, so the model learns why rather than seeing a
+        write silently not happen;
+      - an ``Actor``, when the identity holds it — real attribution;
+      - ``None``, when there is no identity (a system/eval context), which
+        the write path turns into its system default.
+
+    The agent CLI refuses to start without a login (AU4), so in interactive
+    use identity is never None; the None branch is for the eval harness and
+    tests, which run headless.
+    """
+    if identity is None:
+        return None
+    from hdh.core.identity import resolve_actor
+    from hdh.core.identity.permissions import NotAuthenticated, Unauthorized, require
+    from hdh.core.models import EditSource
+
+    try:
+        require(identity, permission)
+    except (Unauthorized, NotAuthenticated) as refusal:
+        return str(refusal)
+    return resolve_actor(session, identity, EditSource.AGENT)
+
+
+def _save(desk: _Desk, session, mrn: str, title: str, identity=None) -> str:
     """Write the plan under review, and say what it became."""
     from hdh.modules.careplan.persist import persist_reviewed_plan
 
@@ -290,7 +318,12 @@ def _save(desk: _Desk, session, mrn: str, title: str) -> str:
     if not pause.started:
         return f"no care plan in progress for {mrn} — start one first"
 
-    decision = persist_reviewed_plan(session, patient, pause.values, thread_id=thread, title=title)
+    actor = _authorize(session, identity, "careplan:author")
+    if isinstance(actor, str):
+        return actor
+    decision = persist_reviewed_plan(
+        session, patient, pause.values, thread_id=thread, title=title, actor=actor
+    )
     if not decision:
         return f"not saved: {decision.detail}"
     return (
@@ -312,13 +345,16 @@ def _resolve_plan(session, mrn: str, plan_id: int):
     return resolved, ""
 
 
-def _decide(session, mrn: str, plan_id: int, approved: bool, reason: str) -> str:
+def _decide(session, mrn: str, plan_id: int, approved: bool, reason: str, identity=None) -> str:
     from hdh.modules.careplan.persist import decide
 
     resolved, problem = _resolve_plan(session, mrn, plan_id)
     if problem:
         return problem
-    return decide(session, resolved, approved, reason).detail
+    actor = _authorize(session, identity, "careplan:approve" if approved else "careplan:reject")
+    if isinstance(actor, str):
+        return actor
+    return decide(session, resolved, approved, reason, actor=actor).detail
 
 
 def _get_saved(session, mrn: str, plan_id: int) -> str:
@@ -362,7 +398,7 @@ def _list_saved(session, mrn: str) -> str:
     return "\n".join(lines)
 
 
-def _amend_saved(session, mrn: str, keep: str, plan_id: int, reason: str) -> str:
+def _amend_saved(session, mrn: str, keep: str, plan_id: int, reason: str, identity=None) -> str:
     """Narrow a saved plan, in place or by superseding it."""
     from hdh.modules.careplan.persist import amend_plan, load_plan
 
@@ -386,7 +422,10 @@ def _amend_saved(session, mrn: str, keep: str, plan_id: int, reason: str) -> str
             f"nothing recognised in {keep!r} — give the concern numbers to KEEP, "
             f"as shown by get_care_plan (plan #{resolved} has {len(plan['concerns'])})"
         )
-    decision = amend_plan(session, resolved, wanted, reason)
+    actor = _authorize(session, identity, "careplan:amend")
+    if isinstance(actor, str):
+        return actor
+    decision = amend_plan(session, resolved, wanted, reason, actor=actor)
     if not decision:
         return decision.detail
     return f"{decision.detail}. {_get_saved(session, mrn, decision.plan_id or 0)}"
@@ -409,7 +448,7 @@ def _history(session, mrn: str, plan_id: int) -> str:
     return "\n".join(lines)
 
 
-def build_careplan_tools(session, *, services: PlanServices | None = None, graph=None) -> list:
+def build_careplan_tools(session, *, services: PlanServices | None = None, graph=None, identity=None) -> list:
     """The agent's care-planning toolset.
 
     Returns ``[]`` when the agent extra is not installed, matching every
@@ -530,11 +569,11 @@ def build_careplan_tools(session, *, services: PlanServices | None = None, graph
         reject_care_plan_stage,
         show_care_plan_rubric,
         write_care_plan_page,
-        *_record_tools(desk, session, guard, beta_tool),
+        *_record_tools(desk, session, guard, beta_tool, identity),
     ]
 
 
-def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
+def _record_tools(desk: _Desk, session, guard, beta_tool, identity=None) -> list:
     """Tools for the plan as a RECORD rather than as a draft.
 
     Split from the review pack because they are a different
@@ -554,7 +593,7 @@ def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
             mrn: The patient's medical record number.
             title: Optional title; defaults to "Care plan — <mrn>".
         """
-        return _save(desk, session, mrn, title)
+        return _save(desk, session, mrn, title, identity)
 
     @beta_tool
     @guard
@@ -566,7 +605,7 @@ def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
             plan_id: The plan to approve; 0 uses the patient's most recent.
             reason: Why it was approved, in the clinician's words.
         """
-        return _decide(session, mrn, plan_id, True, reason)
+        return _decide(session, mrn, plan_id, True, reason, identity)
 
     @beta_tool
     @guard
@@ -578,7 +617,7 @@ def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
             reason: What is wrong with the plan.
             plan_id: The plan to reject; 0 uses the patient's most recent.
         """
-        return _decide(session, mrn, plan_id, False, reason)
+        return _decide(session, mrn, plan_id, False, reason, identity)
 
     @beta_tool
     @guard
@@ -623,7 +662,7 @@ def _record_tools(desk: _Desk, session, guard, beta_tool) -> list:
             plan_id: The plan to amend; 0 uses the patient's current one.
             reason: Why it was amended, in the clinician's words.
         """
-        return _amend_saved(session, mrn, keep, plan_id, reason)
+        return _amend_saved(session, mrn, keep, plan_id, reason, identity)
 
     return [
         save_care_plan,

@@ -41,7 +41,7 @@ def _outcome_payload(outcomes) -> str:
     )
 
 
-def build_chart_tools(session) -> list:
+def build_chart_tools(session, *, identity=None) -> list:
     """The agent's chart-maintenance toolset."""
     from anthropic import beta_tool
 

@@ -15,7 +15,7 @@ import json
 from sqlalchemy import select
 
 
-def build_snomed_tools(session) -> list:
+def build_snomed_tools(session, *, identity=None) -> list:
     """The agent's SNOMED toolset bound to an open session (empty if no catalog)."""
     from anthropic import beta_tool
 

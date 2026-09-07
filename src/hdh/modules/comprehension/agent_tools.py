@@ -137,7 +137,7 @@ def _apply_note_impl(session, extractor, mrn: str, note_text: str, visit_date: s
     )
 
 
-def build_comprehension_tools(session, extractor=None) -> list:
+def build_comprehension_tools(session, extractor=None, *, identity=None) -> list:
     """The agent's comprehension toolset (``extractor`` injectable for
     tests; None = the real LLM extractor)."""
     from anthropic import beta_tool

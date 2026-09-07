@@ -307,6 +307,7 @@ class Gateway:
         max_attempts: int = 3,
         trace=None,
         source: str = "pipeline",
+        identity=None,
     ):
         """Wire client, tools, trace store, and graph (the composition root).
 
@@ -317,6 +318,7 @@ class Gateway:
         import anthropic
 
         self.db_session = db_session
+        self.identity = identity  # the signed-in actor (AU4); None in a system context
         self.config = PipelineConfig(
             model=model or os.environ.get("HDH_AGENT_MODEL", DEFAULT_MODEL),
             guard_model=os.environ.get("HDH_GUARD_MODEL", "claude-haiku-4-5"),
@@ -404,11 +406,12 @@ class Gateway:
 
         intent_name = (intent or {}).get("intent", "other")
         if feedback:
-            return build_tools(self.db_session)
+            return build_tools(self.db_session, identity=self.identity)
         return build_tools(
             self.db_session,
             tables=INTENT_TABLES.get(intent_name),
             include=INTENT_TOOLS.get(intent_name),
+            identity=self.identity,
         )
 
     def _run_tools(

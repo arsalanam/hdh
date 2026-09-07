@@ -58,13 +58,18 @@ def _stream(text: str) -> None:
     print()
 
 
-def _run_pipeline(session, args):
+def _run_pipeline(session, args, identity=None):
     """One-shot through the LangGraph pipeline with a stage trace."""
     from .pipeline import Gateway
 
     trace = (lambda stage, message: None) if args.quiet else None
     gateway = Gateway(
-        session, model=args.model, max_attempts=args.max_tries, trace=trace, source="cli-oneshot"
+        session,
+        model=args.model,
+        max_attempts=args.max_tries,
+        trace=trace,
+        source="cli-oneshot",
+        identity=identity,
     )
     if not args.quiet:
         print(f"┌─ pipeline · model {gateway.config.model} · guard {gateway.config.guard_model}")
@@ -78,17 +83,29 @@ def _run_pipeline(session, args):
     _stream(Gateway.answer_of(state))
 
 
-def _run_simple(session, args):
+def _run_simple(session, args, identity=None):
     """One-shot through the plain tool-runner loop."""
     from .chat import ChatSession
 
-    chat = ChatSession(db_session=session, model=args.model)
+    chat = ChatSession(db_session=session, model=args.model, identity=identity)
 
     def on_tool(block):
         print(f"  🔧 {block.name}({', '.join(f'{k}={v!r}' for k, v in block.input.items())})")
 
     answer, _ = chat.ask(args.question, on_tool=None if args.quiet else on_tool)
     print(f"\n{answer}\n")
+
+
+def _require_login():
+    """The signed-in identity, or exit telling the user to log in (§4.4)."""
+    import time
+
+    from hdh.core.identity import current_identity, default_provider
+
+    identity = current_identity(default_provider(), time.time())
+    if identity is None:
+        raise SystemExit("the agent acts as a signed-in provider — run `hdh login` first.")
+    return identity
 
 
 def run(session, args):
@@ -98,12 +115,18 @@ def run(session, args):
     except ImportError:
         raise SystemExit("Agent dependencies missing. Install with: pip install hdh[agent]") from None
 
+    # The agent acts on a patient's chart, so it acts AS a person (design
+    # §4.4): no anonymous sessions. Every write it makes is then attributable
+    # from the first turn, and the guardrail can refuse what the person's
+    # roles do not permit. Reads via `hdh show` stay open; the agent does not.
+    identity = _require_login()
+
     if args.question:
         try:
             if args.simple:
-                _run_simple(session, args)
+                _run_simple(session, args, identity)
             else:
-                _run_pipeline(session, args)
+                _run_pipeline(session, args, identity)
         except anthropic.AuthenticationError:
             raise SystemExit(
                 "No valid Anthropic API key. Set ANTHROPIC_API_KEY or run `ant auth login`."
@@ -113,7 +136,7 @@ def run(session, args):
         return
 
     if args.pipeline:
-        _pipeline_repl(session, args)
+        _pipeline_repl(session, args, identity)
         return
 
     from .chat import ChatSession
@@ -125,16 +148,22 @@ def run(session, args):
             "Chat UI dependencies missing (rich, prompt_toolkit). Reinstall with: pip install hdh[agent]"
         ) from None
     chat = ChatSession(
-        db_session=session, model=args.model, max_messages=args.compact_after, keep_recent=args.keep_recent
+        db_session=session,
+        model=args.model,
+        max_messages=args.compact_after,
+        keep_recent=args.keep_recent,
+        identity=identity,
     )
     run_ui(chat, compact_after=args.compact_after)
 
 
-def _pipeline_repl(session, args):
+def _pipeline_repl(session, args, identity=None):
     """Multi-turn REPL through the pipeline: one run id, a turn per question."""
     from .pipeline import Gateway
 
-    gateway = Gateway(session, model=args.model, max_attempts=args.max_tries, source="cli-chat")
+    gateway = Gateway(
+        session, model=args.model, max_attempts=args.max_tries, source="cli-chat", identity=identity
+    )
     print(
         f"┌─ pipeline chat · run {gateway.run_id[:8]} · model {gateway.config.model}\n"
         f"│  every question is a traced turn — inspect later with: hdh trace show {gateway.run_id[:8]}\n"

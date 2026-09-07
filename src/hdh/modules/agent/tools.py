@@ -139,12 +139,18 @@ def _search_patient_rows(session, name: str, min_age: int, max_age: int, icd10_p
     ]
 
 
-def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str] | None = None):
+def build_tools(
+    session, tables: tuple[str, ...] | None = None, include: set[str] | None = None, identity=None
+):
     """Build the agent's tool functions bound to an open DB session.
 
     ``tables`` narrows the schema embedded in query_database's description;
     ``include`` narrows which tools are returned. Both default to everything
     (the simple engine uses the full set).
+
+    ``identity`` is the signed-in actor (AU4). It reaches the write tools
+    so they enforce permissions and attribute to the person; None is a
+    system/eval context, where writes proceed under a system actor.
     """
     from anthropic import beta_tool
 
@@ -260,19 +266,19 @@ def build_tools(session, tables: tuple[str, ...] | None = None, include: set[str
         query_database,
         dataset_stats,
     ]
-    all_tools.extend(_ontology_tools(session))
-    all_tools.extend(_chart_tools(session))
+    all_tools.extend(_ontology_tools(session, identity))
+    all_tools.extend(_chart_tools(session, identity))
     if include is None:
         return all_tools
     return [tool for tool in all_tools if tool.name in include]
 
 
-def _chart_tools(session) -> list:
+def _chart_tools(session, identity=None) -> list:
     """Chart maintenance (amend / void / audit trail) — core, so these are
     always available; the agent proposes and hdh.core.chartedit decides."""
     from hdh.modules.agent.chart_tools import build_chart_tools
 
-    return build_chart_tools(session)
+    return build_chart_tools(session, identity=identity)
 
 
 #: Optional toolsets, in the order the agent sees them. Each builder is
@@ -288,7 +294,7 @@ _ONTOLOGY_BUILDERS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _ontology_tools(session) -> list:
+def _ontology_tools(session, identity=None) -> list:
     """Coding tools via each ontology module's published API — optional:
     the agent runs fine without the modules or their catalogs.
 
@@ -309,7 +315,7 @@ def _ontology_tools(session) -> list:
         except ImportError:
             continue  # the module is not installed — the one silent case
         try:
-            tools.extend(getattr(module, builder_name)(session))
+            tools.extend(getattr(module, builder_name)(session, identity=identity))
         except Exception:  # noqa: BLE001 — a broken toolset must not break the agent...
             log.warning(
                 "%s.%s raised while building the agent's tools — those tools are "
