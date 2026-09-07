@@ -1,0 +1,3 @@
+LOINC_NUM	SNOMED_CID	SNOMED_FSN	MAP_PRIORITY
+11111-1	100006006	Blorbitis (disorder)	1
+11111-2	100009004	Severe acute blorbitis (disorder)	2

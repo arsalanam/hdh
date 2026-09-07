@@ -86,8 +86,11 @@ precedence order:
 
 Mappings also materialize as **`maps_to` edges** (authority
 `PACK_AUTHORED` / `CURATED_DEMO` / `DERIVED_NORMALIZE`, confidence
-carried) when both concepts exist in the shared tables; official crosswalk
-edges under other authorities are never touched.
+carried) when both concepts exist in the shared tables. These are the
+*derived* authorities; the *official* NLM and LOINC maps load separately
+through `hdh ontology crosswalk` (below), under their own authorities, and
+each loader touches only its own — the derived edges and the official ones
+coexist.
 
 Ask for one from either side:
 
@@ -103,6 +106,53 @@ hdh icd lookup E11.9
 The authority is printed because an asserted mapping and one a funnel
 derived at 0.87 are different things to trust; a derived edge shows its
 score.
+
+## Official crosswalks — the licensed maps (issue #86)
+
+The three authorities above are *ours*: codes the pack author wrote, a
+curated starter map, and funnel-derived guesses. The **official** maps —
+the NLM ICD-10-CM ↔ SNOMED CT crosswalk, and LOINC's equivalents — are
+licensed files a user downloads under their own UMLS/LOINC credential and
+nobody may redistribute. So hdh ships the loader, never the data (the same
+rule as SNOMED, LOINC and RxNorm), through the same `LoadStage` pipeline:
+
+```bash
+# a file YOU obtained under your own licence — hdh never ships it
+hdh ontology crosswalk --source ICD10CM_SNOMED_MAP_US_20260301.txt
+#   acquire      nlm-icd10cm-snomed, release 202603, sha ae3e27807bdbba95
+#   parse        93,114 pairs parsed (0 blank rows skipped)
+#   match        71,203 edges matched; skipped 0 with no icd10cm concept,
+#                21,911 with no snomed_ct concept
+#   load-edges   71,203 'NLM_UMLS' maps_to edges written (0 replaced)
+#   verify       71,203 edges, no dangling targets
+#   finalize     icd10cm_snomed release 202603 recorded (4.1s)
+
+hdh ontology crosswalk-status          # what is loaded, and live edge counts
+```
+
+`--map` is inferred from the file's header (`nlm-icd10cm-snomed` or
+`loinc-snomed`); pass it explicitly to be sure. A new licensed map is a
+new `MapSpec` entry, not a new loader.
+
+Two properties are deliberate. An edge is written **only where both
+concepts are already loaded** — the map is authoritative about the
+relationship, not about what is in your database, and a pair whose SNOMED
+concept you never loaded is reported and skipped rather than smuggled in as
+a stub. And the load **rebuilds only its own authority** (`NLM_UMLS`,
+`LOINC_SNOMED`): your derived `PACK_AUTHORED`/`DERIVED_NORMALIZE` edges are
+left exactly as they were, so `hdh icd lookup` shows both the official
+mapping and the derived one side by side, each with its authority.
+
+These edges target `snomed_ct:` concepts, so `just release-check` already
+refuses any asset containing them and `hdh snomed purge` removes them —
+nothing licensed can leak through the crosswalk that could not leak through
+SNOMED itself.
+
+> **Cannot be verified end to end here.** The NLM and LOINC maps do not
+> ship, so the loader is tested against a synthetic fixture in each file's
+> format and no further. Expect the first run against a real UMLS release
+> to surface something the fixture did not — this repo's real defects tend
+> to show up only on real data.
 
 ## Mapped, but not a problem
 
@@ -140,8 +190,8 @@ session, by design.
 | Ontology | License reality | What hdh does |
 |---|---|---|
 | **ICD-10-CM** | public domain | full catalog ships and downloads (`hdh icd load --download`) |
-| **SNOMED CT** | UMLS license — free for US affiliates, **not redistributable** | loader ships, data never; `hdh snomed load --download` with your own UMLS key. The starter map ships as `maps_to` edges, not as SNOMED content |
-| **LOINC** | free with registration, redistribution restricted | loader ships; you supply the release (`hdh loinc load --source <dir>`) |
+| **SNOMED CT** | UMLS license — free for US affiliates, **not redistributable** | loader ships, data never; `hdh snomed load --download` with your own UMLS key. The starter map ships as `maps_to` edges, not as SNOMED content; the official NLM ICD-10-CM↔SNOMED crosswalk loads via `hdh ontology crosswalk` |
+| **LOINC** | free with registration, redistribution restricted | loader ships; you supply the release (`hdh loinc load --source <dir>`) and the LOINC↔SNOMED map (`hdh ontology crosswalk --map loinc-snomed`) |
 | **RxNorm** | UMLS license | loader ships; you supply the release (`hdh rxnorm load --source <dir>`) |
 | **CPT** | AMA-copyrighted, **paid** | the schema supports it; hdh will never ship it |
 | **ICD-10-PCS / HCPCS** | public domain | future loaders, same `LoadStage` pipeline |

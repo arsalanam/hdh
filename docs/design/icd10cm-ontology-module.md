@@ -835,8 +835,8 @@ should be honest about it:
 | Ontology | License reality | Plan |
 |---|---|---|
 | ICD-10-CM | public domain | full catalog, this module |
-| SNOMED CT | UMLS license (free for US affiliates, not redistributable) | keep shipping our starter map as `maps_to` edges (authority `HDH_STARTER`); document how a licensed user loads the full NLM ICD-10-CM↔SNOMED map themselves — loader stage, not data |
-| LOINC | free with registration, redistribution restricted | same pattern: loader provided, data user-supplied |
+| SNOMED CT | UMLS license (free for US affiliates, not redistributable) | ship our derived edges (`PACK_AUTHORED`/`CURATED_DEMO`/`DERIVED_NORMALIZE`); the full NLM ICD-10-CM↔SNOMED map loads from a user-supplied file via `hdh ontology crosswalk` (authority `NLM_UMLS`) — **built, issue #86 part 2**: loader stage, not data |
+| LOINC | free with registration, redistribution restricted | same pattern, same loader: `hdh ontology crosswalk --map loinc-snomed` (authority `LOINC_SNOMED`) — data user-supplied |
 | CPT | AMA-copyrighted, **paid** | schema supports it; hdh will never ship it |
 | ICD-10-PCS / HCPCS | public domain | future loaders, same `LoadStage` pipeline |
 
