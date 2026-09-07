@@ -1,0 +1,6 @@
+ICD_CODE	ICD_NAME	IS_CURRENT_ICD	IP_USAGE	OP_USAGE	AVG_USAGE	IS_NEC	SNOMED_CID	SNOMED_FSN	IS_1-1MAP	CORE_USAGE	IN_CORE
+B999	Glimmer fever, unspecified	TRUE	0.10	0.20	0.15	FALSE	100006006	Blorbitis (disorder)	TRUE	0.15	TRUE
+M1990	Flenum degeneration, unspecified site	TRUE	0.30	0.40	0.35	FALSE	100007002	Acute blorbitis (disorder)	FALSE	0.35	TRUE
+E119	Blorbitic metabolic disorder without complications	TRUE	0.50	0.60	0.55	FALSE	900000001	Phantom disorder not in this catalog (disorder)	TRUE	0.55	TRUE
+Z999	Synthetic mystery encounter	TRUE	0.01	0.02	0.01	FALSE	100008007	Chronic blorbitis (disorder)	TRUE	0.01	FALSE
+R509	Glimmer, unspecified	TRUE	0.05	0.05	0.05	FALSE			TRUE	0.05	TRUE
