@@ -190,9 +190,19 @@ def _add(session, args) -> None:
     if args.dry_run:
         print(f"would add {_value(kind)} order for {args.mrn}: {args.display}")
         return
+    from hdh.core.identity import authorize_cli, resolve_actor
+    from hdh.core.models import EditSource
+
+    # Ordering a medication is a prescribing act (`medication:create`);
+    # ordering a lab, imaging or referral is `chart:create`. A nurse may do
+    # the second and not the first — the distinction the domains carry.
+    permission = "medication:create" if kind is ServiceKind.MEDICATION else "chart:create"
+    identity = authorize_cli(session, permission)
+    actor = resolve_actor(session, identity, EditSource.CLI)
+
     session.add(request)
     session.flush()  # the audit event needs the row id
-    record_creation(session, _actor(session), "ServiceRequest", request, reason="entered at the CLI")
+    record_creation(session, actor, "ServiceRequest", request, reason="entered at the CLI")
     session.commit()
     print(f"✅ order #{request.id} ({_value(kind)}, draft): {args.display}")
 
@@ -219,6 +229,16 @@ def _release(session, args) -> None:
         print("nothing to release (no draft orders matched)")
         return
 
+    from hdh.core.identity import authorize_cli, resolve_actor
+
+    # Releasing is editing an order's status. If any draft is a medication,
+    # activating it is a prescribing act, so the stricter permission governs.
+    from hdh.core.models import EditSource, ServiceKind
+
+    needs_rx = any(row.kind is ServiceKind.MEDICATION for row in drafts)
+    identity = authorize_cli(session, "medication:create" if needs_rx else "chart:edit")
+    actor = resolve_actor(session, identity, EditSource.CLI)
+
     edits = [
         ChartEdit(
             "ServiceRequest",
@@ -229,7 +249,7 @@ def _release(session, args) -> None:
         )
         for row in drafts
     ]
-    outcomes = apply_edits(session, _actor(session), edits, dry_run=args.dry_run)
+    outcomes = apply_edits(session, actor, edits, dry_run=args.dry_run)
     for outcome in outcomes:
         print(("✅ " if outcome.applied else "⚠️  ") + outcome.detail)
     if not all(outcome.applied for outcome in outcomes):

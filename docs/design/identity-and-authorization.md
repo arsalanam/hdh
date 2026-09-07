@@ -164,7 +164,7 @@ doing, since an edit path that records "cli" learns nothing new.
 |---|---|---|
 | **AU1** ✅ | Keycloak in `just deps` + realm import; `hdh login / logout / whoami`; `core.identity` with the fake provider for tests | — |
 | **AU2** | `user_accounts` (subject ↔ provider_id) + seed linking; `Actor` built from `Identity`; hardcoded actor strings die; `provider_id` finally populated | AU1 |
-| **AU3** | permissions as data; enforcement in chartedit/persist/refills; guardrail pre-check tool; service accounts for generator/pipeline/eval | AU2 |
+| **AU3** ~ | permissions as data (`ROLE_PERMISSIONS`) ✅; `may`/`require` + service accounts ✅; **CLI writes** (chart, orders) require login and the permission ✅; **agent guardrail + persist/refills enforcement wait for AU4** (they need the identity in the agent's state); comprehension-apply CLI write adopts the same helper with AU4 | AU2 |
 | **AU4** | user id into agent pipeline + LangGraph state; re-auth on resume; `hdh chart history --actor` and "what did X do today" | AU2 (A4 lands here too) |
 
 A2 from #162 (the fill writes a trail) should not wait for any of this — it

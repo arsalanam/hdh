@@ -63,6 +63,33 @@ def resolve_actor(session, identity: Identity, source):
     return Actor(name=identity.username, source=source, provider_id=provider_id)
 
 
+def authorize_cli(session, permission: str, *, provider=None, now=None, path=None):
+    """The signed-in identity for a CLI write, required to hold ``permission``.
+
+    Writes require a login (design §2.7 / §4.4): a caller who has not run
+    ``hdh login`` is refused with :class:`NotAuthenticated`, and a signed-in
+    caller whose roles lack the permission with :class:`Unauthorized`. Both
+    name the permission, so the refusal teaches rather than just blocks.
+
+    Returns the ``Identity`` so the caller can build the ``Actor`` from it
+    without resolving twice — a CLI write is one authenticate, one actor.
+    """
+    import time
+
+    from hdh.core.identity import SESSION_PATH, current_identity, default_provider
+    from hdh.core.identity.permissions import NotAuthenticated, require
+
+    identity = current_identity(
+        provider or default_provider(),
+        time.time() if now is None else now,
+        path or SESSION_PATH,
+    )
+    if identity is None:
+        raise NotAuthenticated(permission)
+    require(identity, permission)
+    return identity
+
+
 def cli_actor(session, provider=None, now=None, path=None):
     """The ``Actor`` a CLI write is attributed to.
 

@@ -104,7 +104,16 @@ def _edit(session, args) -> None:
         entity = "Visit" if args.visit is not None else args.entity
         edit = ChartEdit(entity, row_id, EditAction.VOID, {}, args.reason)
 
-    outcomes = apply_edits(session, _actor(session), [edit], dry_run=args.dry_run)
+    # A chart edit requires login and the matching permission (AU3): amending
+    # a row is `chart:edit`, voiding one is `chart:void`.
+    from hdh.core.identity import authorize_cli, resolve_actor
+    from hdh.core.models import EditSource
+
+    permission = "chart:void" if edit.action is EditAction.VOID else "chart:edit"
+    identity = authorize_cli(session, permission)
+    actor = resolve_actor(session, identity, EditSource.CLI)
+
+    outcomes = apply_edits(session, actor, [edit], dry_run=args.dry_run)
     for outcome in outcomes:
         print(("✅ " if outcome.applied else "⚠️  ") + outcome.detail)
     if not all(o.applied for o in outcomes):
