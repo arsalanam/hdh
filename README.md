@@ -232,6 +232,47 @@ hdh agent --compact-after 8                 # demo context compaction
 
 ---
 
+## Who is asking — sign-in, roles, and attribution
+
+The agent acts on a patient's chart, so it acts **as a person**, not
+anonymously. Authentication is a Keycloak realm (a dependency container);
+`hdh login` signs a provider in, and every write they make — through the
+agent or the CLI — is checked against their role and recorded in the audit
+trail under their name.
+
+```bash
+just deps                       # brings up PostgreSQL, Redis, and Keycloak
+hdh identity-seed               # link the demo users to provider profiles
+hdh login dr.chen               # prompts for a password (demo: = the username)
+hdh whoami                      # who you are, and your roles
+```
+
+Roles decide what a sign-in may do — the map is data
+([`core/identity/permissions.py`](src/hdh/core/identity/permissions.py)):
+
+| role | may |
+|---|---|
+| **clinician** | full chart write, care-plan author **and** approve, medications |
+| **prescriber** | medications and refills, care-plan approval |
+| **nurse** | the clinical chart, but not prescribing or approval |
+| **clerk** | the person record — demographics, contacts, coverage |
+| **admin** | user administration; **no** clinical writes |
+
+```
+$ hdh login nurse.reed
+$ hdh orders add --mrn MRN… --kind lab --display "CBC"          ✅ allowed
+$ hdh orders add --mrn MRN… --kind medication --display "…"     refused: needs 'medication:create'
+```
+
+Reads stay open; **writes require a login**, and the agent refuses to start
+without one. A care plan authored by one clinician and amended by another
+carries both names in the trail, because each write is attributed to
+whoever is signed in when it happens. Design:
+[identity-and-authorization.md](docs/design/identity-and-authorization.md),
+[attribution-and-audit.md](docs/design/attribution-and-audit.md).
+
+---
+
 ## Run it on PostgreSQL
 
 **Use PostgreSQL.** SQLite works for generation, the chart, exports and the
@@ -491,6 +532,9 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [fhir-emitters.md](docs/design/fhir-emitters.md) ·
   [care-plan-module.md](docs/design/care-plan-module.md) ·
   [interactive-care-planning.md](docs/design/interactive-care-planning.md) ·
+  [patient-chart-completeness.md](docs/design/patient-chart-completeness.md) ·
+  [attribution-and-audit.md](docs/design/attribution-and-audit.md) ·
+  [identity-and-authorization.md](docs/design/identity-and-authorization.md) ·
   [medication-orders-and-refills.md](docs/design/medication-orders-and-refills.md) ·
   [requests-and-read-models.md](docs/design/requests-and-read-models.md)
 - [Note comprehension introduction](docs/articles/note-comprehension-agent-ui.md) —
