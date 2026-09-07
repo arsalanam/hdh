@@ -62,6 +62,7 @@ def test_agent_tools_build(db_session):
     assert {t.name for t in tools} == {
         "get_patient_chart",
         "search_patients",
+        "provider_visits",
         "get_care_gaps",
         "get_risk_scores",
         "query_database",
