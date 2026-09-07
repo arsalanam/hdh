@@ -12,13 +12,20 @@ into the chart ``Actor`` that carries a ``provider_id``.
 
 from __future__ import annotations
 
-from hdh.core.identity.accounts import cli_actor, link, provider_for, resolve_actor
+from hdh.core.identity.accounts import authorize_cli, cli_actor, link, provider_for, resolve_actor
 from hdh.core.identity.fake import FakeProvider
 from hdh.core.identity.identity import (
     AuthError,
     AuthSession,
     Identity,
     IdentityProvider,
+)
+from hdh.core.identity.permissions import (
+    NotAuthenticated,
+    Unauthorized,
+    may,
+    permissions_for,
+    require,
 )
 from hdh.core.identity.session import (
     SESSION_PATH,
@@ -36,6 +43,9 @@ __all__ = [
     "FakeProvider",
     "Identity",
     "IdentityProvider",
+    "NotAuthenticated",
+    "Unauthorized",
+    "authorize_cli",
     "cli_actor",
     "clear",
     "current_identity",
@@ -43,7 +53,10 @@ __all__ = [
     "default_provider",
     "link",
     "load",
+    "may",
+    "permissions_for",
     "provider_for",
+    "require",
     "resolve_actor",
     "save",
 ]

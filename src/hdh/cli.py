@@ -365,6 +365,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_auth_cli(sub)
 
+    # identity-seed (AU2): link the demo Keycloak users to provider profiles.
+    # The dispatch existed but this registration was lost in the AU2 merge —
+    # restored here so `hdh identity-seed` is a known subcommand again.
+    sub.add_parser(
+        "identity-seed",
+        help="Link the demo Keycloak users to provider profiles (idempotent)",
+    )
+
     # list-conditions
     sub.add_parser("list-conditions", help="List all available condition codes")
 
@@ -412,7 +420,7 @@ def main():
 
     from hdh.core.schema_registry import bootstrap_schema
 
-    schema_registry = bootstrap_schema()
+    bootstrap_schema()  # side effect: register modules before any engine opens
 
     if args.command == "migrate":
         cmd_migrate(args)
@@ -432,6 +440,18 @@ def main():
     engine = get_engine(args.db)
     session = get_session(engine)
 
+    # A write refused for want of a login or a role is a clean message and a
+    # non-zero exit, not a traceback (AU3). Reads never raise these.
+    from hdh.core.identity.permissions import NotAuthenticated, Unauthorized
+
+    try:
+        _dispatch(session, args, parser)
+    except (NotAuthenticated, Unauthorized) as refusal:
+        print(f"refused: {refusal}")
+        raise SystemExit(1) from None
+
+
+def _dispatch(session, args, parser) -> None:
     if args.command == "generate":
         print(f"\n🏥 Generating {args.patients:,} patients with {args.years} years of history...")
         build_dataset(
@@ -492,7 +512,9 @@ def main():
                 print(f"  {name:<30} [{profile.icd10_code}] {profile.description}{chronic}{staged}")
 
     elif args.command == "schema":
-        print(schema_registry.describe())
+        from hdh.core.schema_registry import bootstrap_schema
+
+        print(bootstrap_schema().describe())  # idempotent: returns the applied registry
 
     elif args.command == "db-init":
         # The CLI composes: core installs what core needs, and each module
