@@ -282,7 +282,7 @@ Nothing in the current facts measures that, so the grader is reading it
 directly — which is exactly the kind of judgement `facts` exist to take off
 the model.
 
-### 10.1 The second attempt, built but not run (2026-08-30)
+### 10.1 The second attempt, and what running it showed (2026-08-30, run 2026-09-07)
 
 `measurable-goals@3` makes `target_value` required, carried by the prompt
 set so the change stays attributable — **what the model is asked includes
@@ -297,20 +297,33 @@ exactly that. The requirement forces a decision, not a figure.
 grading split in §11, which changed no goal instruction — a reminder that a
 version tracks *the set*, not the one prompt someone happens to be studying.)
 
-**It has not been run.** The Anthropic account is out of credit, so the
-tuning run failed at the first call with a 400 and produced no plans.
-Everything deterministic is verified — the schema follows the active set,
-`default` is unmoved, `target_value` stays optional there and offered in
-both — but whether requiring the key actually produces targets is **not
-known**, and nothing in this repository should be read as saying it does.
+**Run 2026-09-07, and the answer is no** (#158). Two patients through
+`hdh careplan tune --after measurable-goals`, on the re-baseline retriever
+(vector+rerank), chosen deliberately to make the question fair:
 
-To find out, when the account has credit:
+| patient | goals | `default` targets | `measurable-goals@3` targets |
+|---|---|---|---|
+| MRN57649249 — 84 y, CKD, polypharmacy | 16–18 | **0** | **0** |
+| MRN32553804 — uncontrolled diabetes, hypertension, hyperlipidaemia | 4 | **0** | **0** |
 
-```
-hdh careplan tune --mrn MRN06934949 --after measurable-goals --html ./out
-```
+**Requiring the key changed nothing.** The second patient is the decisive
+one: HbA1c and a blood-pressure range are the obvious numeric targets, and
+the model still emitted an empty `target_value` for every goal, exactly as
+under `default`. `goal_quality` scored 3 → 3 on both.
 
-The diagnostic is not the score. It is whether any goal carries a target:
-`goals carrying a target` in the tune output, or `class="target"` in the
-rendered page. That question is answered by two plans, and it decides
-whether a cohort run is worth spending on at all.
+The reason is visible in the goals themselves. Forced to emit the key, the
+model does not invent a number — it selects goals shaped as *processes* and
+*capabilities*: "medications reviewed against a relaxed glycaemic target",
+"able to recognise and respond to hypoglycaemia". An empty target on a
+process goal is honest, which is what the instruction asked for; the
+requirement forced a decision and the decision was *no number, because this
+goal is not a number*.
+
+**So the lever is goal SELECTION, not the field.** Making `target_value`
+required cannot manufacture a target the goal does not have; producing
+measurable goals means asking the model for outcome-shaped goals with an
+explicit bound (an HbA1c, a BP, a weight) in the first place — a larger
+change to the goals instruction and the retrieved evidence than a required
+key. **A cohort run on `measurable-goals` is therefore not worth spending
+on**: this diagnostic shows it would measure 0 against 0. That is exactly
+what the two-plan check exists to decide before a 24-plan one.
