@@ -13,7 +13,7 @@ import random
 import string
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from typing import NamedTuple
 
 from faker import Faker
@@ -22,25 +22,31 @@ from sqlalchemy import update as sa_update
 
 from .conditions import ConditionCatalog, LabSpec, RxKind, SamplingContext, Stage, default_catalog
 from .models import (
+    Address,
     Allergy,
     AllergySeverity,
     Condition,
     ConditionStatus,
+    Contact,
     FamilyHistory,
     FamilyMember,
     Immunization,
     LabResult,
     LabStatus,
+    Location,
+    LocationSpecialty,
     MedicationDispense,
     MedicationStatement,
     MedicationStatus,
     NoteType,
+    Organization,
     Patient,
     Prescription,
     Procedure,
     Provider,
     RequestOrigin,
     RequestStatus,
+    ServiceHours,
     ServiceKind,
     ServiceRequest,
     Specialty,
@@ -306,6 +312,90 @@ def seed_providers(session) -> list[Provider]:
         providers.append(provider)
     session.flush()
     return providers
+
+
+#: The practice's sites, as fixed reference data — (location name, then the
+#: specialty codes offered there with their own clinic phone). Deliberately
+#: literal and RNG-free: this seeds during the same build as the cohort, and
+#: one `random`/`fake` call here would shift every patient drawn afterwards
+#: and break "same seed, same dataset".
+PRACTICE_SITES = (
+    (
+        "North Family Medicine Clinic",
+        "425 Oakhurst Ave",
+        "Springfield",
+        "IL",
+        "62704",
+        (("FM", "217-555-0110"), ("PED", "217-555-0111")),
+    ),
+    (
+        "Downtown Internal Medicine",
+        "88 Capitol Blvd, Suite 300",
+        "Springfield",
+        "IL",
+        "62701",
+        (("IM", "217-555-0120"), ("FM", "217-555-0121")),
+    ),
+)
+#: Weekday clinic hours, Monday–Friday 08:00–17:00 (day_of_week 0–4).
+_CLINIC_HOURS = tuple((weekday, time(8, 0), time(17, 0)) for weekday in range(5))
+
+
+def seed_organization(session) -> Organization:
+    """Create (or fetch) the practice organisation, its locations, and the
+    specialty clinics — with addresses, contacts and weekly hours.
+
+    Reference data, seeded once and idempotently, exactly like
+    :func:`seed_providers`. It does NOT stamp visits with a location — that,
+    and the cohort re-baseline it needs, is deliberately out of scope here so
+    the schema can land without changing generated patient data.
+    """
+    existing = session.query(Organization).first()
+    if existing is not None:
+        return existing
+
+    org = Organization(
+        name="HDH Family Medicine Associates", tax_id="36-4820199", npi="1982746500", active=True
+    )
+    session.add(org)
+    session.flush()
+    org.addresses.append(
+        Address(
+            use="billing",
+            line="425 Oakhurst Ave",
+            city="Springfield",
+            state="IL",
+            postal_code="62704",
+            country="US",
+        )
+    )
+    org.contacts.append(Contact(system="phone", use="main", value="217-555-0100", rank=1))
+    org.contacts.append(Contact(system="email", use="billing", value="billing@hdh-fma.example", rank=2))
+
+    specialties = {s.code: s for s in session.query(Specialty).all()}
+    for name, line, city, state, postal, offered in PRACTICE_SITES:
+        location = Location(organization_id=org.id, name=name, active=True)
+        session.add(location)
+        session.flush()
+        location.addresses.append(
+            Address(use="physical", line=line, city=city, state=state, postal_code=postal, country="US")
+        )
+        location.contacts.append(Contact(system="phone", use="main", value="217-555-0130", rank=1))
+        for code, phone in offered:
+            specialty = specialties.get(code)
+            if specialty is None:
+                continue
+            clinic = LocationSpecialty(location_id=location.id, specialty_id=specialty.id, phone=phone)
+            session.add(clinic)
+            session.flush()
+            for weekday, opens, closes in _CLINIC_HOURS:
+                session.add(
+                    ServiceHours(
+                        location_specialty_id=clinic.id, day_of_week=weekday, opens=opens, closes=closes
+                    )
+                )
+    session.flush()
+    return org
 
 
 def _primary_provider(providers: Sequence[Provider], age: int) -> Provider:
@@ -1533,6 +1623,7 @@ def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE th
     _issued_mrns.update(mrn for (mrn,) in session.query(Patient.mrn))
 
     providers = seed_providers(session)
+    seed_organization(session)  # reference data; RNG-free so the cohort is unchanged
     scope = RunScope(
         catalog=catalog or default_catalog(),
         providers=tuple(providers),

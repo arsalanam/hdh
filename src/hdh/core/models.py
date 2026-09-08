@@ -10,11 +10,12 @@ richness through schema-registry extension modules, never core changes.
 """
 
 import enum
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -23,6 +24,8 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy import Enum as SAEnum
@@ -246,6 +249,215 @@ class UserAccount(Base):
     provider: Mapped["Provider | None"] = relationship()
 
 
+# ─── Institution, location, and the shared address/contact tables ────────────
+#
+# The thin-entity plan (core-chart-expansion §3) foresaw that Provider and
+# Specialty would eventually need their substance — "credentials, schedules,
+# institutions, panels". This is the institution half: the organisation a
+# service belongs to, the physical location it happened at, and the specialty
+# clinics a location runs. It answers a question the chart could not: *where*
+# a provider recorded a vital, saw a patient, or performed a procedure.
+#
+# `Address` and `Contact` are shared, not per-owner: one table each, with a
+# real foreign key per owner type and a CHECK that exactly one is set. That
+# keeps referential integrity (unlike an owner_type/owner_id pair) while
+# still being reused across organisations and locations — and later patients,
+# by adding a column, not a table.
+
+
+class Organization(Base):
+    """An institution — the legal entity a service is billed and attributed to.
+
+    Thin on purpose, like Provider: a name and the identifiers that make it
+    real to other systems (a tax id / EIN, an NPI). Its corporate address and
+    phone live in the shared :class:`Address`/:class:`Contact` tables rather
+    than as columns, because an organisation has more than one of each (a
+    physical seat and a billing address are not the same place) and each
+    carries its own ``use`` and validity ``period``.
+    """
+
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(160))
+    #: Employer Identification Number (US tax id), the institution's billing
+    #: identity. Nullable: a division or an imported record may not carry one.
+    tax_id: Mapped[str | None] = mapped_column(String(32))
+    #: Organisational NPI, distinct from a provider's individual NPI.
+    npi: Mapped[str | None] = mapped_column(String(20))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    locations: Mapped[list["Location"]] = relationship(
+        back_populates="organization", cascade="all, delete-orphan"
+    )
+    addresses: Mapped[list["Address"]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        primaryjoin="Organization.id == Address.organization_id",
+    )
+    contacts: Mapped[list["Contact"]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        primaryjoin="Organization.id == Contact.organization_id",
+    )
+
+
+class Location(Base):
+    """A physical place a service is delivered — a clinic, a site, a building.
+
+    Belongs to an :class:`Organization`; carries its own address and phone in
+    the shared tables. A visit, and a procedure, point here to say where they
+    happened — which is what makes "which site recorded this vital" answerable
+    and, downstream, lets a caseload be read by site.
+    """
+
+    __tablename__ = "locations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    organization: Mapped["Organization"] = relationship(back_populates="locations")
+    specialties: Mapped[list["LocationSpecialty"]] = relationship(
+        back_populates="location", cascade="all, delete-orphan"
+    )
+    addresses: Mapped[list["Address"]] = relationship(
+        back_populates="location",
+        cascade="all, delete-orphan",
+        primaryjoin="Location.id == Address.location_id",
+    )
+    contacts: Mapped[list["Contact"]] = relationship(
+        back_populates="location",
+        cascade="all, delete-orphan",
+        primaryjoin="Location.id == Contact.location_id",
+    )
+
+
+class LocationSpecialty(Base):
+    """A specialty offered at a location — its own phone and weekly hours.
+
+    A location runs several clinics, and the cardiology clinic's number and
+    Monday–Friday hours are not the building's. So the specialty-at-a-location
+    is its own row: the contact you actually ring, and the schedule you are
+    actually seen within. Hours hang off *this*, not the location, for that
+    reason (:class:`ServiceHours`).
+    """
+
+    __tablename__ = "location_specialties"
+    __table_args__ = (UniqueConstraint("location_id", "specialty_id", name="uq_location_specialty"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), index=True)
+    specialty_id: Mapped[int] = mapped_column(ForeignKey("specialties.id"), index=True)
+    #: The number to ring for this clinic — distinct from the location's main
+    #: line, which is why it is here and not a shared Contact row.
+    phone: Mapped[str | None] = mapped_column(String(40))
+
+    location: Mapped["Location"] = relationship(back_populates="specialties")
+    specialty: Mapped["Specialty"] = relationship()
+    hours: Mapped[list["ServiceHours"]] = relationship(
+        back_populates="location_specialty", cascade="all, delete-orphan"
+    )
+
+
+class ServiceHours(Base):
+    """One open block, on one weekday, for a location-specialty clinic.
+
+    A row per block rather than open/close columns on the clinic so a split
+    day — a morning and an afternoon session with lunch between — is two rows,
+    not an unrepresentable single range. ``day_of_week`` is 0=Monday … 6=Sunday
+    (``date.weekday()``), the convention the rest of the codebase's date math
+    already uses.
+    """
+
+    __tablename__ = "service_hours"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    location_specialty_id: Mapped[int] = mapped_column(ForeignKey("location_specialties.id"), index=True)
+    #: 0 = Monday … 6 = Sunday.
+    day_of_week: Mapped[int] = mapped_column(Integer)
+    opens: Mapped[time | None] = mapped_column(Time)
+    closes: Mapped[time | None] = mapped_column(Time)
+
+    location_specialty: Mapped["LocationSpecialty"] = relationship(back_populates="hours")
+
+
+class Address(Base):
+    """A postal address, owned by exactly one of the entities that can have one.
+
+    Shared rather than per-owner: the same shape (`use`, validity `period`,
+    the address lines) serves an organisation and a location, and the owner is
+    a real foreign key — ``organization_id`` or ``location_id`` — with a CHECK
+    that exactly one is set. A new owner type is a new nullable column and a
+    new arm of the CHECK, never a new table.
+    """
+
+    __tablename__ = "addresses"
+    __table_args__ = (
+        CheckConstraint(
+            "(CASE WHEN organization_id IS NULL THEN 0 ELSE 1 END + "
+            "CASE WHEN location_id IS NULL THEN 0 ELSE 1 END) = 1",
+            name="ck_address_one_owner",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), index=True)
+    #: 'physical' | 'postal' | 'billing' | 'mailing'
+    use: Mapped[str] = mapped_column(String(16), default="physical")
+    line: Mapped[str | None] = mapped_column(String(200))
+    city: Mapped[str | None] = mapped_column(String(80))
+    state: Mapped[str | None] = mapped_column(String(40))
+    postal_code: Mapped[str | None] = mapped_column(String(16))
+    country: Mapped[str | None] = mapped_column(String(60))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+
+    organization: Mapped["Organization | None"] = relationship(
+        back_populates="addresses", foreign_keys=[organization_id]
+    )
+    location: Mapped["Location | None"] = relationship(back_populates="addresses", foreign_keys=[location_id])
+
+
+class Contact(Base):
+    """A way to reach an organisation or a location — one owner, like Address.
+
+    Mirrors :class:`PatientContact`'s shape (`system`, `use`, `rank`,
+    validity `period`) so "which number do I ring, and is it current" reads
+    the same everywhere; owned by exactly one entity through a real FK and the
+    same one-owner CHECK.
+    """
+
+    __tablename__ = "contacts"
+    __table_args__ = (
+        CheckConstraint(
+            "(CASE WHEN organization_id IS NULL THEN 0 ELSE 1 END + "
+            "CASE WHEN location_id IS NULL THEN 0 ELSE 1 END) = 1",
+            name="ck_contact_one_owner",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), index=True)
+    #: 'phone' | 'email' | 'fax' | 'sms' | 'other'
+    system: Mapped[str] = mapped_column(String(16))
+    #: 'main' | 'billing' | 'appointments' | 'work'
+    use: Mapped[str | None] = mapped_column(String(16))
+    value: Mapped[str] = mapped_column(String(120))
+    #: 1 is the one to try first.
+    rank: Mapped[int | None] = mapped_column(Integer)
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+
+    organization: Mapped["Organization | None"] = relationship(
+        back_populates="contacts", foreign_keys=[organization_id]
+    )
+    location: Mapped["Location | None"] = relationship(back_populates="contacts", foreign_keys=[location_id])
+
+
 # ─── Patient and family ──────────────────────────────────────────────────────
 
 
@@ -454,6 +666,9 @@ class Visit(Base):
     visit_type: Mapped[VisitType] = mapped_column(SAEnum(VisitType))
     chief_complaint: Mapped[str | None] = mapped_column(String(200))
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    #: Where the encounter happened. Nullable: historical and imported visits
+    #: predate the location layer, and a chart must be able to say "unknown".
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
     #: The FOLLOW_UP request this visit answers, when it answers one. Most
     #: visits do not: people attend without being asked, and a nullable link
     #: says both without inventing a request to point at.
@@ -470,6 +685,7 @@ class Visit(Base):
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
     provider: Mapped["Provider | None"] = relationship()
+    location: Mapped["Location | None"] = relationship()
     vitals: Mapped["Vital | None"] = relationship(back_populates="visit", cascade="all, delete-orphan")
     conditions: Mapped[list["Condition"]] = relationship(back_populates="visit")
     prescriptions: Mapped[list["Prescription"]] = relationship(
@@ -962,6 +1178,10 @@ class Procedure(Base):
     laterality: Mapped[str | None] = mapped_column(String(16))
     performed_date: Mapped[date | None] = mapped_column(Date)
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    #: Where it was performed. Often the encounter's location, but not always
+    #: — day surgery and referrals happen elsewhere, so this is its own link
+    #: rather than inherited from the visit.
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
     #: The request this fulfils. NULL means "happened without being ordered"
     #: — historical rows, external imports, and things nobody asked for,
     #: all of which a chart has to be able to say.
@@ -970,6 +1190,7 @@ class Procedure(Base):
     patient: Mapped["Patient"] = relationship(back_populates="procedures")
     visit: Mapped["Visit | None"] = relationship(back_populates="procedures")
     provider: Mapped["Provider | None"] = relationship()
+    location: Mapped["Location | None"] = relationship()
 
 
 class Medication(Base):

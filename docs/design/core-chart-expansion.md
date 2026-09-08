@@ -233,3 +233,54 @@ the regenerated dataset goes in the release notes.
    Condition.
 5. **Emergency contact is a `FamilyMember` FK** — the relationship
    entity will serve that role for a long time.
+
+## 12. Institution and location (addendum, 2026-09-08)
+
+§3 flagged that the thin `Provider`/`Specialty` rows would one day need
+their substance — "credentials, schedules, institutions, panels". This is
+the institution half, added after a review found the model could not say
+*where* a service happened.
+
+**Entities.**
+
+```
+Organization       (id, name, tax_id, npi, active)        # the institution
+Location           (id, organization_id, name, active)    # a physical site
+LocationSpecialty  (id, location_id, specialty_id, phone)  # a clinic at a site
+ServiceHours       (id, location_specialty_id, day_of_week, opens, closes)
+Address            (id, organization_id?, location_id?, use, line, …, period)
+Contact            (id, organization_id?, location_id?, system, use, value, rank, period)
+```
+
+`Visit` and `Procedure` gain a nullable `location_id`: the encounter, and a
+procedure that may have happened elsewhere (day surgery, a referral), each
+say where. Vitals inherit their site through the visit. Nullable throughout,
+so no existing row is invalidated.
+
+**Three decisions worth recording.**
+
+1. **Shared address/contact, not per-owner.** One `addresses` and one
+   `contacts` table serve both owners through a real FK — `organization_id`
+   or `location_id` — with a CHECK that *exactly one* is set
+   (`ck_address_one_owner` / `ck_contact_one_owner`, written portably with a
+   `CASE` sum so SQLite and PostgreSQL agree). This keeps referential
+   integrity, which an `owner_type`/`owner_id` pair would give up, while
+   still being genuinely shared. A future owner (a patient, a provider) is a
+   new nullable column and a new arm of the CHECK — not a new table. The
+   existing per-owner `patient_addresses`/`patient_contacts` are left in
+   place; folding them in is a later, separate migration.
+
+2. **Hours and contact live on the specialty-at-a-location.** The cardiology
+   clinic's number and Monday–Friday hours are not the building's, so
+   `LocationSpecialty` carries the phone and `ServiceHours` hangs off it. A
+   row per open block per weekday (`day_of_week` 0=Mon…6=Sun, matching
+   `date.weekday()`) so a split day — a morning and an afternoon session —
+   is two rows, not an unrepresentable single range.
+
+3. **Schema first; the cohort is not re-stamped.** The generator seeds a
+   practice `Organization`, its `Location`s, their specialty clinics and
+   weekly hours as fixed, RNG-free reference data (so the same seed still
+   yields the same patients), but does **not** stamp a `location_id` onto
+   every generated visit. Wiring locations across the whole cohort — and the
+   re-baseline it requires — is deliberately deferred, so this migration adds
+   only nullable columns and empty-until-seeded tables.
