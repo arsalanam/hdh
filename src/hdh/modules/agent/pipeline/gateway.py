@@ -102,8 +102,8 @@ INTENT_SCHEMA = {
 # relevant tables appear in the SQL tool's schema description. Unknown intents
 # (and every retry after a failed validation) fall back to the full set.
 INTENT_TOOLS: dict[str, set[str]] = {
-    "patient_lookup": {"get_patient_chart", "search_patients", "query_database"},
-    "cohort_search": {"search_patients", "query_database", "get_care_gaps"},
+    "patient_lookup": {"get_patient_chart", "search_patients", "provider_visits", "query_database"},
+    "cohort_search": {"search_patients", "provider_visits", "query_database", "get_care_gaps"},
     "risk": {"get_risk_scores", "query_database", "search_patients"},
     "care_gaps": {"get_care_gaps", "query_database", "get_patient_chart"},
     "stats": {"dataset_stats", "query_database"},
