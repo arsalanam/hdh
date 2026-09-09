@@ -22,6 +22,7 @@ from hdh.core.models import (
     LabStatus,
     Patient,
     Prescription,
+    Sex,
     Visit,
     VisitType,
     Vital,
@@ -161,8 +162,10 @@ def extract_features(
                 age,
                 # Same substring trap as the exporter: this encoded every
                 # patient as male, so the model's sex feature was a constant
-                # and carried no information at all.
-                1 if (p.sex is not None and p.sex.is_male) else 0,
+                # and carried no information at all. Sex(...) coerces the value
+                # whether the ORM handed back a Sex member or the raw "M"/"F"
+                # the generator stores (they differ by reload state).
+                1 if (p.sex is not None and Sex(p.sex).is_male) else 0,
                 1 if p.smoker else 0,
                 p.bmi_baseline or 25.0,
                 fam_hx,
