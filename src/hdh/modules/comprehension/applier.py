@@ -103,10 +103,13 @@ def apply_to_chart(
     ``target.provider_id``. ``dry_run`` computes every verdict and then
     rolls the whole transaction back — repeatable testing against an
     unchanged chart."""
-    from hdh.core.models import Visit, VisitType
+    from hdh.core.models import Visit, VisitType, primary_location_id
 
     target = target or VisitTarget()
     visit, visit_date, provider_id = target.visit, target.visit_date, target.provider_id
+    # Where the encounter happened: the recording provider's home site. A
+    # provider with no location link leaves it None — unknown, not guessed.
+    location_id = primary_location_id(session, provider_id)
     created = False
     if visit is None:
         visit = Visit(
@@ -115,15 +118,19 @@ def apply_to_chart(
             visit_type=VisitType.FOLLOW_UP,
             chief_complaint=_chief_complaint(note),
             provider_id=provider_id,
+            location_id=location_id,
         )
         session.add(visit)
         session.flush()
         created = True
-    elif provider_id is not None and visit.provider_id is None:
-        # reconciling into an existing unattributed visit: the note names
-        # its author, so record it — but never overwrite an attribution
-        # the chart already has
-        visit.provider_id = provider_id
+    else:
+        # reconciling into an existing visit: record the note's author and
+        # site where the chart has none, but never overwrite what it already
+        # holds.
+        if provider_id is not None and visit.provider_id is None:
+            visit.provider_id = provider_id
+        if location_id is not None and visit.location_id is None:
+            visit.location_id = location_id
     result = ApplyResult(visit_id=visit.id, created_visit=created)
 
     _apply_conditions(session, patient, visit, note, result)

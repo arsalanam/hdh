@@ -458,6 +458,49 @@ class Contact(Base):
     location: Mapped["Location | None"] = relationship(back_populates="contacts", foreign_keys=[location_id])
 
 
+class ProviderLocation(Base):
+    """Where a provider practices — the link that lets a new encounter know
+    its site (issue #169, the location half of AU4).
+
+    A provider works at one or more locations; ``is_primary`` marks their home
+    site, the one a newly-recorded encounter defaults to. Kept as an
+    association row rather than a column on the thin ``Provider`` so a
+    provider can practise at several sites and the set can grow without
+    touching the reference entity.
+    """
+
+    __tablename__ = "provider_locations"
+    __table_args__ = (UniqueConstraint("provider_id", "location_id", name="uq_provider_location"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id"), index=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), index=True)
+    #: The provider's home site — one per provider by convention; a new
+    #: encounter this provider records lands here unless told otherwise.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    provider: Mapped["Provider"] = relationship()
+    location: Mapped["Location"] = relationship()
+
+
+def primary_location_id(session, provider_id: int | None) -> int | None:
+    """The location a provider's new encounter should be recorded at.
+
+    Their ``is_primary`` site if one is marked, else any site they practise
+    at, else ``None`` — a provider with no recorded location leaves the
+    encounter's location unknown rather than guessing at one.
+    """
+    if provider_id is None:
+        return None
+    rows = (
+        session.query(ProviderLocation)
+        .filter(ProviderLocation.provider_id == provider_id)
+        .order_by(ProviderLocation.is_primary.desc(), ProviderLocation.location_id)
+        .all()
+    )
+    return rows[0].location_id if rows else None
+
+
 # ─── Patient and family ──────────────────────────────────────────────────────
 
 
