@@ -69,8 +69,11 @@ def build_chart_tools(session, *, identity=None) -> list:
             return f"changes must be a JSON object of field/value pairs: {err}"
         if not isinstance(parsed, dict) or not parsed:
             return 'changes must be a non-empty JSON object, e.g. {"status": "resolved"}'
+        actor = _chart_actor(session, identity, "chart:edit", reason)
+        if isinstance(actor, str):
+            return actor  # a signed-in role that may not amend the chart
         edit = ChartEdit(entity, row_id, EditAction.AMEND, parsed, reason)
-        return _outcome_payload(apply_edits(session, _agent_actor(session, reason), [edit], dry_run=dry_run))
+        return _outcome_payload(apply_edits(session, actor, [edit], dry_run=dry_run))
 
     @beta_tool
     @guard
@@ -85,8 +88,11 @@ def build_chart_tools(session, *, identity=None) -> list:
         """
         from hdh.core.chartedit import ChartEdit, EditAction, apply_edits
 
+        actor = _chart_actor(session, identity, "chart:void", reason)
+        if isinstance(actor, str):
+            return actor  # a signed-in role that may not void chart rows
         edit = ChartEdit(entity, row_id, EditAction.VOID, {}, reason)
-        return _outcome_payload(apply_edits(session, _agent_actor(session, reason), [edit], dry_run=dry_run))
+        return _outcome_payload(apply_edits(session, actor, [edit], dry_run=dry_run))
 
     @beta_tool
     @guard
@@ -127,10 +133,38 @@ def build_chart_tools(session, *, identity=None) -> list:
     return [amend_chart_entry, void_chart_entry, chart_history]
 
 
+def _chart_actor(session, identity, permission: str, reason: str):
+    """Who a chart edit is attributed to, and whether it is allowed (AU4).
+
+    With a signed-in identity this is the whole point of the login: the edit
+    carries that person — ``actor_name`` is their username and the event a
+    real ``provider_id`` — and a role that lacks ``permission`` is refused,
+    the refusal returned as a string so the model learns why. Without an
+    identity (the eval harness, headless tests) it falls back to
+    :func:`_agent_actor`, the name-from-reason guess that predates login.
+
+    Returns an :class:`~hdh.core.chartedit.Actor`, or a refusal string.
+    """
+    if identity is None:
+        return _agent_actor(session, reason)
+    from hdh.core.identity import resolve_actor
+    from hdh.core.identity.permissions import NotAuthenticated, Unauthorized, require
+    from hdh.core.models import EditSource
+
+    try:
+        require(identity, permission)
+    except (Unauthorized, NotAuthenticated) as refusal:
+        return str(refusal)
+    return resolve_actor(session, identity, EditSource.AGENT)
+
+
 def _agent_actor(session, reason: str):
-    """Attribution for an agent-made change: the provider named in the
-    reason when there is one, else the agent itself (design §7 Q3 — real
-    user accounts arrive with authentication)."""
+    """Attribution when there is no signed-in identity (eval/headless): the
+    provider named in the reason when there is one, else the agent itself.
+
+    This is the pre-login fallback. With a login, :func:`_chart_actor`
+    attributes to the signed-in provider instead of guessing from the text.
+    """
     import re
 
     from hdh.core.chartedit import Actor
