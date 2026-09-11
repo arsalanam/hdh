@@ -12,12 +12,35 @@ whole run can be inspected by (``hdh trace show <id>``).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 AskFn = Callable[[str], dict]
+#: A streaming backend: yields ("stage"|"answer"|"error", payload) events.
+StreamFn = Callable[[str], Iterator[tuple[str, dict]]]
+
+#: Internal pipeline stage → the phrase a person reads while they wait. Anything
+#: not here (e.g. "gateway" bookkeeping) passes through title-cased.
+_STAGE_LABELS = {
+    "guardrails": "Checking the question…",
+    "intent": "Thinking…",
+    "tool-executor": "Fetching data…",
+    "assembler": "Assembling the answer…",
+    "validator": "Checking the answer…",
+}
+
+
+def _label(stage: str) -> str:
+    """The human-facing label for a pipeline stage."""
+    return _STAGE_LABELS.get(stage, stage.replace("-", " ").replace("_", " ").capitalize())
+
+
+def _sse(event: str, data: dict) -> str:
+    """One Server-Sent Events frame."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 class AskRequest(BaseModel):
@@ -87,15 +110,73 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
     return ask
 
 
-def create_app(ask: AskFn | None = None, *, db_path: str = "family_medicine.db", model: str | None = None):
+def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
+    """The default streaming backend: run the gateway on a worker thread and
+    relay its stage callbacks live, then the validated answer.
+
+    The pipeline is synchronous (``graph.invoke``), so the work runs on a
+    thread whose ``trace`` callback pushes stage events onto a queue; this
+    generator drains the queue as they arrive and yields the final answer once
+    the thread finishes. Stages stream live; the *answer* is only emitted after
+    the response validator has passed — the grounding guarantee, unchanged.
+    """
+
+    def stream(question: str) -> Iterator[tuple[str, dict]]:
+        import queue
+        import threading
+
+        events: queue.Queue = queue.Queue()
+        done = object()
+        outcome: dict[str, dict] = {}
+
+        def trace(stage: str, message: str) -> None:
+            events.put(("stage", {"stage": stage, "label": _label(stage), "detail": message}))
+
+        def work() -> None:
+            from hdh.core.models import get_engine, get_session
+            from hdh.modules.agent.pipeline import Gateway
+
+            # request-scoped session, on this worker thread; see _gateway_ask.
+            session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
+            try:
+                gateway = Gateway(session, model=model, source="ui", identity=None, trace=trace)
+                outcome["answer"] = _normalize(gateway.ask(question), gateway.run_id)
+            except Exception as error:  # noqa: BLE001 - surfaced to the client as an error event
+                outcome["error"] = {"detail": f"{type(error).__name__}: {error}"}
+            finally:
+                session.close()
+                events.put(done)
+
+        worker = threading.Thread(target=work, daemon=True)
+        worker.start()
+        while True:
+            item = events.get()
+            if item is done:
+                break
+            yield item
+        worker.join()
+        yield ("error", outcome["error"]) if "error" in outcome else ("answer", outcome["answer"])
+
+    return stream
+
+
+def create_app(
+    ask: AskFn | None = None,
+    *,
+    stream: StreamFn | None = None,
+    db_path: str = "family_medicine.db",
+    model: str | None = None,
+):
     """Build the agent HTTP app.
 
-    ``ask`` overrides the agent backend (tests inject a fake); by default it is
-    a real gateway bound to ``db_path`` / ``HDH_DB_URL``.
+    ``ask`` / ``stream`` override the agent backend (tests inject fakes); by
+    default both are real gateways bound to ``db_path`` / ``HDH_DB_URL``.
     """
     from fastapi import FastAPI, HTTPException
+    from fastapi.responses import StreamingResponse
 
     run_ask: AskFn = ask or _gateway_ask(db_path=db_path, model=model)
+    run_stream: StreamFn = stream or _gateway_stream(db_path=db_path, model=model)
 
     app = FastAPI(
         title="HDH Agent API",
@@ -120,5 +201,24 @@ def create_app(ask: AskFn | None = None, *, db_path: str = "family_medicine.db",
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
         return run_ask(question)
+
+    @app.post("/ask/stream")
+    def ask_stream(body: AskRequest) -> Any:
+        """Ask the agent, streamed. Server-Sent Events: ``stage`` frames as the
+        agent works (thinking, fetching data, assembling, checking), then one
+        ``answer`` frame with the validated result — or an ``error`` frame.
+
+        The answer is emitted only after the response validator passes; the
+        stages are the live progress, not ungrounded draft text.
+        """
+        question = body.question.strip()
+        if not question:
+            raise HTTPException(status_code=422, detail="question must not be empty")
+
+        def frames() -> Iterator[str]:
+            for event, data in run_stream(question):
+                yield _sse(event, data)
+
+        return StreamingResponse(frames(), media_type="text/event-stream")
 
     return app
