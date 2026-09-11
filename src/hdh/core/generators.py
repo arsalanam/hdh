@@ -420,7 +420,8 @@ def seed_provider_locations(session, providers: Sequence[Provider]) -> None:
     ):
         sites_for.setdefault(specialty_id, []).append(location_id)
     for provider in providers:
-        location_ids = sites_for.get(provider.specialty_id, [])
+        # specialty_id is nullable; a provider with no specialty has no site.
+        location_ids = sites_for.get(provider.specialty_id, []) if provider.specialty_id is not None else []
         for rank, location_id in enumerate(location_ids):
             session.add(
                 ProviderLocation(provider_id=provider.id, location_id=location_id, is_primary=(rank == 0))
