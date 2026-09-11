@@ -123,19 +123,33 @@ resource-owner flow but **not** across the browser trust boundary. The API
 must verify signatures via the provider realm's JWKS — a new, small
 verification step, not a change to the identity model.)
 
-## 8. File upload — later (Tus), and the boundary that guards it
+## 8. File upload — later (Tus), and what it is *not*
 
-Tus resumable upload to a `/files` endpoint, then the honest part #88 names: a
-**PDF or image is not text yet.** An OCR/vision pre-pass must produce text (or
-structured values) *before* the pipeline sees it, and it meets the same gate —
-an ambiguous scanned value reaches the **review queue**, never a confident
-guess.
+Tus resumable upload to a `/files` endpoint, for one purpose: **saving the
+provider from typing**. What a clinician uploads is a **note** — a handwritten
+encounter note, an audio note, or a scanned old report — and it is treated as
+one, always. A **PDF, image or audio clip is not text yet**, so an
+OCR/vision/speech pre-pass produces text *before* the pipeline sees it, and
+that text meets the same gate as a typed note: an ambiguous transcribed value
+reaches the **review queue**, never a confident guess. (Audio is the #87
+speech front door arriving through this same door.)
 
-And the boundary that must be settled before an upload button exists (#88,
-§10.0): an imported **lab report carrying real results is not a note asserting
-them**. If it has results it arrives through `interchange` and matches an
-order; only narrative documents go through comprehension. The upload flow
-routes by that distinction rather than treating every file as a note.
+What an upload is **not**, and the boundary that matters:
+
+- **Not lab results.** Even an old report with numbers on it becomes
+  **narrative text in the chart's history** — it does not become
+  `LabResult` rows. Structured, LOINC-coded results are a different channel
+  entirely: they arrive through `interchange`, matched to an order. A report a
+  provider scans in is the provider *telling the chart something*, not a
+  result feed asserting values.
+- **Not orders.** A treatment or order a provider dictates is applied to the
+  chart and goes to Pharmacy for fulfilment through the order path — it is not
+  conjured by an upload.
+
+So the upload flow never routes to `interchange` and never writes results or
+orders: it is one more **front door onto the note-comprehension path**, never
+a new set of rules. The distinction is not "route by file contents" but "a
+file a provider uploads is always a note."
 
 ## 9. The typed chart spec — later (#88)
 
@@ -156,7 +170,7 @@ the chat/history/streaming core works.
 | **3 · History** | per-caller run scoping; `/conversations` + `/conversations/{id}`; resumable `conversation_id` | scroll back through prior conversations |
 | **4 · The React SPA** | Vite React app — ask box, streamed stages, answer + verdict view, history sidebar — built and served by FastAPI | the front door a clinician clicks |
 | **5 · Login** | Keycloak OIDC (provider realm only, JWKS-verified); identity threaded; realm separation enforced | who is asking, without mixing realms |
-| **6 · Upload** | Tus `/files`; OCR/vision pre-pass with verdicts; interchange-vs-note routing | type, talk, *or* upload — one gate |
+| **6 · Upload** | Tus `/files`; OCR/vision/speech pre-pass with verdicts; every upload is a note → comprehension → chart history (never results or orders) | type, talk, *or* upload — one gate, one path |
 | **7 · Charts** | typed chart spec, `--chart` parity, UI renderer | a dashboard is a grounded, inspectable answer |
 
 Each phase is independently mergeable; 1–4 are the usable core.
@@ -168,5 +182,9 @@ Each phase is independently mergeable; 1–4 are the usable core.
   validated.
 - No realm mixing — provider and patient identities are separate realms,
   forever.
+- An uploaded file is always a **note** — transcribed to text and charted as
+  history. It never becomes a `LabResult` (those are LOINC-coded, via
+  `interchange`) or an order (created in-chart → Pharmacy). Tus saves typing,
+  not a new write path.
 - Auth, multi-tenancy and consent beyond the above remain the
   HITRUST/HIPAA workstream #88 points at, not this module.
