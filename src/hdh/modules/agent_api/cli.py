@@ -16,9 +16,7 @@ def run(session, args):
 
         from .server import create_app
     except ImportError:
-        raise SystemExit(
-            "Agent API dependencies missing. Install with: pip install hdh[agent,api]"
-        ) from None
+        raise SystemExit("Agent API dependencies missing. Install with: pip install hdh[agent,api]") from None
 
     session.close()  # the app opens its own session per request
     app = create_app(db_path=getattr(args, "db", "family_medicine.db"))
