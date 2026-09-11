@@ -44,6 +44,7 @@ from .models import (
     Prescription,
     Procedure,
     Provider,
+    ProviderLocation,
     RequestOrigin,
     RequestStatus,
     ServiceHours,
@@ -396,6 +397,36 @@ def seed_organization(session) -> Organization:
                 )
     session.flush()
     return org
+
+
+def seed_provider_locations(session, providers: Sequence[Provider]) -> None:
+    """Link each provider to the sites that run their specialty; the first
+    (lowest location id) is their primary — their home site.
+
+    Reference data, seeded once and idempotently, RNG-free like
+    :func:`seed_organization` so the cohort it shares a build with is
+    unchanged. A provider whose specialty no location offers is left
+    unlinked, and a new encounter they record keeps an unknown location
+    rather than a wrong one.
+    """
+    if session.query(ProviderLocation).first() is not None:
+        return
+    # specialty_id -> location ids offering it, lowest first (stable, primary)
+    sites_for: dict[int, list[int]] = {}
+    for location_id, specialty_id in (
+        session.query(LocationSpecialty.location_id, LocationSpecialty.specialty_id)
+        .order_by(LocationSpecialty.location_id)
+        .all()
+    ):
+        sites_for.setdefault(specialty_id, []).append(location_id)
+    for provider in providers:
+        # specialty_id is nullable; a provider with no specialty has no site.
+        location_ids = sites_for.get(provider.specialty_id, []) if provider.specialty_id is not None else []
+        for rank, location_id in enumerate(location_ids):
+            session.add(
+                ProviderLocation(provider_id=provider.id, location_id=location_id, is_primary=(rank == 0))
+            )
+    session.flush()
 
 
 def _primary_provider(providers: Sequence[Provider], age: int) -> Provider:
@@ -1624,6 +1655,7 @@ def build_dataset(  # quality: allow(no-god-class) — keyword-only knobs ARE th
 
     providers = seed_providers(session)
     seed_organization(session)  # reference data; RNG-free so the cohort is unchanged
+    seed_provider_locations(session, providers)  # provider→site home links (RNG-free)
     scope = RunScope(
         catalog=catalog or default_catalog(),
         providers=tuple(providers),

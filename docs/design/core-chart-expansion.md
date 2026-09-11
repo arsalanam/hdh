@@ -284,3 +284,27 @@ so no existing row is invalidated.
    every generated visit. Wiring locations across the whole cohort — and the
    re-baseline it requires — is deliberately deferred, so this migration adds
    only nullable columns and empty-until-seeded tables.
+
+### 12.1 Where a recorded encounter gets its location (#169)
+
+The schema-first landing left `Visit.location_id` nullable and unset. This
+closes the loop for *newly recorded* encounters (the generator's historical
+visits still stay unstamped — that is the cohort re-baseline, still deferred).
+
+- **`ProviderLocation`** `(provider_id, location_id, is_primary)` links a
+  provider to the site(s) they practise at; one is their primary — their home
+  site. Seeded RNG-free from the specialty↔location map (a provider is linked
+  to every location that runs their specialty, lowest-id first = primary), so
+  it shares a build with the cohort without perturbing it.
+- **`primary_location_id(session, provider_id)`** resolves that home site (the
+  primary, else any linked site, else `None`).
+- **`comprehension.apply_to_chart`** stamps a new `Visit.location_id` from the
+  recording provider's primary location; a `Procedure`/`Vital` under that
+  visit inherits the site through it. An existing visit with no location is
+  backfilled, but one that already has a location is never overwritten, and a
+  provider with no link leaves the encounter's location **unknown rather than
+  guessed** — the same honesty the rest of the chart keeps.
+
+This is the location counterpart to the attribution work (#169): the same
+signed-in provider that an edit is *attributed* to is the one whose site an
+encounter is *located* at, so "who recorded it" and "where" arrive together.
