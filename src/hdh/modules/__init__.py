@@ -23,6 +23,7 @@ CLI_MODULES = {
     "hdh.modules.interchange.cli": None,
     "hdh.modules.careplan.cli": None,
     "hdh.modules.fhir_api.cli": "api",
+    "hdh.modules.agent_api.cli": "api",
 }
 
 # Modules contributing FHIR enrichers/emitters (each exposes fhir_enrichers();
