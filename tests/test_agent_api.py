@@ -141,6 +141,95 @@ def test_stage_labels_are_friendly_and_fall_back():
     assert _label("some_other_stage") == "Some other stage"
 
 
+# ── conversation history ─────────────────────────────────────────────────
+
+
+class _FakeStore:
+    """A stand-in for TraceStore with the two read methods the API uses."""
+
+    def __init__(self, runs):
+        self._runs = runs
+
+    def recent_runs(self, limit=15):
+        return self._runs[:limit]
+
+    def run_detail(self, run_prefix):
+        for r in self._runs:
+            if r["run_id"].startswith(run_prefix):
+                return r
+        return None
+
+
+def _run(run_id, source, title, turns):
+    return {
+        "run_id": run_id,
+        "started_at": "2026-09-11 10:00:00",
+        "source": source,
+        "model": "claude-opus-4-8",
+        "guard_model": "claude-haiku-4-5",
+        "turns": turns,
+        "title": title,
+        "input_tokens": 100,
+        "output_tokens": 20,
+    }
+
+
+def _client_with_store(store):
+    return TestClient(create_app(ask=lambda q: {}, stream=lambda q: iter(()), store=store))
+
+
+def test_conversations_lists_only_ui_runs_newest_first():
+    store = _FakeStore(
+        [
+            _run("ui-2", "ui", "who is overdue?", turns=1),
+            _run("cli-1", "cli-chat", "from the terminal", turns=3),  # must be hidden
+            _run("ui-1", "ui", "is the diabetes controlled?", turns=2),
+        ]
+    )
+    body = _client_with_store(store).get("/conversations").json()
+    ids = [c["conversation_id"] for c in body]
+    assert ids == ["ui-2", "ui-1"]  # CLI run excluded, UI order preserved
+    assert body[0]["title"] == "who is overdue?" and body[0]["turns"] == 1
+
+
+def test_a_conversation_transcript_returns_its_turns():
+    detail = _run("ui-9", "ui", "chart this note", turns=2)
+    detail["turns"] = [
+        {
+            "turn_index": 0,
+            "question": "chart this note",
+            "answer": "Done.",
+            "status": "validated",
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "steps": [],
+        },
+        {
+            "turn_index": 1,
+            "question": "what changed?",
+            "answer": "BP added.",
+            "status": "validated",
+            "input_tokens": 40,
+            "output_tokens": 8,
+            "steps": [],
+        },
+    ]
+    body = _client_with_store(_FakeStore([detail])).get("/conversations/ui-9").json()
+    assert body["conversation_id"] == "ui-9"
+    assert [t["question"] for t in body["turns"]] == ["chart this note", "what changed?"]
+    assert body["turns"][0]["answer"] == "Done."
+
+
+def test_a_cli_run_is_not_reachable_as_a_ui_conversation():
+    """Source-scoping is a boundary: the UI cannot read a CLI run's transcript."""
+    store = _FakeStore([_run("cli-7", "cli-chat", "terminal q", turns=1)])
+    assert _client_with_store(store).get("/conversations/cli-7").status_code == 404
+
+
+def test_an_unknown_conversation_is_404():
+    assert _client_with_store(_FakeStore([])).get("/conversations/nope").status_code == 404
+
+
 def test_normalize_reduces_pipeline_state_to_the_seam():
     """The default backend maps a raw pipeline state to the response shape;
     check that reduction directly (no Anthropic, no gateway)."""
