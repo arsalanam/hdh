@@ -323,8 +323,11 @@ class Gateway:
             model=model or os.environ.get("HDH_AGENT_MODEL", DEFAULT_MODEL),
             guard_model=os.environ.get("HDH_GUARD_MODEL", "claude-haiku-4-5"),
             max_attempts=max_attempts,
-            daily_input_tokens=int(os.environ.get("HDH_QUOTA_INPUT_TOKENS", 500_000)),
-            daily_output_tokens=int(os.environ.get("HDH_QUOTA_OUTPUT_TOKENS", 100_000)),
+            # Raised while the UI and executor are still being tuned; bring
+            # these back down (500k / 100k) once token use is settled. Output
+            # is lifted in step so it does not silently become the new cap.
+            daily_input_tokens=int(os.environ.get("HDH_QUOTA_INPUT_TOKENS", 1_000_000)),
+            daily_output_tokens=int(os.environ.get("HDH_QUOTA_OUTPUT_TOKENS", 200_000)),
         )
         self.client = anthropic.Anthropic()
         self.trace_store = TraceStore(default_trace_url())

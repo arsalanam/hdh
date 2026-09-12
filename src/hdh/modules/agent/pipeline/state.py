@@ -71,8 +71,8 @@ class PipelineConfig:
     guard_model: str = "claude-haiku-4-5"
     max_attempts: int = 3
     allowed_topics: tuple[str, ...] = DEFAULT_ALLOWED_TOPICS
-    daily_input_tokens: int = 500_000
-    daily_output_tokens: int = 100_000
+    daily_input_tokens: int = 1_000_000  # temporarily raised while tuning (was 500_000)
+    daily_output_tokens: int = 200_000  # kept in step so it isn't the new cap (was 100_000)
     tool_result_cap: int = 6_000  # chars of any one tool result kept in context
 
 
