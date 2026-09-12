@@ -100,7 +100,7 @@ INTENT_SCHEMA = {
 
 # Token economy: per intent, only the relevant tools are exposed and only the
 # relevant tables appear in the SQL tool's schema description. Unknown intents
-# (and every retry after a failed validation) fall back to the full set.
+# fall back to the full set (retries stay intent-scoped — see _select_tools).
 INTENT_TOOLS: dict[str, set[str]] = {
     "patient_lookup": {"get_patient_chart", "search_patients", "provider_visits", "query_database"},
     "cohort_search": {"search_patients", "provider_visits", "query_database", "get_care_gaps"},
@@ -394,19 +394,22 @@ class Gateway:
         )
         return _first_json(_text_of(message)) or {"intent": "other"}, _usage_of(message)
 
-    def _select_tools(self, intent: dict, feedback: str) -> list:
-        """Intent-scoped tool subset and schema; the full set on retries.
+    def _select_tools(self, intent: dict) -> list:
+        """Intent-scoped tool subset and schema — on retries too.
 
-        First attempt: only the tools and tables the classified intent needs
-        (fewer tokens, less distraction). After a failed validation the
-        executor gets everything back — the validator said evidence was
-        missing, so don't constrain where it can look.
+        Only the tools and tables the classified intent needs (fewer tokens,
+        less distraction). Retries used to widen to the full toolset and its
+        ~4,200-token schema on the theory that "the validator said evidence was
+        missing, so don't constrain where it can look" — but measured, that was
+        the single most expensive path in the pipeline (a failed 3-attempt turn
+        cost ~5x a validated one), and it rarely helped: the validator's reason
+        is threaded into the executor prompt and says WHAT to fix, not that a
+        wider schema is needed. An unknown intent still gets the full set
+        (INTENT_* returns None for it).
         """
         from hdh.modules.agent.tools import build_tools
 
         intent_name = (intent or {}).get("intent", "other")
-        if feedback:
-            return build_tools(self.db_session, identity=self.identity)
         return build_tools(
             self.db_session,
             tables=INTENT_TABLES.get(intent_name),
@@ -420,7 +423,7 @@ class Gateway:
         """The executor: main model + intent-scoped tools, aware of retry feedback."""
         from hdh.modules.agent.tools import clip_tool_results
 
-        tools = self._select_tools(intent, feedback)
+        tools = self._select_tools(intent)
         parts = [SYSTEM_PROMPT, ECONOMY_PROMPT]
         if intent:
             parts.append(f"Intent analysis of this request: {json.dumps(intent)}")
