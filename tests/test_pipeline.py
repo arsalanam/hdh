@@ -183,6 +183,29 @@ def test_instrumented_graph_records_every_step_and_retry(tmp_path):
     assert store.daily_usage() == (state["usage"]["input_tokens"], state["usage"]["output_tokens"])
 
 
+def test_compact_ack_summarises_a_large_row_set_but_passes_small_ones():
+    """The executor gets a compact ack for a big result (count + columns +
+    sample), and small results unchanged — the token lever for the tool loop."""
+    import json
+
+    from hdh.modules.agent.pipeline.gateway import _compact_ack
+
+    rows = [{"mrn": f"MRN{i:04d}", "name": f"P{i}", "last_hba1c": "2024-01-01"} for i in range(60)]
+    big = json.dumps(rows)
+    ack = _compact_ack(big, cap=200)
+    assert ack is not None
+    assert "60 rows" in ack
+    assert "columns: mrn, name, last_hba1c" in ack
+    assert "MRN0000" in ack  # a sample row is shown
+    assert len(ack) < len(big)  # and it is smaller than the raw result
+
+    # a small result passes through untouched (None = feed it verbatim)
+    assert _compact_ack(json.dumps(rows[:1]), cap=6000) is None
+    # a large NON-json result gets a head snippet, not a crash
+    text_ack = _compact_ack("x" * 500, cap=100)
+    assert text_ack is not None and text_ack.startswith("x" * 100) and "more chars" in text_ack
+
+
 def test_selective_tool_exposure_by_intent():
     from hdh.modules.agent.tools import build_tools
 
