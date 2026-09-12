@@ -126,7 +126,9 @@ def _sql_tool_description(tables: tuple[str, ...] | None, dialect: str = "sqlite
         information_schema):
 {_table_catalog()}
 {relevant}
-        Enum columns store NAMES, not numbers — compare to the string.
+        A table shown with no purpose is unannotated: describe_table still
+        returns its columns, but say what you are assuming about it rather than
+        guessing at its meaning. Enum columns store NAMES, not numbers — compare to the string.
         Anything joining via visit_id reaches the patient through
         visits.patient_id. {date_note} Results are capped at 200 rows.
 
