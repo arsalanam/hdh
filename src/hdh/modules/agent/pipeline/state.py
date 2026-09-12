@@ -73,7 +73,16 @@ class PipelineConfig:
     allowed_topics: tuple[str, ...] = DEFAULT_ALLOWED_TOPICS
     daily_input_tokens: int = 1_000_000  # temporarily raised while tuning (was 500_000)
     daily_output_tokens: int = 200_000  # kept in step so it isn't the new cap (was 100_000)
-    tool_result_cap: int = 6_000  # chars of any one tool result kept in context
+    #: A result longer than this is not re-fed to the executor verbatim; the
+    #: model gets a compact ack (row count + columns + a 3-row sample) instead,
+    #: so a large table is not re-billed on every loop turn. Small results pass
+    #: through unchanged.
+    tool_result_cap: int = 6_000
+    #: How much of a result is kept in `evidence` for the assembler and
+    #: validator — the stages that actually need the rows to write and check
+    #: the answer. Larger than tool_result_cap: the executor only decides;
+    #: the assembler grounds.
+    evidence_cap: int = 20_000
 
 
 @dataclass(frozen=True)

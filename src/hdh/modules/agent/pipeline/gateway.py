@@ -10,6 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from hdh.modules.agent.agent import DEFAULT_MODEL, SYSTEM_PROMPT
 
@@ -290,6 +291,42 @@ def _text_of(message) -> str:
     return "\n".join(b.text for b in message.content if getattr(b, "type", "") == "text")
 
 
+def _compact_ack(result: str, cap: int) -> str | None:
+    """A short stand-in for a large tool result, fed back to the EXECUTOR in
+    place of the rows themselves.
+
+    The executor only needs to know what came back to decide its next move, so
+    a result over ``cap`` is summarised — row count, columns, and a 3-row
+    sample — instead of being re-sent verbatim on every later loop turn.
+
+    Returns ``None`` for a result within ``cap``: it passes through unchanged
+    (a small result, or a tool whose text IS the substance, like a patient
+    chart). Either way the full result is kept in ``evidence`` for the
+    assembler; this only changes what the executor re-carries.
+    """
+    if len(result) <= cap:
+        return None
+    try:
+        parsed = json.loads(result)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+        columns = ", ".join(map(str, parsed[0].keys()))
+        sample = json.dumps(parsed[:3], default=str)[:cap]
+        return (
+            f"[{len(parsed)} rows · columns: {columns} · full rows kept for the answer]\n"
+            f"sample (first {min(3, len(parsed))}): {sample}"
+        )
+    if isinstance(parsed, list):
+        return (
+            f"[{len(parsed)} items · full result kept for the answer]\n"
+            f"sample: {json.dumps(parsed[:3], default=str)[:cap]}"
+        )
+    return (
+        f"{result[:cap]}\n…[{len(result) - cap:,} more chars kept for the answer, not shown to the executor]"
+    )
+
+
 def default_trace_url() -> str:
     """Trace DB location: HDH_TRACE_DB (any SQLAlchemy URL, e.g. postgresql://...)
     or a local SQLite file at ~/.hdh/traces.db."""
@@ -428,8 +465,6 @@ class Gateway:
         self, question: str, intent: dict, feedback: str, history: list[str]
     ) -> tuple[str, list[dict], dict]:
         """The executor: main model + intent-scoped tools, aware of retry feedback."""
-        from hdh.modules.agent.tools import clip_tool_results
-
         tools = self._select_tools(intent)
         parts = [SYSTEM_PROMPT, ECONOMY_PROMPT]
         if intent:
@@ -460,33 +495,30 @@ class Gateway:
             texts = [b.text for b in message.content if b.type == "text"]
             if texts:
                 findings = "\n".join(texts)
-            # Cap oversized results before the runner feeds them back into
-            # context — the single biggest token lever in long tool loops.
-            tool_response = clip_tool_results(
-                runner.generate_tool_call_response(), self.config.tool_result_cap
-            )
+            # The executor only needs to know WHAT came back to decide its next
+            # move; the rows themselves belong to the assembler. So keep the
+            # full result in `evidence`, but hand the model a compact ack for a
+            # large one — otherwise the whole table is re-billed on every later
+            # loop turn (measured: the biggest single cost in the pipeline).
+            tool_response = runner.generate_tool_call_response()
             if tool_response is not None:
-                blocks = tool_response.get("content") or []
-                results: list[dict] = (
-                    [dict(b) for b in blocks if isinstance(b, dict)] if not isinstance(blocks, str) else []
-                )
+                # `Any`: these are the SDK's typed block params, but at runtime
+                # plain dicts we mutate in place — the real blocks (not copies),
+                # so the ack is what the runner feeds back next turn.
+                blocks: Any = tool_response.get("content") or []
+                results = [b for b in blocks if isinstance(b, dict)] if not isinstance(blocks, str) else []
                 for i, result_block in enumerate(results):
-                    result = result_block.get("content", "")
-                    text = result if isinstance(result, str) else str(result)
+                    raw = result_block.get("content", "")
+                    text = raw if isinstance(raw, str) else str(raw)
                     slot = len(evidence) - len(results) + i
                     if 0 <= slot < len(evidence):
-                        # The same cap the executor saw, not a smaller one.
-                        #
-                        # This was a hard 1,200 chars while the drafting model
-                        # was given 6,000, so the validator judged claims
-                        # against strictly less than the drafter had — and
-                        # rejected true ones. Measured: a 4,690-char care plan
-                        # arrived as its first ~5 of 14 interventions, and the
-                        # validator refused three times, correctly, because
-                        # the evidence really did not contain what the draft
-                        # said. **A validator must never see less than the
-                        # thing it is validating saw.**
-                        evidence[slot]["result"] = text[: self.config.tool_result_cap]
+                        # What the assembler AND validator see — the same slice
+                        # to each, so a true claim is never rejected for
+                        # evidence the drafter had and the checker did not.
+                        evidence[slot]["result"] = text[: self.config.evidence_cap]
+                    ack = _compact_ack(text, self.config.tool_result_cap)
+                    if ack is not None:
+                        result_block["content"] = ack
         return findings, evidence, usage
 
     def _assemble(self, question: str, findings: str, evidence: list[dict]) -> tuple[str, dict]:
