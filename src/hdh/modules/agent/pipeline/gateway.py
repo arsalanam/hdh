@@ -58,7 +58,11 @@ You are a response validator. Given a QUESTION, a DRAFT answer, and the TOOL
 EVIDENCE it must be based on, check every specific claim in the draft: MRNs,
 names, ages, counts, values, and conditions must appear in (or be directly
 computable from) the evidence. General clinical phrasing is fine; invented
-specifics are not.\
+specifics are not.
+
+Keep `reason` to ONE short sentence. Do NOT restate the draft, quote the rows,
+or list the values you checked — a long reason risks being truncated, which
+reads as an unparseable verdict and fails a good answer. Just the outcome.\
 """
 
 # Schema-enforced verdict: the model cannot return unparseable output.
@@ -506,7 +510,10 @@ class Gateway:
         """Verdict on the draft: grounded in evidence, or retry with reason."""
         message = self.client.messages.create(
             model=self.config.model,
-            max_tokens=500,
+            # Headroom so the verdict JSON is never truncated mid-string on a
+            # large answer — a cut-off reason parses to nothing and fails a
+            # good draft as "unparseable" (the prompt also keeps reason short).
+            max_tokens=1500,
             system=VALIDATOR_PROMPT,
             output_config={"format": {"type": "json_schema", "schema": VERDICT_SCHEMA}},
             messages=[
