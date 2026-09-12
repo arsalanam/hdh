@@ -19,6 +19,7 @@ from hdh.modules.agent_api.auth import AuthError
 # HTTP surface is tested without a live Keycloak. The 401 path uses its own.
 _OK = Identity(subject="sub-test", username="dr.test", roles=frozenset({"clinician"}))
 
+
 def _ALLOW(_header):
     return _OK
 
