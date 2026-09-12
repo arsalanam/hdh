@@ -224,6 +224,7 @@ class TraceStore:
             runs = s.execute(select(Run).order_by(Run.started_at.desc()).limit(limit)).scalars()
             out = []
             for run in runs:
+                ordered = sorted(run.turns, key=lambda t: t.turn_index)
                 out.append(
                     {
                         "run_id": run.id,
@@ -231,6 +232,8 @@ class TraceStore:
                         "source": run.source,
                         "model": run.model,
                         "turns": len(run.turns),
+                        # the first question, as a human-readable label for the run
+                        "title": ordered[0].question if ordered else "",
                         "input_tokens": sum(t.input_tokens for t in run.turns),
                         "output_tokens": sum(t.output_tokens for t in run.turns),
                     }

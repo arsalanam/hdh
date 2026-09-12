@@ -60,6 +60,42 @@ class AskResponse(BaseModel):
     trace_id: str
 
 
+class ConversationSummary(BaseModel):
+    """One past conversation, for the history sidebar."""
+
+    conversation_id: str
+    started_at: str
+    title: str
+    turns: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class TranscriptTurn(BaseModel):
+    """One question/answer in a conversation transcript."""
+
+    turn_index: int
+    question: str
+    answer: str | None = None
+    status: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class Conversation(BaseModel):
+    """A conversation's full transcript."""
+
+    conversation_id: str
+    started_at: str
+    model: str | None = None
+    turns: list[TranscriptTurn] = Field(default_factory=list)
+
+
+#: The trace-store ``source`` the API tags its runs with — what distinguishes a
+#: UI conversation from a CLI or eval run, and what the history endpoints show.
+UI_SOURCE = "ui"
+
+
 def _status_of(state: dict) -> str:
     """The turn's outcome, in the trace store's own vocabulary."""
     if state.get("rejected"):
@@ -160,10 +196,59 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
     return stream
 
 
+def _default_store():
+    """The trace store the CLI writes to — the conversation-history backbone."""
+    from hdh.modules.agent.pipeline.gateway import default_trace_url
+    from hdh.modules.agent.pipeline.tracing import TraceStore
+
+    return TraceStore(default_trace_url())
+
+
+def _conversation_summaries(store, limit: int) -> list[dict]:
+    """The UI's past conversations, newest first. Over-fetches then filters to
+    ``source == 'ui'`` so CLI and eval runs never show in the UI's history."""
+    rows = [r for r in store.recent_runs(limit=max(limit * 4, limit)) if r.get("source") == UI_SOURCE]
+    return [
+        {
+            "conversation_id": r["run_id"],
+            "started_at": r["started_at"],
+            "title": (r.get("title") or "").strip() or "(no question)",
+            "turns": r["turns"],
+            "input_tokens": r["input_tokens"],
+            "output_tokens": r["output_tokens"],
+        }
+        for r in rows[:limit]
+    ]
+
+
+def _transcript(store, conversation_id: str) -> dict | None:
+    """One conversation's transcript, or None if it is not a UI conversation."""
+    detail = store.run_detail(conversation_id)
+    if detail is None or detail.get("source") != UI_SOURCE:
+        return None
+    return {
+        "conversation_id": detail["run_id"],
+        "started_at": detail["started_at"],
+        "model": detail.get("model"),
+        "turns": [
+            {
+                "turn_index": t["turn_index"],
+                "question": t["question"],
+                "answer": t["answer"],
+                "status": t["status"],
+                "input_tokens": t["input_tokens"],
+                "output_tokens": t["output_tokens"],
+            }
+            for t in detail["turns"]
+        ],
+    }
+
+
 def create_app(
     ask: AskFn | None = None,
     *,
     stream: StreamFn | None = None,
+    store: Any = None,
     db_path: str = "family_medicine.db",
     model: str | None = None,
 ):
@@ -177,6 +262,7 @@ def create_app(
 
     run_ask: AskFn = ask or _gateway_ask(db_path=db_path, model=model)
     run_stream: StreamFn = stream or _gateway_stream(db_path=db_path, model=model)
+    history = store or _default_store()
 
     app = FastAPI(
         title="HDH Agent API",
@@ -220,5 +306,23 @@ def create_app(
                 yield _sse(event, data)
 
         return StreamingResponse(frames(), media_type="text/event-stream")
+
+    @app.get("/conversations", response_model=list[ConversationSummary])
+    def conversations(limit: int = 20) -> Any:
+        """The caller's past conversations, newest first — the history sidebar.
+
+        Scoped to conversations held through this UI (trace-store source
+        ``ui``); CLI and eval runs are not shown. Per-*user* scoping arrives
+        with login (a conversation is a run, and a run will carry its owner).
+        """
+        return _conversation_summaries(history, max(1, min(limit, 100)))
+
+    @app.get("/conversations/{conversation_id}", response_model=Conversation)
+    def conversation(conversation_id: str) -> Any:
+        """One conversation's transcript: each turn's question, answer and status."""
+        transcript = _transcript(history, conversation_id)
+        if transcript is None:
+            raise HTTPException(status_code=404, detail="no such conversation")
+        return transcript
 
     return app
