@@ -66,6 +66,7 @@ def test_agent_tools_build(db_session):
         "get_care_gaps",
         "get_risk_scores",
         "query_database",
+        "describe_table",
         "dataset_stats",
         # comprehension tools appear because generated data has stored notes;
         # icd/snomed tools stay gated off (no catalogs in this fixture)
