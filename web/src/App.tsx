@@ -2,9 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   askStream,
   getConversation,
-  listConversations,
+  listThreads,
   type Answer,
-  type ConversationSummary,
+  type ThreadSummary,
 } from "./api";
 
 // One question and what came back — the unit the chat column renders.
@@ -16,40 +16,50 @@ type Exchange = {
   error?: string;
 };
 
+function newThreadId(): string {
+  return (globalThis.crypto?.randomUUID?.() ?? `t-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+}
+
 export default function App() {
   const [question, setQuestion] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [stage, setStage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<ConversationSummary[]>([]);
-  const [viewing, setViewing] = useState<string | null>(null);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  // the thread new questions are filed under (a fresh one is always ready)
+  const [activeThread, setActiveThread] = useState<string>(newThreadId);
+  // which threads are expanded in the tree; the active one is, by default
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // the run currently shown in the main panel, if viewing history
+  const [viewingRun, setViewingRun] = useState<string | null>(null);
 
-  const refreshHistory = () => listConversations().then(setHistory).catch(() => undefined);
+  const refreshThreads = () => listThreads().then(setThreads).catch(() => undefined);
   useEffect(() => {
-    refreshHistory();
+    refreshThreads();
   }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const q = question.trim();
     if (!q || busy) return;
-    setViewing(null);
+    setViewingRun(null);
     setQuestion("");
     setBusy(true);
     setStage("Starting…");
+    setExpanded((e) => new Set(e).add(activeThread)); // keep the active thread open
     const index = exchanges.length;
     setExchanges((xs) => [...xs, { question: q }]);
 
     const patch = (fields: Partial<Exchange>) =>
       setExchanges((xs) => xs.map((x, i) => (i === index ? { ...x, ...fields } : x)));
 
-    await askStream(q, {
+    await askStream(q, activeThread, {
       onStage: (s) => setStage(s.label),
       onAnswer: (a: Answer) => {
         patch({ answer: a.answer, status: a.status, verdict: a.verdict });
         setStage(null);
         setBusy(false);
-        refreshHistory();
+        refreshThreads();
       },
       onError: (e) => {
         patch({ error: e.detail });
@@ -59,10 +69,10 @@ export default function App() {
     });
   }
 
-  async function openConversation(id: string) {
-    const transcript = await getConversation(id);
+  async function openRun(runId: string) {
+    const transcript = await getConversation(runId);
     if (!transcript) return;
-    setViewing(id);
+    setViewingRun(runId);
     setExchanges(
       transcript.turns.map((t) => ({
         question: t.question,
@@ -72,33 +82,59 @@ export default function App() {
     );
   }
 
-  function startNew() {
+  function startNewConversation() {
+    setActiveThread(newThreadId());
     setExchanges([]);
-    setViewing(null);
+    setViewingRun(null);
     setStage(null);
   }
+
+  function toggleThread(threadId: string) {
+    setExpanded((e) => {
+      const next = new Set(e);
+      next.has(threadId) ? next.delete(threadId) : next.add(threadId);
+      return next;
+    });
+  }
+
+  const isOpen = (threadId: string) => expanded.has(threadId) || threadId === activeThread;
 
   return (
     <div className="app">
       <aside className="sidebar">
         <div className="brand">HDH Agent</div>
-        <button className="new" onClick={startNew}>
+        <button className="new" onClick={startNewConversation}>
           + New conversation
         </button>
         <div className="history">
-          {history.map((c) => (
-            <button
-              key={c.conversation_id}
-              className={"conv" + (viewing === c.conversation_id ? " active" : "")}
-              onClick={() => openConversation(c.conversation_id)}
-            >
-              <div className="conv-title">{c.title}</div>
-              <div className="conv-meta">
-                {c.turns} turn{c.turns === 1 ? "" : "s"} · {c.started_at}
-              </div>
-            </button>
+          {threads.map((t) => (
+            <div key={t.thread_id} className="thread">
+              <button
+                className={"thread-head" + (t.thread_id === activeThread ? " current" : "")}
+                onClick={() => toggleThread(t.thread_id)}
+                aria-expanded={isOpen(t.thread_id)}
+              >
+                <span className="caret">{isOpen(t.thread_id) ? "▾" : "▸"}</span>
+                <span className="thread-title">{t.title}</span>
+                <span className="thread-count">{t.runs.length}</span>
+              </button>
+              {isOpen(t.thread_id) && (
+                <div className="runs">
+                  {t.runs.map((r) => (
+                    <button
+                      key={r.conversation_id}
+                      className={"run" + (viewingRun === r.conversation_id ? " active" : "")}
+                      onClick={() => openRun(r.conversation_id)}
+                      title={r.started_at}
+                    >
+                      {r.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
-          {history.length === 0 && <div className="empty">No conversations yet.</div>}
+          {threads.length === 0 && <div className="empty">No conversations yet.</div>}
         </div>
       </aside>
 
@@ -137,8 +173,8 @@ export default function App() {
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder={
-              viewing
-                ? "Viewing a past conversation — type to start a new one"
+              viewingRun
+                ? "Viewing a past run — type to ask in the current conversation"
                 : "Ask the agent…"
             }
             disabled={busy}

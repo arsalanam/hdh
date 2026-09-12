@@ -84,31 +84,76 @@ body {
   flex-direction: column;
   gap: 4px;
 }
-.conv {
+.thread {
+  display: flex;
+  flex-direction: column;
+}
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
   border: none;
   color: var(--sidebar-fg);
   text-align: left;
-  padding: 8px 10px;
+  padding: 7px 8px;
   border-radius: 8px;
   cursor: pointer;
+  font-size: 13px;
 }
-.conv:hover {
+.thread-head:hover {
   background: #1a2233;
 }
-.conv.active {
-  background: #1f2a40;
+.thread-head.current {
+  color: #fff;
 }
-.conv-title {
-  font-size: 13px;
+.caret {
+  width: 12px;
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+}
+.thread-title {
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.conv-meta {
+.thread-count {
+  flex: none;
   font-size: 11px;
   color: var(--muted);
-  margin-top: 2px;
+  background: #1a2233;
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 18px;
+}
+.runs {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 4px 18px;
+  border-left: 1px solid #222c3b;
+  padding-left: 6px;
+}
+.run {
+  background: transparent;
+  border: none;
+  color: var(--sidebar-fg);
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run:hover {
+  background: #1a2233;
+}
+.run.active {
+  background: #1f2a40;
+  color: #fff;
 }
 .empty {
   font-size: 12px;

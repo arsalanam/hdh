@@ -10,12 +10,25 @@ export type Answer = {
   verdict?: { valid: boolean; reason?: string } | null;
   usage?: Record<string, number>;
   trace_id?: string;
+  thread_id?: string;
 };
 export type ConversationSummary = {
   conversation_id: string;
   started_at: string;
   title: string;
   turns: number;
+};
+export type ThreadRun = {
+  conversation_id: string;
+  started_at: string;
+  title: string;
+  turns: number;
+};
+export type ThreadSummary = {
+  thread_id: string;
+  title: string;
+  started_at: string;
+  runs: ThreadRun[];
 };
 export type TranscriptTurn = {
   turn_index: number;
@@ -38,13 +51,17 @@ type StreamHandlers = {
 
 // POST /ask/stream, reading the SSE frames off the response body. EventSource
 // only does GET, so we stream the POST response ourselves.
-export async function askStream(question: string, handlers: StreamHandlers): Promise<void> {
+export async function askStream(
+  question: string,
+  threadId: string,
+  handlers: StreamHandlers,
+): Promise<void> {
   let resp: Response;
   try {
     resp = await fetch("/ask/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, thread_id: threadId }),
     });
   } catch (err) {
     handlers.onError({ detail: `network error: ${String(err)}` });
@@ -80,6 +97,11 @@ function dispatch(block: string, handlers: StreamHandlers): void {
   if (event === "stage") handlers.onStage(payload as Stage);
   else if (event === "answer") handlers.onAnswer(payload as Answer);
   else if (event === "error") handlers.onError(payload as { detail: string });
+}
+
+export async function listThreads(): Promise<ThreadSummary[]> {
+  const resp = await fetch("/threads");
+  return resp.ok ? ((await resp.json()) as ThreadSummary[]) : [];
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {

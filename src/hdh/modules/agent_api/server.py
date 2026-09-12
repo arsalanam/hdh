@@ -18,9 +18,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-AskFn = Callable[[str], dict]
-#: A streaming backend: yields ("stage"|"answer"|"error", payload) events.
-StreamFn = Callable[[str], Iterator[tuple[str, dict]]]
+AskFn = Callable[[str, "str | None"], dict]
+#: A streaming backend: (question, thread_id) → ("stage"|"answer"|"error", payload) events.
+StreamFn = Callable[[str, "str | None"], Iterator[tuple[str, dict]]]
 
 #: Internal pipeline stage → the phrase a person reads while they wait. Anything
 #: not here (e.g. "gateway" bookkeeping) passes through title-cased.
@@ -43,10 +43,21 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _new_thread_id() -> str:
+    """A fresh conversation-thread id for a run that names no thread."""
+    import uuid
+
+    return str(uuid.uuid4())
+
+
 class AskRequest(BaseModel):
-    """One question for the agent."""
+    """One question for the agent, optionally within an existing thread."""
 
     question: str = Field(min_length=1, description="A clinical question for the agent.")
+    thread_id: str | None = Field(
+        default=None,
+        description="The conversation thread to file this run under; a new one is started if omitted.",
+    )
 
 
 class AskResponse(BaseModel):
@@ -58,6 +69,25 @@ class AskResponse(BaseModel):
     verdict: dict[str, Any] | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     trace_id: str
+    thread_id: str  # the thread this run was filed under
+
+
+class ThreadRun(BaseModel):
+    """One run (a single question/answer exchange) within a thread."""
+
+    conversation_id: str
+    started_at: str
+    title: str
+    turns: int
+
+
+class ThreadSummary(BaseModel):
+    """A conversation thread: a group of runs, for the foldable history tree."""
+
+    thread_id: str
+    title: str
+    started_at: str  # of the most recent run
+    runs: list[ThreadRun] = Field(default_factory=list)
 
 
 class ConversationSummary(BaseModel):
@@ -105,7 +135,7 @@ def _status_of(state: dict) -> str:
     return "validated"
 
 
-def _normalize(state: dict, run_id: str) -> dict:
+def _normalize(state: dict, run_id: str, thread_id: str) -> dict:
     """The pipeline state, reduced to the seam a front door consumes."""
     from hdh.modules.agent.pipeline import Gateway
 
@@ -116,6 +146,7 @@ def _normalize(state: dict, run_id: str) -> dict:
         "verdict": state.get("verdict"),
         "usage": state.get("usage") or {},
         "trace_id": run_id[:8],
+        "thread_id": thread_id,
     }
 
 
@@ -128,7 +159,7 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
     the SQLite file — so the API and the terminal see one chart.
     """
 
-    def ask(question: str) -> dict:
+    def ask(question: str, thread_id: str | None = None) -> dict:
         from hdh.core.models import get_engine, get_session
         from hdh.modules.agent.pipeline import Gateway
 
@@ -137,9 +168,9 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
         # fhir_api.create_app).
         session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
         try:
-            gateway = Gateway(session, model=model, source="ui", identity=None)
+            gateway = Gateway(session, model=model, source="ui", identity=None, thread_id=thread_id)
             state = gateway.ask(question)
-            return _normalize(state, gateway.run_id)
+            return _normalize(state, gateway.run_id, thread_id or gateway.run_id)
         finally:
             session.close()
 
@@ -157,7 +188,7 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
     the response validator has passed — the grounding guarantee, unchanged.
     """
 
-    def stream(question: str) -> Iterator[tuple[str, dict]]:
+    def stream(question: str, thread_id: str | None = None) -> Iterator[tuple[str, dict]]:
         import queue
         import threading
 
@@ -175,8 +206,12 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
             # request-scoped session, on this worker thread; see _gateway_ask.
             session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
             try:
-                gateway = Gateway(session, model=model, source="ui", identity=None, trace=trace)
-                outcome["answer"] = _normalize(gateway.ask(question), gateway.run_id)
+                gateway = Gateway(
+                    session, model=model, source="ui", identity=None, trace=trace, thread_id=thread_id
+                )
+                outcome["answer"] = _normalize(
+                    gateway.ask(question), gateway.run_id, thread_id or gateway.run_id
+                )
             except Exception as error:  # noqa: BLE001 - surfaced to the client as an error event
                 outcome["error"] = {"detail": f"{type(error).__name__}: {error}"}
             finally:
@@ -219,6 +254,34 @@ def _conversation_summaries(store, limit: int) -> list[dict]:
         }
         for r in rows[:limit]
     ]
+
+
+def _thread_tree(store, limit: int) -> list[dict]:
+    """The UI's history as a thread tree: threads newest-first, each with its
+    runs newest-first. A run with no thread_id (from before threads existed) is
+    its own single-run thread, so old history still appears."""
+    rows = [r for r in store.recent_runs(limit=max(limit * 8, limit)) if r.get("source") == UI_SOURCE]
+    threads: dict[str, dict] = {}
+    for r in rows:  # recent_runs is newest-first
+        tid = r.get("thread_id") or r["run_id"]
+        run = {
+            "conversation_id": r["run_id"],
+            "started_at": r["started_at"],
+            "title": (r.get("title") or "").strip() or "(no question)",
+            "turns": r["turns"],
+        }
+        thread = threads.get(tid)
+        if thread is None:
+            # first (newest) run of the thread seen → it titles and dates it
+            threads[tid] = {
+                "thread_id": tid,
+                "title": run["title"],
+                "started_at": run["started_at"],
+                "runs": [run],
+            }
+        else:
+            thread["runs"].append(run)
+    return list(threads.values())[:limit]
 
 
 def _transcript(store, conversation_id: str) -> dict | None:
@@ -303,7 +366,7 @@ def create_app(
         question = body.question.strip()
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
-        return run_ask(question)
+        return run_ask(question, body.thread_id or _new_thread_id())
 
     @app.post("/ask/stream")
     def ask_stream(body: AskRequest) -> Any:
@@ -317,21 +380,25 @@ def create_app(
         question = body.question.strip()
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
+        thread_id = body.thread_id or _new_thread_id()
 
         def frames() -> Iterator[str]:
-            for event, data in run_stream(question):
+            for event, data in run_stream(question, thread_id):
                 yield _sse(event, data)
 
         return StreamingResponse(frames(), media_type="text/event-stream")
 
+    @app.get("/threads", response_model=list[ThreadSummary])
+    def threads(limit: int = 30) -> Any:
+        """The caller's conversation threads, newest first — each a group of
+        runs for the foldable history tree. Scoped to this UI's runs (trace
+        source ``ui``); CLI and eval runs are not shown."""
+        return _thread_tree(history, max(1, min(limit, 100)))
+
     @app.get("/conversations", response_model=list[ConversationSummary])
     def conversations(limit: int = 20) -> Any:
-        """The caller's past conversations, newest first — the history sidebar.
-
-        Scoped to conversations held through this UI (trace-store source
-        ``ui``); CLI and eval runs are not shown. Per-*user* scoping arrives
-        with login (a conversation is a run, and a run will carry its owner).
-        """
+        """Flat list of the caller's runs, newest first (kept for programmatic
+        callers; the UI uses the threaded /threads tree)."""
         return _conversation_summaries(history, max(1, min(limit, 100)))
 
     @app.get("/conversations/{conversation_id}", response_model=Conversation)

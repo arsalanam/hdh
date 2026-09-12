@@ -37,13 +37,13 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 
 def test_health_names_the_service():
-    client = _client(lambda q: {})
+    client = _client(lambda q, tid=None: {})
     body = client.get("/health").json()
     assert body["status"] == "ok" and body["service"] == "hdh-agent-api"
 
 
 def test_ask_returns_the_agents_answer_and_the_seam_fields():
-    def fake_ask(question):
+    def fake_ask(question, thread_id=None):
         assert question == "Which patients have uncontrolled HTN?"
         return {
             "answer": "Three patients: MRN1, MRN2, MRN3.",
@@ -52,6 +52,7 @@ def test_ask_returns_the_agents_answer_and_the_seam_fields():
             "verdict": {"valid": True, "reason": "grounded"},
             "usage": {"input_tokens": 900, "output_tokens": 120},
             "trace_id": "ab12cd34",
+            "thread_id": thread_id,
         }
 
     resp = _client(fake_ask).post("/ask", json={"question": "Which patients have uncontrolled HTN?"})
@@ -75,18 +76,19 @@ def test_a_rejected_turn_is_reported_not_hidden():
         "verdict": None,
         "usage": {},
         "trace_id": "deadbeef",
+        "thread_id": "t-1",
     }
-    resp = _client(lambda q: reject).post("/ask", json={"question": "best lasagna recipe?"})
+    resp = _client(lambda q, tid=None: reject).post("/ask", json={"question": "best lasagna recipe?"})
     assert resp.status_code == 200 and resp.json()["status"] == "rejected"
 
 
 def test_an_empty_question_is_refused():
-    resp = _client(lambda q: {}).post("/ask", json={"question": "   "})
+    resp = _client(lambda q, tid=None: {}).post("/ask", json={"question": "   "})
     assert resp.status_code == 422
 
 
 def test_a_missing_question_is_a_validation_error():
-    resp = _client(lambda q: {}).post("/ask", json={})
+    resp = _client(lambda q, tid=None: {}).post("/ask", json={})
     assert resp.status_code == 422
 
 
@@ -94,7 +96,7 @@ def test_a_missing_question_is_a_validation_error():
 
 
 def test_ask_stream_emits_stage_frames_then_the_answer():
-    def fake_stream(question):
+    def fake_stream(question, thread_id=None):
         assert question == "who is overdue?"
         yield ("stage", {"stage": "guardrails", "label": "Checking the question…"})
         yield ("stage", {"stage": "intent", "label": "Thinking…"})
@@ -118,7 +120,7 @@ def test_ask_stream_emits_stage_frames_then_the_answer():
 
 
 def test_ask_stream_surfaces_an_error_frame():
-    def boom(question):
+    def boom(question, thread_id=None):
         yield ("stage", {"stage": "intent", "label": "Thinking…"})
         yield ("error", {"detail": "RuntimeError: model unavailable"})
 
@@ -160,10 +162,11 @@ class _FakeStore:
         return None
 
 
-def _run(run_id, source, title, turns):
+def _run(run_id, source, title, turns, thread_id=None, started_at="2026-09-11 10:00:00"):
     return {
         "run_id": run_id,
-        "started_at": "2026-09-11 10:00:00",
+        "thread_id": thread_id,
+        "started_at": started_at,
         "source": source,
         "model": "claude-opus-4-8",
         "guard_model": "claude-haiku-4-5",
@@ -175,7 +178,9 @@ def _run(run_id, source, title, turns):
 
 
 def _client_with_store(store):
-    return TestClient(create_app(ask=lambda q: {}, stream=lambda q: iter(()), store=store))
+    return TestClient(
+        create_app(ask=lambda q, tid=None: {}, stream=lambda q, tid=None: iter(()), store=store)
+    )
 
 
 def test_conversations_lists_only_ui_runs_newest_first():
@@ -275,8 +280,52 @@ def test_normalize_reduces_pipeline_state_to_the_seam():
     }
     # Gateway.answer_of reads the finished state; a rejected/failed field drives
     # status. Here nothing is rejected or failed → validated.
-    out = _normalize(state, run_id="abcdef123456")
+    out = _normalize(state, run_id="abcdef123456", thread_id="thread-xyz")
     assert out["status"] == "validated"
     assert out["intent"] == {"intent": "risk"}
     assert out["trace_id"] == "abcdef12"  # first 8 of the run id
+    assert out["thread_id"] == "thread-xyz"
     assert out["usage"]["output_tokens"] == 5
+
+
+# ── threads (the foldable history tree) ──────────────────────────────────
+
+
+def test_ask_threads_the_conversation():
+    """A request's thread_id is carried through; omitting it starts a new one."""
+    seen = {}
+
+    def fake_ask(question, thread_id=None):
+        seen["thread_id"] = thread_id
+        return {"answer": "ok", "status": "validated", "trace_id": "aa", "thread_id": thread_id}
+
+    client = TestClient(create_app(ask=fake_ask))
+    # explicit thread_id is threaded through and echoed back
+    body = client.post("/ask", json={"question": "q", "thread_id": "t-42"}).json()
+    assert seen["thread_id"] == "t-42" and body["thread_id"] == "t-42"
+    # omitting it starts a new thread (a non-empty id is generated and returned)
+    body2 = client.post("/ask", json={"question": "q"}).json()
+    assert body2["thread_id"] and body2["thread_id"] != "t-42"
+
+
+def test_threads_groups_runs_newest_first():
+    store = _FakeStore(
+        [
+            _run("r3", "ui", "third in A", 1, thread_id="A", started_at="2026-09-11 12:00:00"),
+            _run("r2", "ui", "only in B", 1, thread_id="B", started_at="2026-09-11 11:00:00"),
+            _run("r1", "ui", "first in A", 1, thread_id="A", started_at="2026-09-11 10:00:00"),
+            _run("cli", "cli-chat", "terminal", 1, thread_id="Z"),  # hidden
+            _run("legacy", "ui", "old run", 1, thread_id=None),  # its own single-run thread
+        ]
+    )
+    body = _client_with_store(store).get("/threads").json()
+    by_id = {t["thread_id"]: t for t in body}
+    # thread A has both its runs, newest first; titled by the newest run
+    assert [r["conversation_id"] for r in by_id["A"]["runs"]] == ["r3", "r1"]
+    assert by_id["A"]["title"] == "third in A"
+    # thread B has one run; the CLI run is excluded; the legacy run is its own thread
+    assert [r["conversation_id"] for r in by_id["B"]["runs"]] == ["r2"]
+    assert "Z" not in by_id
+    assert "legacy" in by_id and by_id["legacy"]["runs"][0]["conversation_id"] == "legacy"
+    # threads are ordered newest-first (A's newest run is 12:00, B's is 11:00)
+    assert [t["thread_id"] for t in body][:2] == ["A", "B"]

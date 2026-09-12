@@ -341,7 +341,7 @@ def default_trace_url() -> str:
 class Gateway:
     """Front door: builds the pipeline once, then answers questions through it."""
 
-    def __init__(
+    def __init__(  # quality: allow(no-god-class) — composition-root knobs, each a distinct fact callers pass
         self,
         db_session,
         model: str | None = None,
@@ -349,6 +349,7 @@ class Gateway:
         trace=None,
         source: str = "pipeline",
         identity=None,
+        thread_id: str | None = None,
     ):
         """Wire client, tools, trace store, and graph (the composition root).
 
@@ -372,11 +373,13 @@ class Gateway:
         )
         self.client = anthropic.Anthropic()
         self.trace_store = TraceStore(default_trace_url())
+        self.thread_id = thread_id
         self.run_id = self.trace_store.start_run(
             source=source,
             model=self.config.model,
             guard_model=self.config.guard_model,
             max_attempts=max_attempts,
+            thread_id=thread_id,
         )
         self._ctx = TurnContext()
         self._turn_count = 0
