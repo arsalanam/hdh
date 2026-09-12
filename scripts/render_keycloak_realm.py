@@ -55,6 +55,20 @@ def _seconds() -> tuple[int, int]:
     return int(hours * 3600), int(days * 86400)
 
 
+#: Where the browser SPA runs — the bundled FastAPI runtime and the Vite dev
+#: server. HDH_WEB_ORIGINS (comma-separated) widens this for a real deployment.
+_DEFAULT_WEB_ORIGINS = ("http://127.0.0.1:8100", "http://localhost:8100", "http://localhost:5173")
+
+
+def _web_origins() -> list[str]:
+    env = os.environ.get("HDH_WEB_ORIGINS", "")
+    return [o.strip() for o in env.split(",") if o.strip()] or list(_DEFAULT_WEB_ORIGINS)
+
+
+def _web_redirects() -> list[str]:
+    return [f"{origin}/*" for origin in _web_origins()]
+
+
 def build_realm() -> dict:
     session_seconds, refresh_seconds = _seconds()
     return {
@@ -74,7 +88,21 @@ def build_realm() -> dict:
                 "directAccessGrantsEnabled": True,  # the resource-owner password flow
                 "standardFlowEnabled": False,
                 "serviceAccountsEnabled": False,
-            }
+            },
+            {
+                # The browser (agent UI) client: OIDC authorization-code + PKCE.
+                # Public (a SPA keeps no secret); PKCE is what makes that safe.
+                # Redirect/origin URIs cover the bundled runtime (:8100) and the
+                # Vite dev server (:5173); widen via the env list for a deploy.
+                "clientId": "hdh-web",
+                "enabled": True,
+                "publicClient": True,
+                "standardFlowEnabled": True,  # authorization-code flow
+                "directAccessGrantsEnabled": False,
+                "attributes": {"pkce.code.challenge.method": "S256"},
+                "redirectUris": _web_redirects(),
+                "webOrigins": _web_origins(),
+            },
         ],
         "users": [
             {

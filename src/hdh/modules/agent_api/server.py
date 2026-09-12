@@ -18,9 +18,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-AskFn = Callable[[str, "str | None"], dict]
-#: A streaming backend: (question, thread_id) → ("stage"|"answer"|"error", payload) events.
-StreamFn = Callable[[str, "str | None"], Iterator[tuple[str, dict]]]
+AskFn = Callable[[str, "str | None", Any], dict]
+#: A streaming backend: (question, thread_id, identity) → ("stage"|"answer"|"error", payload) events.
+StreamFn = Callable[[str, "str | None", Any], Iterator[tuple[str, dict]]]
 
 #: Internal pipeline stage → the phrase a person reads while they wait. Anything
 #: not here (e.g. "gateway" bookkeeping) passes through title-cased.
@@ -159,7 +159,7 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
     the SQLite file — so the API and the terminal see one chart.
     """
 
-    def ask(question: str, thread_id: str | None = None) -> dict:
+    def ask(question: str, thread_id: str | None = None, identity=None) -> dict:
         from hdh.core.models import get_engine, get_session
         from hdh.modules.agent.pipeline import Gateway
 
@@ -168,7 +168,7 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
         # fhir_api.create_app).
         session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
         try:
-            gateway = Gateway(session, model=model, source="ui", identity=None, thread_id=thread_id)
+            gateway = Gateway(session, model=model, source="ui", identity=identity, thread_id=thread_id)
             state = gateway.ask(question)
             return _normalize(state, gateway.run_id, thread_id or gateway.run_id)
         finally:
@@ -188,7 +188,7 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
     the response validator has passed — the grounding guarantee, unchanged.
     """
 
-    def stream(question: str, thread_id: str | None = None) -> Iterator[tuple[str, dict]]:
+    def stream(question: str, thread_id: str | None = None, identity=None) -> Iterator[tuple[str, dict]]:
         import queue
         import threading
 
@@ -207,7 +207,7 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
             session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
             try:
                 gateway = Gateway(
-                    session, model=model, source="ui", identity=None, trace=trace, thread_id=thread_id
+                    session, model=model, source="ui", identity=identity, trace=trace, thread_id=thread_id
                 )
                 outcome["answer"] = _normalize(
                     gateway.ask(question), gateway.run_id, thread_id or gateway.run_id
@@ -321,11 +321,12 @@ def _spa_dir(web_dist: str | None):
     return candidate if (candidate / "index.html").is_file() else None
 
 
-def create_app(
+def create_app(  # quality: allow(no-god-class) — composition-root injectables + config, each distinct
     ask: AskFn | None = None,
     *,
     stream: StreamFn | None = None,
     store: Any = None,
+    authenticator: Any = None,
     db_path: str = "family_medicine.db",
     model: str | None = None,
     web_dist: str | None = None,
@@ -334,15 +335,20 @@ def create_app(
 
     ``ask`` / ``stream`` override the agent backend (tests inject fakes); by
     default both are real gateways bound to ``db_path`` / ``HDH_DB_URL``.
-    ``web_dist`` points at the built React SPA to serve at ``/`` (defaults to
-    the repo's ``web/dist`` when it exists).
+    ``authenticator`` verifies a request's token into an Identity; the default
+    verifies a provider-realm Keycloak token via JWKS. Every data endpoint
+    requires a valid token (401 otherwise); ``/health`` and the SPA are open.
+    ``web_dist`` points at the built React SPA to serve at ``/``.
     """
-    from fastapi import FastAPI, HTTPException
+    from fastapi import Depends, FastAPI, Header, HTTPException
     from fastapi.responses import StreamingResponse
+
+    from hdh.modules.agent_api.auth import AuthError, keycloak_authenticator
 
     run_ask: AskFn = ask or _gateway_ask(db_path=db_path, model=model)
     run_stream: StreamFn = stream or _gateway_stream(db_path=db_path, model=model)
     history = store or _default_store()
+    authenticate = authenticator or keycloak_authenticator()
 
     app = FastAPI(
         title="HDH Agent API",
@@ -350,26 +356,44 @@ def create_app(
         summary="The hdh agent, over HTTP — one agent, three front doors (#88).",
     )
 
+    def require_identity(authorization: str | None = Header(default=None)):
+        """Every data endpoint's gate: a valid provider-realm token → Identity,
+        or 401. This is where provider/patient realm separation is enforced."""
+        try:
+            return authenticate(authorization)
+        except AuthError as err:
+            raise HTTPException(status_code=401, detail=str(err)) from None
+
     @app.get("/health")
     def health() -> dict:
-        """Liveness — cheap, and it names the service so a proxy can label it."""
+        """Liveness — open (no token): a proxy probes it, and the SPA must load
+        before anyone can sign in."""
         return {"status": "ok", "service": "hdh-agent-api", "version": app.version}
 
+    @app.get("/me")
+    def me(identity=Depends(require_identity)) -> dict:
+        """Who is signed in — the verified provider-realm identity."""
+        return {
+            "subject": identity.subject,
+            "username": identity.username,
+            "roles": sorted(identity.roles),
+        }
+
     @app.post("/ask", response_model=AskResponse)
-    def ask_endpoint(body: AskRequest) -> dict:
+    def ask_endpoint(body: AskRequest, identity=Depends(require_identity)) -> dict:
         """Ask the agent one question; get a grounded, validated answer.
 
         Runs the full pipeline — the same one the CLI runs — so the answer is
         topic-gated, grounded in tool evidence, and checked by the response
-        validator before it is returned.
+        validator before it is returned. Attributed to the signed-in provider.
         """
         question = body.question.strip()
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
-        return run_ask(question, body.thread_id or _new_thread_id())
+        return run_ask(question, body.thread_id or _new_thread_id(), identity)
 
     @app.post("/ask/stream")
-    def ask_stream(body: AskRequest) -> Any:
+    def ask_stream(body: AskRequest, identity=Depends(require_identity)) -> Any:
         """Ask the agent, streamed. Server-Sent Events: ``stage`` frames as the
         agent works (thinking, fetching data, assembling, checking), then one
         ``answer`` frame with the validated result — or an ``error`` frame.
@@ -383,26 +407,26 @@ def create_app(
         thread_id = body.thread_id or _new_thread_id()
 
         def frames() -> Iterator[str]:
-            for event, data in run_stream(question, thread_id):
+            for event, data in run_stream(question, thread_id, identity):
                 yield _sse(event, data)
 
         return StreamingResponse(frames(), media_type="text/event-stream")
 
     @app.get("/threads", response_model=list[ThreadSummary])
-    def threads(limit: int = 30) -> Any:
+    def threads(limit: int = 30, identity=Depends(require_identity)) -> Any:
         """The caller's conversation threads, newest first — each a group of
         runs for the foldable history tree. Scoped to this UI's runs (trace
         source ``ui``); CLI and eval runs are not shown."""
         return _thread_tree(history, max(1, min(limit, 100)))
 
     @app.get("/conversations", response_model=list[ConversationSummary])
-    def conversations(limit: int = 20) -> Any:
+    def conversations(limit: int = 20, identity=Depends(require_identity)) -> Any:
         """Flat list of the caller's runs, newest first (kept for programmatic
         callers; the UI uses the threaded /threads tree)."""
         return _conversation_summaries(history, max(1, min(limit, 100)))
 
     @app.get("/conversations/{conversation_id}", response_model=Conversation)
-    def conversation(conversation_id: str) -> Any:
+    def conversation(conversation_id: str, identity=Depends(require_identity)) -> Any:
         """One conversation's transcript: each turn's question, answer and status."""
         transcript = _transcript(history, conversation_id)
         if transcript is None:

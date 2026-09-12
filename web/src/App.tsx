@@ -2,10 +2,13 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   askStream,
   getConversation,
+  getMe,
   listThreads,
   type Answer,
+  type Me,
   type ThreadSummary,
 } from "./api";
+import { currentUser, login, logout } from "./auth";
 
 // One question and what came back — the unit the chat column renders.
 type Exchange = {
@@ -32,10 +35,20 @@ export default function App() {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   // the run currently shown in the main panel, if viewing history
   const [viewingRun, setViewingRun] = useState<string | null>(null);
+  // auth: who is signed in, and whether the sign-in check has completed
+  const [me, setMe] = useState<Me | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   const refreshThreads = () => listThreads().then(setThreads).catch(() => undefined);
   useEffect(() => {
-    refreshThreads();
+    currentUser()
+      .then(async (user) => {
+        if (user) {
+          setMe(await getMe());
+          refreshThreads();
+        }
+      })
+      .finally(() => setAuthReady(true));
   }, []);
 
   async function submit(event: FormEvent) {
@@ -99,6 +112,23 @@ export default function App() {
 
   const isOpen = (threadId: string) => expanded.has(threadId) || threadId === activeThread;
 
+  if (!authReady) {
+    return <div className="gate">Loading…</div>;
+  }
+  if (!me) {
+    return (
+      <div className="gate">
+        <div className="gate-card">
+          <div className="brand">HDH Agent</div>
+          <p>Sign in with your provider account to continue.</p>
+          <button className="signin" onClick={() => login()}>
+            Sign in
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -135,6 +165,12 @@ export default function App() {
             </div>
           ))}
           {threads.length === 0 && <div className="empty">No conversations yet.</div>}
+        </div>
+        <div className="account">
+          <span className="who">{me.username}</span>
+          <button className="signout" onClick={() => logout()}>
+            Sign out
+          </button>
         </div>
       </aside>
 
