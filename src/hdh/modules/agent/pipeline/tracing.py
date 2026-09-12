@@ -43,6 +43,10 @@ class Run(TraceBase):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    #: The conversation THREAD this run belongs to — many runs share one, so a
+    #: front door can group them in a foldable history tree. NULL on runs from
+    #: before threads existed; those are shown as single-run threads.
+    thread_id: Mapped[str | None] = mapped_column(String(36), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     source: Mapped[str] = mapped_column(String(40), default="pipeline")
     model: Mapped[str] = mapped_column(String(80), default="")
@@ -129,15 +133,49 @@ class TraceStore:
         """Open (and create, if needed) the trace database at ``url``."""
         self.engine = create_engine(url)
         TraceBase.metadata.create_all(self.engine)
+        self._ensure_thread_id()
+
+    def _ensure_thread_id(self) -> None:
+        """Add runs.thread_id to a database that predates it.
+
+        create_all never ALTERs an existing table, and the trace DB is a
+        long-lived per-user file, so a column added to the model would be
+        missing on every older ~/.hdh/traces.db. This backfills it once,
+        idempotently; unknown/new dialects that reject the ALTER are left
+        alone (a fresh DB already has the column from create_all)."""
+        from sqlalchemy import inspect, text
+
+        try:
+            columns = {c["name"] for c in inspect(self.engine).get_columns("runs")}
+            if "thread_id" not in columns:
+                with self.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE runs ADD COLUMN thread_id VARCHAR(36)"))
+        except Exception:  # noqa: BLE001 - a missing table or odd dialect is not fatal here
+            pass
 
     # ── Writing ──────────────────────────────────────────────────────────────
 
-    def start_run(self, source: str, model: str, guard_model: str, max_attempts: int) -> str:
-        """Register a new session; returns its run id."""
+    def start_run(
+        self,
+        source: str,
+        model: str,
+        guard_model: str,
+        max_attempts: int,
+        thread_id: str | None = None,
+    ) -> str:
+        """Register a new session; returns its run id. ``thread_id`` groups runs
+        into one conversation thread for a front door's history tree."""
         run_id = str(uuid.uuid4())
         with Session(self.engine) as s:
             s.add(
-                Run(id=run_id, source=source, model=model, guard_model=guard_model, max_attempts=max_attempts)
+                Run(
+                    id=run_id,
+                    thread_id=thread_id,
+                    source=source,
+                    model=model,
+                    guard_model=guard_model,
+                    max_attempts=max_attempts,
+                )
             )
             s.commit()
         return run_id
@@ -228,6 +266,7 @@ class TraceStore:
                 out.append(
                     {
                         "run_id": run.id,
+                        "thread_id": run.thread_id,
                         "started_at": run.started_at.strftime("%Y-%m-%d %H:%M:%S"),
                         "source": run.source,
                         "model": run.model,
