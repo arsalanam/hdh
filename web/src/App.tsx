@@ -4,6 +4,7 @@ import {
   getConversation,
   getMe,
   listThreads,
+  uploadNote,
   type Answer,
   type Me,
   type ThreadSummary,
@@ -38,6 +39,9 @@ export default function App() {
   // auth: who is signed in, and whether the sign-in check has completed
   const [me, setMe] = useState<Me | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  // note upload: which patient the note is for, and whether one is in flight
+  const [noteMrn, setNoteMrn] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const refreshThreads = () => listThreads().then(setThreads).catch(() => undefined);
   useEffect(() => {
@@ -93,6 +97,31 @@ export default function App() {
         status: t.status,
       })),
     );
+  }
+
+  async function onUploadNote(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // let the same file be re-picked later
+    const mrn = noteMrn.trim();
+    if (!file || !mrn) return;
+    setViewingRun(null);
+    setUploading(true);
+    const label = `📎 ${file.name} → ${mrn}`;
+    const result = await uploadNote(mrn, file);
+    setUploading(false);
+    if ("error" in result) {
+      setExchanges((xs) => [...xs, { question: label, error: result.error }]);
+      return;
+    }
+    const kinds = result.verdicts.map((v) => `${v.action} ${v.kind}`).join(", ") || "nothing new";
+    const summary =
+      `Charted onto visit #${result.visit_id}${result.created_visit ? " (new encounter)" : ""}: ${kinds}` +
+      (result.needs_review ? " — some items need review" : "");
+    setExchanges((xs) => [
+      ...xs,
+      { question: label, answer: summary, status: result.needs_review ? "review" : "validated" },
+    ]);
+    refreshThreads();
   }
 
   function startNewConversation() {
@@ -202,6 +231,25 @@ export default function App() {
               )}
             </div>
           ))}
+        </div>
+
+        <div className="attach">
+          <input
+            className="mrn"
+            placeholder="MRN"
+            value={noteMrn}
+            onChange={(e) => setNoteMrn(e.target.value)}
+          />
+          <label className={"attach-btn" + (!noteMrn.trim() || uploading ? " disabled" : "")}>
+            {uploading ? "Uploading…" : "📎 Attach note"}
+            <input
+              type="file"
+              hidden
+              accept="image/*,application/pdf,.txt,text/plain"
+              disabled={!noteMrn.trim() || uploading}
+              onChange={onUploadNote}
+            />
+          </label>
         </div>
 
         <form className="composer" onSubmit={submit}>

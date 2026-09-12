@@ -393,3 +393,64 @@ def test_the_signed_in_identity_reaches_the_agent():
     client = TestClient(create_app(ask=fake_ask, store=_FakeStore([]), authenticator=_ALLOW))
     client.post("/ask", json={"question": "who is overdue?"})
     assert seen["identity"] is _OK  # the signed-in provider, threaded through
+
+
+# ── note upload (always a note → comprehension → chart) ──────────────────
+
+
+def _upload_app(ingest, authenticator=_ALLOW):
+    return TestClient(
+        create_app(
+            ask=lambda q, tid=None, identity=None: {},
+            store=_FakeStore([]),
+            ingest=ingest,
+            authenticator=authenticator,
+        )
+    )
+
+
+def test_note_upload_charts_via_comprehension():
+    def fake_ingest(mrn, filename, content_type, data, identity):
+        assert mrn == "MRN1" and b"BP 128" in data and identity is _OK
+        return {
+            "mrn": mrn,
+            "visit_id": 7,
+            "created_visit": True,
+            "needs_review": False,
+            "chars": len(data),
+            "verdicts": [{"action": "new", "kind": "vitals", "detail": "BP 128/79"}],
+        }
+
+    resp = _upload_app(fake_ingest).post(
+        "/notes/upload", data={"mrn": "MRN1"}, files={"file": ("note.txt", b"BP 128/79", "text/plain")}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["visit_id"] == 7 and body["verdicts"][0]["kind"] == "vitals"
+
+
+def test_note_upload_requires_a_token():
+    def deny(_header):
+        raise AuthError("no token")
+
+    resp = _upload_app(lambda *a: {}, authenticator=deny).post(
+        "/notes/upload", data={"mrn": "MRN1"}, files={"file": ("n.txt", b"x", "text/plain")}
+    )
+    assert resp.status_code == 401
+
+
+def test_note_upload_rejects_an_empty_file():
+    resp = _upload_app(lambda *a: {}).post(
+        "/notes/upload", data={"mrn": "MRN1"}, files={"file": ("n.txt", b"", "text/plain")}
+    )
+    assert resp.status_code == 422
+
+
+def test_transcribe_handles_text_and_refuses_audio_and_unknown():
+    from hdh.modules.agent_api.notes import NoteError, transcribe
+
+    assert transcribe("n.txt", "text/plain", b"BP 128/79") == "BP 128/79"
+    with pytest.raises(NoteError):  # audio is the speech front door (#87), not here
+        transcribe("a.mp3", "audio/mpeg", b"...")
+    with pytest.raises(NoteError):  # not a media we turn into a note
+        transcribe("x.bin", "application/octet-stream", b"...")

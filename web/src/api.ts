@@ -110,6 +110,30 @@ function dispatch(block: string, handlers: StreamHandlers): void {
   else if (event === "error") handlers.onError(payload as { detail: string });
 }
 
+export type NoteVerdict = { action: string; kind: string; detail: string };
+export type NoteUploadResult = {
+  mrn: string;
+  visit_id: number;
+  created_visit: boolean;
+  needs_review: boolean;
+  chars: number;
+  verdicts: NoteVerdict[];
+};
+
+/** Upload a note (image/PDF/text) onto a patient's chart — multipart; the
+ *  browser sets the boundary, so we attach only the bearer token. */
+export async function uploadNote(mrn: string, file: File): Promise<NoteUploadResult | { error: string }> {
+  const form = new FormData();
+  form.append("mrn", mrn);
+  form.append("file", file);
+  const resp = await fetch("/notes/upload", { method: "POST", headers: await authHeaders(), body: form });
+  if (!resp.ok) {
+    const detail = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+    return { error: detail.detail || `HTTP ${resp.status}` };
+  }
+  return resp.json();
+}
+
 export async function getMe(): Promise<Me | null> {
   const resp = await fetch("/me", { headers: await authHeaders() });
   return resp.ok ? ((await resp.json()) as Me) : null;
