@@ -230,6 +230,35 @@ def test_an_unknown_conversation_is_404():
     assert _client_with_store(_FakeStore([])).get("/conversations/nope").status_code == 404
 
 
+# ── serving the built SPA ────────────────────────────────────────────────
+
+
+def test_the_spa_is_served_and_api_routes_still_win(tmp_path):
+    (tmp_path / "index.html").write_text("<div id='root'>hdh agent</div>", encoding="utf-8")
+    app = create_app(
+        ask=lambda q: {}, stream=lambda q: iter(()), store=_FakeStore([]), web_dist=str(tmp_path)
+    )
+    client = TestClient(app)
+    # "/" serves the SPA
+    root = client.get("/")
+    assert root.status_code == 200 and "hdh agent" in root.text
+    # but an API route mounted before the SPA still takes precedence
+    assert client.get("/health").json()["status"] == "ok"
+
+
+def test_no_spa_mount_when_not_built(tmp_path):
+    """An unbuilt checkout (no index.html) serves no SPA — the API still runs."""
+    app = create_app(
+        ask=lambda q: {},
+        stream=lambda q: iter(()),
+        store=_FakeStore([]),
+        web_dist=str(tmp_path / "absent"),
+    )
+    client = TestClient(app)
+    assert client.get("/").status_code == 404  # nothing mounted at /
+    assert client.get("/health").json()["status"] == "ok"  # API unaffected
+
+
 def test_normalize_reduces_pipeline_state_to_the_seam():
     """The default backend maps a raw pipeline state to the response shape;
     check that reduction directly (no Anthropic, no gateway)."""

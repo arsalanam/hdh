@@ -244,6 +244,20 @@ def _transcript(store, conversation_id: str) -> dict | None:
     }
 
 
+def _spa_dir(web_dist: str | None):
+    """The built SPA directory to serve, or None if there is nothing to serve.
+
+    An explicit path wins; otherwise the repo's ``web/dist`` (present once
+    ``npm run build`` has run). Absent — an unbuilt checkout, or a pip install
+    without the frontend — the API simply serves no SPA, which is fine: the
+    JSON/SSE endpoints stand on their own.
+    """
+    from pathlib import Path
+
+    candidate = Path(web_dist) if web_dist else Path(__file__).resolve().parents[4] / "web" / "dist"
+    return candidate if (candidate / "index.html").is_file() else None
+
+
 def create_app(
     ask: AskFn | None = None,
     *,
@@ -251,11 +265,14 @@ def create_app(
     store: Any = None,
     db_path: str = "family_medicine.db",
     model: str | None = None,
+    web_dist: str | None = None,
 ):
     """Build the agent HTTP app.
 
     ``ask`` / ``stream`` override the agent backend (tests inject fakes); by
     default both are real gateways bound to ``db_path`` / ``HDH_DB_URL``.
+    ``web_dist`` points at the built React SPA to serve at ``/`` (defaults to
+    the repo's ``web/dist`` when it exists).
     """
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import StreamingResponse
@@ -324,5 +341,13 @@ def create_app(
         if transcript is None:
             raise HTTPException(status_code=404, detail="no such conversation")
         return transcript
+
+    # The React SPA, served by this same runtime — mounted LAST so it catches
+    # only what the API routes above did not (design: one runtime, one origin).
+    spa = _spa_dir(web_dist)
+    if spa is not None:
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount("/", StaticFiles(directory=str(spa), html=True), name="spa")
 
     return app
