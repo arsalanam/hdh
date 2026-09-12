@@ -36,6 +36,26 @@
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": false,
       "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "hdh-web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "redirectUris": [
+        "http://127.0.0.1:8100/*",
+        "http://localhost:8100/*",
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://127.0.0.1:8100",
+        "http://localhost:8100",
+        "http://localhost:5173"
+      ]
     }
   ],
   "users": [

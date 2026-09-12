@@ -170,7 +170,13 @@ def _identity_from_token(access_token: str) -> Identity:
     account. `provider_id` is None here and is filled in by AU2's
     account↔provider linking.
     """
-    claims = _decode_claims(access_token)
+    return identity_from_claims(_decode_claims(access_token))
+
+
+def identity_from_claims(claims: dict) -> Identity:
+    """Build the `Identity` from a token's claims — whether they were decoded
+    unverified (the CLI's same-trust path) or verified against the realm's
+    JWKS (the web boundary, `agent_api.auth`). One mapping, both doors."""
     username = claims.get("preferred_username") or claims.get("sub", "unknown")
     roles = frozenset((claims.get("realm_access") or {}).get("roles") or ())
     return Identity(

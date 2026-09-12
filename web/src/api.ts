@@ -2,6 +2,17 @@
 // Same-origin: in production FastAPI serves this SPA and the API together; in
 // dev, vite proxies the API routes to the backend.
 
+import { accessToken } from "./auth";
+
+// Every call carries the signed-in provider's bearer token; the backend
+// verifies it and refuses anything without a valid provider-realm token.
+async function authHeaders(extra: Record<string, string> = {}): Promise<HeadersInit> {
+  const token = await accessToken();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+export type Me = { subject: string; username: string; roles: string[] };
+
 export type Stage = { stage: string; label: string; detail?: string };
 export type Answer = {
   answer: string;
@@ -60,7 +71,7 @@ export async function askStream(
   try {
     resp = await fetch("/ask/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ question, thread_id: threadId }),
     });
   } catch (err) {
@@ -99,17 +110,22 @@ function dispatch(block: string, handlers: StreamHandlers): void {
   else if (event === "error") handlers.onError(payload as { detail: string });
 }
 
+export async function getMe(): Promise<Me | null> {
+  const resp = await fetch("/me", { headers: await authHeaders() });
+  return resp.ok ? ((await resp.json()) as Me) : null;
+}
+
 export async function listThreads(): Promise<ThreadSummary[]> {
-  const resp = await fetch("/threads");
+  const resp = await fetch("/threads", { headers: await authHeaders() });
   return resp.ok ? ((await resp.json()) as ThreadSummary[]) : [];
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const resp = await fetch("/conversations");
+  const resp = await fetch("/conversations", { headers: await authHeaders() });
   return resp.ok ? ((await resp.json()) as ConversationSummary[]) : [];
 }
 
 export async function getConversation(id: string): Promise<Transcript | null> {
-  const resp = await fetch(`/conversations/${encodeURIComponent(id)}`);
+  const resp = await fetch(`/conversations/${encodeURIComponent(id)}`, { headers: await authHeaders() });
   return resp.ok ? ((await resp.json()) as Transcript) : null;
 }

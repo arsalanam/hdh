@@ -11,11 +11,21 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+from hdh.core.identity import Identity
 from hdh.modules.agent_api import create_app
+from hdh.modules.agent_api.auth import AuthError
+
+# A signed-in provider and an authenticator that accepts any request — so the
+# HTTP surface is tested without a live Keycloak. The 401 path uses its own.
+_OK = Identity(subject="sub-test", username="dr.test", roles=frozenset({"clinician"}))
+
+
+def _ALLOW(_header):
+    return _OK
 
 
 def _client(ask):
-    return TestClient(create_app(ask=ask))
+    return TestClient(create_app(ask=ask, authenticator=_ALLOW))
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -37,13 +47,13 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 
 def test_health_names_the_service():
-    client = _client(lambda q, tid=None: {})
+    client = _client(lambda q, tid=None, identity=None: {})
     body = client.get("/health").json()
     assert body["status"] == "ok" and body["service"] == "hdh-agent-api"
 
 
 def test_ask_returns_the_agents_answer_and_the_seam_fields():
-    def fake_ask(question, thread_id=None):
+    def fake_ask(question, thread_id=None, identity=None):
         assert question == "Which patients have uncontrolled HTN?"
         return {
             "answer": "Three patients: MRN1, MRN2, MRN3.",
@@ -78,17 +88,19 @@ def test_a_rejected_turn_is_reported_not_hidden():
         "trace_id": "deadbeef",
         "thread_id": "t-1",
     }
-    resp = _client(lambda q, tid=None: reject).post("/ask", json={"question": "best lasagna recipe?"})
+    resp = _client(lambda q, tid=None, identity=None: reject).post(
+        "/ask", json={"question": "best lasagna recipe?"}
+    )
     assert resp.status_code == 200 and resp.json()["status"] == "rejected"
 
 
 def test_an_empty_question_is_refused():
-    resp = _client(lambda q, tid=None: {}).post("/ask", json={"question": "   "})
+    resp = _client(lambda q, tid=None, identity=None: {}).post("/ask", json={"question": "   "})
     assert resp.status_code == 422
 
 
 def test_a_missing_question_is_a_validation_error():
-    resp = _client(lambda q, tid=None: {}).post("/ask", json={})
+    resp = _client(lambda q, tid=None, identity=None: {}).post("/ask", json={})
     assert resp.status_code == 422
 
 
@@ -96,7 +108,7 @@ def test_a_missing_question_is_a_validation_error():
 
 
 def test_ask_stream_emits_stage_frames_then_the_answer():
-    def fake_stream(question, thread_id=None):
+    def fake_stream(question, thread_id=None, identity=None):
         assert question == "who is overdue?"
         yield ("stage", {"stage": "guardrails", "label": "Checking the question…"})
         yield ("stage", {"stage": "intent", "label": "Thinking…"})
@@ -104,7 +116,7 @@ def test_ask_stream_emits_stage_frames_then_the_answer():
         yield ("stage", {"stage": "validator", "label": "Checking the answer…"})
         yield ("answer", {"answer": "Two patients.", "status": "validated", "trace_id": "ab12cd34"})
 
-    client = TestClient(create_app(stream=fake_stream))
+    client = TestClient(create_app(stream=fake_stream, authenticator=_ALLOW))
     resp = client.post("/ask/stream", json={"question": "who is overdue?"})
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
@@ -120,17 +132,21 @@ def test_ask_stream_emits_stage_frames_then_the_answer():
 
 
 def test_ask_stream_surfaces_an_error_frame():
-    def boom(question, thread_id=None):
+    def boom(question, thread_id=None, identity=None):
         yield ("stage", {"stage": "intent", "label": "Thinking…"})
         yield ("error", {"detail": "RuntimeError: model unavailable"})
 
-    resp = TestClient(create_app(stream=boom)).post("/ask/stream", json={"question": "x"})
+    resp = TestClient(create_app(stream=boom, authenticator=_ALLOW)).post(
+        "/ask/stream", json={"question": "x"}
+    )
     frames = _parse_sse(resp.text)
     assert frames[-1][0] == "error" and "model unavailable" in frames[-1][1]["detail"]
 
 
 def test_ask_stream_refuses_an_empty_question():
-    resp = TestClient(create_app(stream=lambda q: iter(()))).post("/ask/stream", json={"question": " "})
+    resp = TestClient(
+        create_app(stream=lambda q, tid=None, identity=None: iter(()), authenticator=_ALLOW)
+    ).post("/ask/stream", json={"question": " "})
     assert resp.status_code == 422
 
 
@@ -179,7 +195,12 @@ def _run(run_id, source, title, turns, thread_id=None, started_at="2026-09-11 10
 
 def _client_with_store(store):
     return TestClient(
-        create_app(ask=lambda q, tid=None: {}, stream=lambda q, tid=None: iter(()), store=store)
+        create_app(
+            ask=lambda q, tid=None, identity=None: {},
+            stream=lambda q, tid=None, identity=None: iter(()),
+            store=store,
+            authenticator=_ALLOW,
+        )
     )
 
 
@@ -295,11 +316,11 @@ def test_ask_threads_the_conversation():
     """A request's thread_id is carried through; omitting it starts a new one."""
     seen = {}
 
-    def fake_ask(question, thread_id=None):
+    def fake_ask(question, thread_id=None, identity=None):
         seen["thread_id"] = thread_id
         return {"answer": "ok", "status": "validated", "trace_id": "aa", "thread_id": thread_id}
 
-    client = TestClient(create_app(ask=fake_ask))
+    client = TestClient(create_app(ask=fake_ask, authenticator=_ALLOW))
     # explicit thread_id is threaded through and echoed back
     body = client.post("/ask", json={"question": "q", "thread_id": "t-42"}).json()
     assert seen["thread_id"] == "t-42" and body["thread_id"] == "t-42"
@@ -329,3 +350,46 @@ def test_threads_groups_runs_newest_first():
     assert "legacy" in by_id and by_id["legacy"]["runs"][0]["conversation_id"] == "legacy"
     # threads are ordered newest-first (A's newest run is 12:00, B's is 11:00)
     assert [t["thread_id"] for t in body][:2] == ["A", "B"]
+
+
+# ── authentication (always required) ─────────────────────────────────────
+
+
+def test_me_returns_the_signed_in_identity():
+    client = TestClient(
+        create_app(ask=lambda q, tid=None, identity=None: {}, store=_FakeStore([]), authenticator=_ALLOW)
+    )
+    body = client.get("/me").json()
+    assert body["username"] == "dr.test" and "clinician" in body["roles"]
+
+
+def test_data_endpoints_require_a_valid_token():
+    """Always-required: without a valid provider-realm token the data endpoints
+    refuse with 401 — /health (and the SPA) stay open so the app can load and
+    a sign-in can happen."""
+
+    def deny(_header):
+        raise AuthError("missing or malformed Authorization header")
+
+    app = create_app(ask=lambda q, tid=None, identity=None: {}, store=_FakeStore([]), authenticator=deny)
+    client = TestClient(app)
+    assert client.get("/health").status_code == 200  # open
+    assert client.post("/ask", json={"question": "hi"}).status_code == 401
+    assert client.post("/ask/stream", json={"question": "hi"}).status_code == 401
+    assert client.get("/threads").status_code == 401
+    assert client.get("/conversations").status_code == 401
+    assert client.get("/me").status_code == 401
+
+
+def test_the_signed_in_identity_reaches_the_agent():
+    """The verified identity is passed to the backend (attribution + role-shaped
+    tools), not dropped at the door."""
+    seen = {}
+
+    def fake_ask(question, thread_id=None, identity=None):
+        seen["identity"] = identity
+        return {"answer": "ok", "status": "validated", "trace_id": "a", "thread_id": thread_id}
+
+    client = TestClient(create_app(ask=fake_ask, store=_FakeStore([]), authenticator=_ALLOW))
+    client.post("/ask", json={"question": "who is overdue?"})
+    assert seen["identity"] is _OK  # the signed-in provider, threaded through
