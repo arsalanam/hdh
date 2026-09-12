@@ -317,6 +317,36 @@ body {
   }
 }
 
+/* ── attach-note row ─────────────────────────────────────────────────── */
+.attach {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px clamp(16px, 8vw, 120px) 0;
+}
+.attach .mrn {
+  width: 120px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+}
+.attach-btn {
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 7px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.attach-btn.disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
 /* ── composer ────────────────────────────────────────────────────────── */
 .composer {
   display: flex;

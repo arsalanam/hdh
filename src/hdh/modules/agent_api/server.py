@@ -16,11 +16,15 @@ import json
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 AskFn = Callable[[str, "str | None", Any], dict]
 #: A streaming backend: (question, thread_id, identity) → ("stage"|"answer"|"error", payload) events.
 StreamFn = Callable[[str, "str | None", Any], Iterator[tuple[str, dict]]]
+#: A note-ingest backend: (mrn, filename, content_type, data, identity) → result dict.
+IngestFn = Callable[[str, str, str, bytes, Any], dict]
 
 #: Internal pipeline stage → the phrase a person reads while they wait. Anything
 #: not here (e.g. "gateway" bookkeeping) passes through title-cased.
@@ -70,6 +74,25 @@ class AskResponse(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     trace_id: str
     thread_id: str  # the thread this run was filed under
+
+
+class NoteVerdict(BaseModel):
+    """One reconciliation outcome from charting an uploaded note."""
+
+    action: str  # new | confirmed | review | skipped
+    kind: str
+    detail: str
+
+
+class UploadResult(BaseModel):
+    """What charting an uploaded note did — mirrors a dictated note's outcome."""
+
+    mrn: str
+    visit_id: int
+    created_visit: bool
+    needs_review: bool
+    chars: int  # characters transcribed
+    verdicts: list[NoteVerdict] = Field(default_factory=list)
 
 
 class ThreadRun(BaseModel):
@@ -326,6 +349,7 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
     *,
     stream: StreamFn | None = None,
     store: Any = None,
+    ingest: IngestFn | None = None,
     authenticator: Any = None,
     db_path: str = "family_medicine.db",
     model: str | None = None,
@@ -340,13 +364,12 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
     requires a valid token (401 otherwise); ``/health`` and the SPA are open.
     ``web_dist`` points at the built React SPA to serve at ``/``.
     """
-    from fastapi import Depends, FastAPI, Header, HTTPException
-    from fastapi.responses import StreamingResponse
-
     from hdh.modules.agent_api.auth import AuthError, keycloak_authenticator
+    from hdh.modules.agent_api.notes import NoteError, note_ingest
 
     run_ask: AskFn = ask or _gateway_ask(db_path=db_path, model=model)
     run_stream: StreamFn = stream or _gateway_stream(db_path=db_path, model=model)
+    run_ingest: IngestFn = ingest or note_ingest(db_path=db_path, model=model)
     history = store or _default_store()
     authenticate = authenticator or keycloak_authenticator()
 
@@ -411,6 +434,29 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
                 yield _sse(event, data)
 
         return StreamingResponse(frames(), media_type="text/event-stream")
+
+    @app.post("/notes/upload", response_model=UploadResult)
+    def upload_note(
+        mrn: str = Form(...),
+        file: UploadFile = File(...),
+        identity=Depends(require_identity),
+    ) -> Any:
+        """Upload a note (handwritten/scanned/text) onto a patient's chart.
+
+        It is transcribed to text and run through the SAME comprehension path a
+        dictated note takes — charted as history, with reconciliation verdicts;
+        an ambiguous value reaches review, not a guess. Never a lab-result feed
+        or an order. Attributed to the signed-in provider.
+        """
+        data = file.file.read()
+        if not data:
+            raise HTTPException(status_code=422, detail="empty file")
+        try:
+            return run_ingest(
+                mrn, file.filename or "note", file.content_type or "application/octet-stream", data, identity
+            )
+        except NoteError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from None
 
     @app.get("/threads", response_model=list[ThreadSummary])
     def threads(limit: int = 30, identity=Depends(require_identity)) -> Any:
