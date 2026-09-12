@@ -210,26 +210,41 @@ def test_selective_tool_exposure_by_intent():
     from hdh.modules.agent.tools import build_tools
 
     scoped = build_tools(None, include={"get_risk_scores", "query_database", "search_patients"})
-    assert {t.name for t in scoped} == {"get_risk_scores", "query_database", "search_patients"}
+    # describe_table is auto-included whenever query_database is — it's how the
+    # model reads a table's columns (schema-on-demand).
+    assert {t.name for t in scoped} == {
+        "get_risk_scores",
+        "query_database",
+        "describe_table",
+        "search_patients",
+    }
     everything = build_tools(None)
-    # 7 core (incl. the identity-aware search_patients + provider_visits) + 3
-    # chart-maintenance + 11 care-planning + 3 refill, all always available;
-    # the ontology and comprehension toolsets need their catalogs and stay
-    # absent here. Care planning is in the always-on set for the same reason
-    # chart maintenance is: it needs no loaded catalog, and what it does
-    # need — a retrieval store — is built on first use rather than at
-    # import, so listing the tools costs nothing.
-    assert len(everything) == 27
+    # 8 core (the 7 + describe_table) + 3 chart-maintenance + 11 care-planning
+    # + 3 refill, all always available; ontology/comprehension need catalogs.
+    assert len(everything) == 28
 
 
-def test_selective_schema_revealing():
+def test_sql_tool_lists_a_table_catalog_not_columns():
+    """The SQL tool now carries a compact catalog (every table + purpose) and
+    defers columns to describe_table — so the full schema no longer rides in
+    context and the model does not introspect tables at runtime."""
     from hdh.modules.agent.tools import build_tools
 
     scoped = build_tools(None, tables=("patients", "visits"))
-    sql_tool = next(t for t in scoped if t.name == "query_database")
-    desc = sql_tool.to_dict()["description"]
-    assert "patients(" in desc and "visits(" in desc
-    assert "lab_results(" not in desc and "prescriptions(" not in desc
+    tools = {t.name: t for t in scoped}
+    desc = tools["query_database"].to_dict()["description"]
+    # every table is in view by NAME (so nothing is discovered at runtime)...
+    assert "patients" in desc and "lab_results" in desc
+    # ...but columns are NOT embedded (no "table(col, col, …)" forms)
+    assert "patients(" not in desc and "lab_results(" not in desc
+    # the intent's tables are flagged as most relevant, and the tool points at
+    # describe_table for columns
+    assert "Most relevant for this request: patients, visits" in desc
+    assert "describe_table" in desc
+    # and describe_table returns columns for a named table, or a clear miss
+    describe = tools["describe_table"]
+    assert "patients(" in describe.call({"table_name": "patients"})
+    assert "Unknown table" in describe.call({"table_name": "no_such_table"})
 
 
 def test_tool_result_clipping():

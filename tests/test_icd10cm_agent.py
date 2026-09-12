@@ -67,7 +67,12 @@ def test_icd_tools_register_and_filter(coding_session):
     # are absent without their catalogs — which is the whole point of a
     # builder that returns [] rather than tools that can only fail.
     coding_names = {t.name for t in build_tools(coding_session, include=INTENT_TOOLS["coding"])}
-    assert coding_names <= INTENT_TOOLS["coding"], "the filter let through a tool the intent never asked for"
+    # describe_table is the one companion the filter adds on purpose: it travels
+    # with query_database (schema-on-demand), so an intent that can run SQL can
+    # read a table's columns. Nothing else may slip through.
+    assert coding_names <= INTENT_TOOLS["coding"] | {"describe_table"}, (
+        "the filter let through a tool the intent never asked for"
+    )
     assert {"icd_codify", "icd_lookup", "icd_search", "icd_pattern"} <= coding_names
     assert "query_database" in coding_names
     assert "coding" in INTENT_SCHEMA["properties"]["intent"]["enum"]

@@ -166,4 +166,4 @@ def test_the_model_is_told_when_a_table_is_unexplained():
     """Silence would read as 'nothing worth saying' rather than 'unknown'."""
     from hdh.modules.agent.tools import _sql_tool_description
 
-    assert "carry columns only" in _sql_tool_description(None, "postgresql")
+    assert "say what you are assuming" in _sql_tool_description(None, "postgresql")

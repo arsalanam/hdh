@@ -80,8 +80,32 @@ def clip_tool_results(tool_response: Mapping | None, cap: int) -> Mapping | None
     return tool_response
 
 
+def _table_catalog() -> str:
+    """Every table with a one-line purpose — the compact map the SQL tool
+    carries so the model knows what EXISTS without paying for every column on
+    every loop turn. Columns arrive on demand via ``describe_table``.
+
+    This replaces embedding the full column schema (~4k tokens, re-billed each
+    turn). Measured: without a catalog the model spent queries discovering the
+    schema at runtime — an 8,463-char ``SELECT … FROM information_schema`` —
+    because the tables it needed were not in view. The catalog puts every
+    table in view cheaply.
+    """
+    from hdh.core.schema_registry import table_semantics
+
+    meanings = table_semantics()
+    lines = []
+    for table in Base.metadata.sorted_tables:
+        purpose = (meanings.get(table.name) or {}).get("purpose", "")
+        lines.append(f"  {table.name}" + (f" — {purpose}" if purpose else ""))
+    return "\n".join(lines)
+
+
 def _sql_tool_description(tables: tuple[str, ...] | None, dialect: str = "sqlite") -> str:
-    """The query_database tool description, with an intent-scoped schema.
+    """The query_database tool description: a compact table CATALOG, not every
+    column. The model calls ``describe_table(name)`` for a table's columns on
+    demand, so the full schema no longer rides in context every turn and the
+    model does not burn queries introspecting it.
 
     Dialect-aware date guidance: telling the model julianday()/strftime()
     "work" while it queries PostgreSQL produces a guaranteed first-query
@@ -94,14 +118,17 @@ def _sql_tool_description(tables: tuple[str, ...] | None, dialect: str = "sqlite
         )
     else:
         date_note = "Dates are ISO 'YYYY-MM-DD' text (julianday()/strftime() work)."
+    relevant = f"\n        Most relevant for this request: {', '.join(tables)}.\n" if tables else ""
     return f"""Run a read-only SQL SELECT against the synthetic {dialect} database.
 
-        Schema — columns, and what each table is for:
-{_semantic_schema(tables)}
-
-        Tables not annotated above carry columns only; if one looks like the
-        answer, say what you are assuming rather than guessing at its meaning.
-        Enum columns store NAMES, not numbers — compare to the string.
+        Tables (call describe_table(name) for a table's columns and meaning
+        BEFORE you query it — do not guess column names, and do not SELECT from
+        information_schema):
+{_table_catalog()}
+{relevant}
+        A table shown with no purpose is unannotated: describe_table still
+        returns its columns, but say what you are assuming about it rather than
+        guessing at its meaning. Enum columns store NAMES, not numbers — compare to the string.
         Anything joining via visit_id reaches the patient through
         visits.patient_id. {date_note} Results are capped at 200 rows.
 
@@ -492,6 +519,19 @@ def build_tools(
 
     @beta_tool
     @guard
+    def describe_table(table_name: str) -> str:
+        """Get the columns and meaning of ONE database table. Call this before writing SQL against a table — it gives the exact column names so you never guess or introspect the schema yourself.
+
+        Args:
+            table_name: A table from the query_database catalog, e.g. "lab_results".
+        """
+        known = {t.name for t in Base.metadata.sorted_tables}
+        if table_name not in known:
+            return f"Unknown table '{table_name}'. Known tables: {', '.join(sorted(known))}"
+        return _semantic_schema((table_name,))
+
+    @beta_tool
+    @guard
     def dataset_stats() -> str:
         """Get overall dataset statistics: patient, visit, diagnosis, prescription, and lab counts."""
         from hdh.core.models import Condition as Dx
@@ -511,6 +551,7 @@ def build_tools(
         get_care_gaps,
         get_risk_scores,
         query_database,
+        describe_table,
         dataset_stats,
     ]
     all_tools.extend(_personal_search_tools(session, identity, guard))
@@ -518,7 +559,12 @@ def build_tools(
     all_tools.extend(_chart_tools(session, identity))
     if include is None:
         return all_tools
-    return [tool for tool in all_tools if tool.name in include]
+    # describe_table travels with query_database — it is how the model reads the
+    # schema, so an intent that can run SQL can always inspect a table's columns.
+    wanted = set(include)
+    if "query_database" in wanted:
+        wanted.add("describe_table")
+    return [tool for tool in all_tools if tool.name in wanted]
 
 
 def _chart_tools(session, identity=None) -> list:
