@@ -230,6 +230,24 @@ hdh agent "Which patients need outreach?"   # one-shot
 hdh agent --compact-after 8                 # demo context compaction
 ```
 
+### …or in the browser
+
+The same agent has a **browser front door** — a React SPA served by the same
+runtime as the backend API, signed in against Keycloak (provider realm only).
+It is the third of #88's "one agent, three front doors": type a question and
+watch the pipeline stages stream, scroll back through a foldable tree of
+conversation threads, or **attach a handwritten or scanned note** and have it
+charted as history. Every request goes through the *same* pipeline as the CLI —
+a front door may present differently, it may not decide differently.
+
+```bash
+just deps                    # PostgreSQL + Keycloak (with the `hdh` realm)
+cd web && npm install && npm run build && cd ..
+hdh serve-agent              # → http://127.0.0.1:8100  (sign in as dr.chen / dr.chen)
+```
+
+See the [Agent UI guide](docs/guides/agent-ui.md) for the full walkthrough.
+
 ---
 
 ## Run it on PostgreSQL
@@ -382,6 +400,7 @@ src/hdh/
 │   ├── caregaps/           # Rule-based care-gap detection
 │   ├── risk/               # ML risk stratification (features + model + tiers)
 │   ├── agent/              # Agentic AI care assistant (Claude tool-use loop)
+│   ├── agent_api/          # The agent over HTTP: FastAPI app, Keycloak auth, note upload; serves the SPA
 │   ├── narrative/          # SOAP-note narrative generation
 │   ├── fhir_api/           # FHIR R4 REST API (FastAPI)
 │   ├── icd10cm/            # ICD-10-CM knowledge graph: loader, retrieval funnel, agent tools
@@ -390,6 +409,8 @@ src/hdh/
 │   ├── comprehension/      # Doctor-note comprehension: free text → coded chart update
 │   └── billing/            # CPT / RVU / claims simulation (scaffold)
 └── cli.py           # `hdh` CLI — core commands + auto-discovered module subcommands
+
+web/                 # React SPA (Vite) — the agent's browser front door; built to web/dist/, served by agent_api
 ```
 
 **Design rule:** `hdh.core` never imports from `hdh.modules`. Modules depend on
@@ -478,7 +499,8 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [narrative](docs/guides/narrative.md) · [FHIR API](docs/guides/fhir-api.md) ·
   [snomed](docs/guides/snomed.md) ·
   [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md) ·
-  [care planning with the agent](docs/guides/care-planning-with-the-agent.md)
+  [care planning with the agent](docs/guides/care-planning-with-the-agent.md) ·
+  [agent UI (browser)](docs/guides/agent-ui.md)
 - Chart maintenance — [chart-maintenance.md](docs/design/chart-maintenance.md)
   (symptom billing coverage + amend/void with an audit trail)
 - Design docs — [notes-comprehension-service.md](docs/design/notes-comprehension-service.md) ·
@@ -492,7 +514,9 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [care-plan-module.md](docs/design/care-plan-module.md) ·
   [interactive-care-planning.md](docs/design/interactive-care-planning.md) ·
   [medication-orders-and-refills.md](docs/design/medication-orders-and-refills.md) ·
-  [requests-and-read-models.md](docs/design/requests-and-read-models.md)
+  [requests-and-read-models.md](docs/design/requests-and-read-models.md) ·
+  [agentic-ui-module.md](docs/design/agentic-ui-module.md) ·
+  [identity-and-authorization.md](docs/design/identity-and-authorization.md)
 - [Note comprehension introduction](docs/articles/note-comprehension-agent-ui.md) —
   what it is, using it via the agent, and the roadmap toward an
   agent-driven EHR

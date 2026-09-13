@@ -1,8 +1,13 @@
-# Agentic UI module — design (draft)
+# Agentic UI module — design
 
-Status: draft · Supersedes the *stack* and *auth* sections of issue #88 for
-the concrete module, and defers to #88 for the product vision (one agent,
-three front doors; the typed chart spec; type/talk/upload).
+Status: **phases 1–6 shipped** (backend, streaming, history, React SPA, login,
+note upload — PRs up to #189). Phase 7 (the typed chart spec) is the only phase
+left, and audio capture arrives through phase 6's door via #87 (a local
+speech/OCR service). Supersedes the *stack* and *auth* sections of issue #88 for
+the concrete module, and defers to #88 for the product vision (one agent, three
+front doors; the typed chart spec; type/talk/upload).
+
+To run it, see the [Agent UI guide](../guides/agent-ui.md).
 
 ## 1. What this is
 
@@ -98,14 +103,17 @@ small additions:
 - **A resumable `conversation_id`.** `/ask` accepts one to continue a run
   (multi-turn), or starts a new run when absent.
 
-## 7. Identity & login — deferred, and realm-separated
+## 7. Identity & login — SHIPPED (phase 5, #188), realm-separated
 
-v1 ships **without a login screen**, role from configuration (reusing the
-`include` parameter `build_tools` already takes to shape the toolset). This is
-#88's stance and it keeps v1 honest: a half-built login is worse than none.
-
-When login lands (after the UI is finalized), it is **real OIDC against the
-existing Keycloak**, with one hard constraint from the owner:
+The early phases shipped **without a login screen**, role from configuration —
+honest for a skeleton. Phase 5 (#188) replaced that with **real OIDC against
+the existing Keycloak**: the SPA (`web/src/auth.ts`, oidc-client-ts, auth-code
++ PKCE against the `hdh-web` client) obtains a provider-realm access token and
+sends it as a Bearer on every call; the API (`agent_api/auth.py`) verifies the
+signature against the realm's JWKS and checks the issuer, so a token from any
+other realm is refused. Every data endpoint is gated (`require_identity`);
+`/health` and the SPA itself are open. The one hard constraint from the owner
+is enforced in code:
 
 > **Provider and patient realms must never mix.**
 
@@ -123,16 +131,22 @@ resource-owner flow but **not** across the browser trust boundary. The API
 must verify signatures via the provider realm's JWKS — a new, small
 verification step, not a change to the identity model.)
 
-## 8. File upload — later (Tus), and what it is *not*
+## 8. File upload — SHIPPED as simple multipart (phase 6, #189); Tus later
 
-Tus resumable upload to a `/files` endpoint, for one purpose: **saving the
-provider from typing**. What a clinician uploads is a **note** — a handwritten
-encounter note, an audio note, or a scanned old report — and it is treated as
-one, always. A **PDF, image or audio clip is not text yet**, so an
-OCR/vision/speech pre-pass produces text *before* the pipeline sees it, and
-that text meets the same gate as a typed note: an ambiguous transcribed value
-reaches the **review queue**, never a confident guess. (Audio is the #87
-speech front door arriving through this same door.)
+Phase 6 (#189) shipped the **simple multipart** form of this: `POST
+/notes/upload` (`agent_api/notes.py`), identity-gated, for one purpose —
+**saving the provider from typing**. What a clinician uploads is a **note** — a
+handwritten encounter note or a scanned old report — and it is treated as one,
+always. A **PDF or image is not text yet**, so `transcribe()` runs a
+vision pre-pass (marking anything illegible rather than guessing) *before* the
+pipeline sees it; the text then meets the same gate as a typed note through
+`comprehend_text` → `comprehend_note` → `apply_to_chart`, so an ambiguous
+transcribed value reaches the **review queue**, never a confident guess.
+
+Still deferred: **Tus resumable upload** (6b, for large/flaky uploads) and
+**audio** — dictation is rejected today (`NoteError`) and is the #87 speech
+front door, which will bring its own transcription via a local speech service
+(the same milestone as OCR/vision, run on the owner's GPU).
 
 What an upload is **not**, and the boundary that matters:
 
@@ -163,17 +177,18 @@ the chat/history/streaming core works.
 
 ## 10. Phased plan
 
-| Phase | Delivers | Proves |
-|---|---|---|
-| **1 · Backend skeleton** | standalone `agent_api`; `POST /ask` (non-streaming) returning `Gateway.ask()`; `/health`; role-from-config tool shaping; tests | one agent over HTTP, same decisions as the CLI |
-| **2 · Streaming** | `/ask` as SSE with friendly stage labels via `instrument_deps` | the UI feels alive; grounding guarantee intact |
-| **3 · History** | per-caller run scoping; `/conversations` + `/conversations/{id}`; resumable `conversation_id` | scroll back through prior conversations |
-| **4 · The React SPA** | Vite React app — ask box, streamed stages, answer + verdict view, history sidebar — built and served by FastAPI | the front door a clinician clicks |
-| **5 · Login** | Keycloak OIDC (provider realm only, JWKS-verified); identity threaded; realm separation enforced | who is asking, without mixing realms |
-| **6 · Upload** | Tus `/files`; OCR/vision/speech pre-pass with verdicts; every upload is a note → comprehension → chart history (never results or orders) | type, talk, *or* upload — one gate, one path |
-| **7 · Charts** | typed chart spec, `--chart` parity, UI renderer | a dashboard is a grounded, inspectable answer |
+| Phase | Status | Delivers | Proves |
+|---|---|---|---|
+| **1 · Backend skeleton** | ✅ shipped | standalone `agent_api`; `POST /ask` (non-streaming) returning `Gateway.ask()`; `/health`; role-from-config tool shaping; tests | one agent over HTTP, same decisions as the CLI |
+| **2 · Streaming** | ✅ shipped | `/ask/stream` as SSE with friendly stage labels via `instrument_deps` | the UI feels alive; grounding guarantee intact |
+| **3 · History** | ✅ shipped (#187) | thread → run tree (`/threads`), `/conversations` + `/conversations/{id}` | scroll back through prior conversations, grouped by thread |
+| **4 · The React SPA** | ✅ shipped | Vite React app — ask box, streamed stages, answer + verdict view, foldable history sidebar — built and served by FastAPI | the front door a clinician clicks |
+| **5 · Login** | ✅ shipped (#188) | Keycloak OIDC (provider realm only, JWKS-verified); identity threaded; realm separation enforced | who is asking, without mixing realms |
+| **6 · Upload** | ✅ simple multipart (#189); Tus + audio deferred | `POST /notes/upload`; OCR/vision pre-pass with verdicts; every upload is a note → comprehension → chart history (never results or orders) | type *or* upload — one gate, one path |
+| **7 · Charts** | ⬜ open | typed chart spec, `--chart` parity, UI renderer | a dashboard is a grounded, inspectable answer |
 
-Each phase is independently mergeable; 1–4 are the usable core.
+Each phase is independently mergeable; 1–4 are the usable core, and 1–6 are now
+shipped. Phase 7, Tus resumable upload, and audio capture (#87) remain.
 
 ## 11. Out of scope / non-negotiables
 

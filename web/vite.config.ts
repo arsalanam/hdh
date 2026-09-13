@@ -3,7 +3,9 @@ import react from "@vitejs/plugin-react";
 
 // Dev: proxy the API routes to the FastAPI backend (hdh serve-agent, :8100).
 // Build: emit static assets into dist/, which the same FastAPI runtime serves.
-const API_ROUTES = ["/ask", "/health", "/conversations"];
+// Every route the SPA calls must be here, or in dev it hits Vite and 404s:
+// /ask (+ /ask/stream), /me, /threads, /conversations (+ /{id}), /notes/upload.
+const API_ROUTES = ["/ask", "/me", "/threads", "/conversations", "/notes", "/health"];
 
 export default defineConfig({
   plugins: [react()],
