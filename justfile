@@ -53,6 +53,16 @@ deps-down:
 deps-nuke:
     docker compose -f docker-compose.deps.yml down -v
 
+# ── Agent browser UI (the SPA front door; see docs/guides/agent-ui.md) ────────
+
+# Build the React SPA into web/dist/, which `hdh serve-agent` serves at /
+web-build:
+    npm --prefix web install && npm --prefix web run build
+
+# Serve the agent + built SPA over HTTP (needs `just deps` for Keycloak login)
+serve-agent:
+    {{run}} hdh serve-agent
+
 # Run the PostgreSQL integration tests against the `just deps` containers
 test-pg:
     {{run}} python scripts/test_pg.py

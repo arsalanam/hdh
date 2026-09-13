@@ -17,6 +17,7 @@ SQLite (see the [Clinician's Guide, Part 3](practitioner-guide.md#part-3--start-
 | Guide | What it covers | Requires |
 |---|---|---|
 | [agent.md](agent.md) | The AI assistant: its tools, pipeline, and context compaction | `hdh[agent]` + API key |
+| [agent-ui.md](agent-ui.md) | The browser front door: run the SPA, sign in via Keycloak, ask/upload | `hdh[agent,api]` + Node + `just deps` |
 | [snomed.md](snomed.md) | SNOMED CT: loading, the normalize funnel, subsumption | base install + UMLS key |
 | [icd10cm.md](icd10cm.md) | ICD-10-CM knowledge graph and billing-code selection | base install |
 
