@@ -134,6 +134,7 @@ INTENT_TOOLS: dict[str, set[str]] = {
     # looks the patient up and reports that the visit does not exist.
     "charting": {
         "apply_note",
+        "use_last_dictation",
         "comprehend_note",
         "get_note_record",
         "get_patient_chart",
@@ -230,6 +231,7 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         "prescriptions",
         "service_requests",
         "note_records",
+        "dictations",
     ),
     "care_plan": (
         "patients",
