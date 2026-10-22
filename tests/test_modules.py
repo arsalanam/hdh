@@ -74,6 +74,9 @@ def test_agent_tools_build(db_session):
         "get_note_record",
         "search_note_mentions",
         "apply_note",
+        # the dictation store's one tool — built whenever the table exists
+        # (no stored data required), so it is present on any bootstrapped chart
+        "use_last_dictation",
         "amend_chart_entry",
         # the record half: reading a saved plan back, and revising it
         "get_care_plan",

@@ -1,0 +1,109 @@
+{
+  "entity": "Dictation",
+  "tablename": "dictations",
+  "module": "comprehension_module",
+  "columns": [
+    {
+      "name": "id",
+      "type": "Integer",
+      "primary_key": true,
+      "autoincrement": true
+    },
+    {
+      "name": "provider_id",
+      "type": "Integer",
+      "foreign_key": "providers.id",
+      "nullable": true
+    },
+    {
+      "name": "patient_id",
+      "type": "Integer",
+      "foreign_key": "patients.id",
+      "nullable": true
+    },
+    {
+      "name": "visit_id",
+      "type": "Integer",
+      "foreign_key": "visits.id",
+      "nullable": true
+    },
+    {
+      "name": "source",
+      "type": "String",
+      "length": 20,
+      "nullable": false
+    },
+    {
+      "name": "text",
+      "type": "Text",
+      "nullable": false
+    },
+    {
+      "name": "segments",
+      "type": "JSON",
+      "nullable": true
+    },
+    {
+      "name": "summary",
+      "type": "Text",
+      "nullable": true
+    },
+    {
+      "name": "model",
+      "type": "String",
+      "length": 80,
+      "nullable": true
+    },
+    {
+      "name": "duration_s",
+      "type": "Float",
+      "nullable": true
+    },
+    {
+      "name": "needs_review",
+      "type": "Boolean",
+      "nullable": false
+    },
+    {
+      "name": "created_at",
+      "type": "DateTime"
+    },
+    {
+      "name": "voided_at",
+      "type": "DateTime",
+      "nullable": true
+    }
+  ],
+  "indexes": [
+    {
+      "name": "ix_dictation_provider",
+      "columns": [
+        "provider_id"
+      ]
+    },
+    {
+      "name": "ix_dictation_patient",
+      "columns": [
+        "patient_id"
+      ]
+    }
+  ],
+  "semantics": {
+    "purpose": "A saved transcript of a recorded encounter or dictated note (produced by the stateless media service), persisted here because it is PHI. It is a SOURCE awaiting charting, referenced as 'the last dictation' to drive 'update the chart now'.",
+    "also_called": [
+      "dictations",
+      "recorded conversations",
+      "encounter transcripts",
+      "the last conversation",
+      "voice notes"
+    ],
+    "use_when": "Asked to use, chart, or act on a recorded conversation or dictation a provider just made. For the charted RESULT (history, orders), see visit_notes / conditions / prescriptions — this table is the source transcript, not the chart.",
+    "joins": [
+      "dictations.patient_id -> patients.id",
+      "dictations.provider_id -> providers.id",
+      "dictations.visit_id -> visits.id"
+    ],
+    "chart": false,
+    "not_chart_because": "a source transcript awaiting charting; charting it creates the visit_notes and orders that are the chart. The media service writes nothing to the chart itself."
+  }
+}

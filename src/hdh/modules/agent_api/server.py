@@ -95,6 +95,53 @@ class UploadResult(BaseModel):
     verdicts: list[NoteVerdict] = Field(default_factory=list)
 
 
+class DictationIn(BaseModel):
+    """A finished transcript to persist as the provider's current dictation.
+
+    The media service is stateless, so the UI posts what it produced here the
+    moment recording stops. ``segments`` is the media service's diarized output,
+    stored opaquely (no coupling to its exact schema).
+    """
+
+    text: str = Field(min_length=1, description="The full transcript text.")
+    mrn: str | None = Field(default=None, description="Patient to bind to, when a chart is open.")
+    visit_id: int | None = Field(default=None, description="Encounter to bind to, if known.")
+    source: str = Field(
+        default="dictation", description="How it was captured: dictation | encounter | upload."
+    )
+    segments: list[dict[str, Any]] | None = Field(
+        default=None, description="Diarized segments from the media service."
+    )
+    model: str | None = Field(default=None, description="The STT model that produced the transcript.")
+    duration_s: float | None = Field(default=None, description="Audio duration in seconds, if known.")
+    needs_review: bool = Field(default=False, description="Any low-confidence segment flagged for review.")
+
+
+class SavedDictation(BaseModel):
+    """The acknowledgement of a persisted dictation — no transcript body."""
+
+    dictation_id: int
+    created_at: str | None = None
+    source: str
+    mrn: str | None = None
+    patient_id: int | None = None
+    visit_id: int | None = None
+    summary: str | None = None
+    model: str | None = None
+    duration_s: float | None = None
+    needs_review: bool = False
+    chars: int = 0
+
+
+class DictationDetail(SavedDictation):
+    """A dictation with its transcript body — what "the last dictation" resolves
+    to and what the agent reads to chart from."""
+
+    text: str = ""
+    segments: list[dict[str, Any]] | None = None
+    speakers: list[str] = Field(default_factory=list)
+
+
 class ThreadRun(BaseModel):
     """One run (a single question/answer exchange) within a thread."""
 
@@ -262,6 +309,16 @@ def _default_store():
     return TraceStore(default_trace_url())
 
 
+def _default_dictations(db_path: str, model: str | None):
+    """The default dictation backend: persists transcripts into the hdh DB and
+    generates a summary (design media-io-service.md §3). Lives in comprehension
+    (the owning module); imported lazily so the agent_api has no hard dependency
+    on it at import time, exactly as ``note_ingest`` is."""
+    from hdh.modules.comprehension.dictations import dictation_backend
+
+    return dictation_backend(db_path=db_path, model=model)
+
+
 def _conversation_summaries(store, limit: int) -> list[dict]:
     """The UI's past conversations, newest first. Over-fetches then filters to
     ``source == 'ui'`` so CLI and eval runs never show in the UI's history."""
@@ -350,6 +407,7 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
     stream: StreamFn | None = None,
     store: Any = None,
     ingest: IngestFn | None = None,
+    dictations: Any = None,
     authenticator: Any = None,
     db_path: str = "family_medicine.db",
     model: str | None = None,
@@ -362,14 +420,18 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
     ``authenticator`` verifies a request's token into an Identity; the default
     verifies a provider-realm Keycloak token via JWKS. Every data endpoint
     requires a valid token (401 otherwise); ``/health`` and the SPA are open.
+    ``dictations`` is the saved-transcript backend behind ``/dictations`` (a
+    fake in tests; the default persists into the hdh DB and summarizes).
     ``web_dist`` points at the built React SPA to serve at ``/``.
     """
     from hdh.modules.agent_api.auth import AuthError, keycloak_authenticator
     from hdh.modules.agent_api.notes import NoteError, note_ingest
+    from hdh.modules.comprehension.dictations import DictationError, DictationInput
 
     run_ask: AskFn = ask or _gateway_ask(db_path=db_path, model=model)
     run_stream: StreamFn = stream or _gateway_stream(db_path=db_path, model=model)
     run_ingest: IngestFn = ingest or note_ingest(db_path=db_path, model=model)
+    dictation_store = dictations or _default_dictations(db_path, model)
     history = store or _default_store()
     authenticate = authenticator or keycloak_authenticator()
 
@@ -478,6 +540,51 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
         if transcript is None:
             raise HTTPException(status_code=404, detail="no such conversation")
         return transcript
+
+    @app.post("/dictations", response_model=SavedDictation)
+    def save_dictation_endpoint(body: DictationIn, identity=Depends(require_identity)) -> Any:
+        """Persist a finished transcript as the provider's current dictation.
+
+        The media service is stateless; the UI posts here the moment recording
+        stops (design media-io-service.md §3). The transcript is stored as PHI,
+        a summary is generated, and it becomes "the last dictation" the agent
+        resolves for "update the chart now". This writes NOTHING to the chart —
+        charting is a later, reviewed agent turn.
+        """
+        try:
+            return dictation_store.save(
+                DictationInput(
+                    text=body.text,
+                    mrn=body.mrn,
+                    visit_id=body.visit_id,
+                    source=body.source,
+                    segments=body.segments,
+                    stt_model=body.model,
+                    duration_s=body.duration_s,
+                    needs_review=body.needs_review,
+                ),
+                identity=identity,
+            )
+        except DictationError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from None
+
+    @app.get("/dictations/current", response_model=DictationDetail)
+    def current_dictation(mrn: str | None = None, identity=Depends(require_identity)) -> Any:
+        """The signed-in provider's most recent dictation — "the last
+        conversation". Narrowed to ``mrn`` when a chart is open. 404 if none."""
+        latest = dictation_store.current(identity=identity, mrn=mrn)
+        if latest is None:
+            raise HTTPException(status_code=404, detail="no dictation for this provider")
+        return latest
+
+    @app.get("/dictations/{dictation_id}", response_model=DictationDetail)
+    def get_dictation_endpoint(dictation_id: int, identity=Depends(require_identity)) -> Any:
+        """One dictation's full transcript. Scoped to the signed-in provider:
+        another provider's dictation is a 404, not a leak."""
+        found = dictation_store.get(dictation_id, identity=identity)
+        if found is None:
+            raise HTTPException(status_code=404, detail="no such dictation")
+        return found
 
     # The React SPA, served by this same runtime — mounted LAST so it catches
     # only what the API routes above did not (design: one runtime, one origin).
