@@ -118,9 +118,9 @@ def test_null_backend_is_the_default():
     assert isinstance(bk.ocr, EchoOcr)
 
 
-def test_local_and_aws_backends_fail_loudly_until_built():
-    with pytest.raises(NotImplementedError):
-        make_backends("local")
+def test_aws_backend_fails_loudly_until_built():
+    # `local` is real as of phase 3 (NeMo/WhisperX, tests/test_media_local.py);
+    # `aws` (Transcribe Medical / Polly / Textract) still lands in phase 7.
     with pytest.raises(NotImplementedError):
         make_backends("aws")
 
