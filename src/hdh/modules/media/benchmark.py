@@ -131,9 +131,7 @@ def _best_label_mapping(
     targets: list[str | None] = [*ref_labels, *([None] * max(0, len(hyp_labels) - len(ref_labels)))]
     for perm in permutations(targets, len(hyp_labels)):
         candidate: dict[str | None, str | None] = dict(zip(hyp_labels, perm, strict=True))
-        hits = sum(
-            1 for r, h in zip(ref_at, hyp_at, strict=True) if r is not None and candidate.get(h) == r
-        )
+        hits = sum(1 for r, h in zip(ref_at, hyp_at, strict=True) if r is not None and candidate.get(h) == r)
         if hits > best_hits:
             best_hits, best = hits, candidate
     return best
