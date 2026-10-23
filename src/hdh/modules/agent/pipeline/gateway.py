@@ -135,6 +135,13 @@ INTENT_TOOLS: dict[str, set[str]] = {
     "charting": {
         "apply_note",
         "use_last_dictation",
+        # the agent refines the orders a charted encounter drafted, as drafts
+        # (phase 4): add one the note missed, fix a dose, withdraw one in error —
+        # releasing to Pharmacy stays a human act
+        "list_orders",
+        "draft_order",
+        "update_order",
+        "cancel_order",
         "comprehend_note",
         "get_note_record",
         "get_patient_chart",

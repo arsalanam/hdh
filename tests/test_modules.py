@@ -101,6 +101,11 @@ def test_agent_tools_build(db_session):
         "list_medication_orders",
         "check_medication_refill",
         "refill_medication",
+        # order drafting from an encounter, media phase 4 (drafts only)
+        "list_orders",
+        "draft_order",
+        "update_order",
+        "cancel_order",
     }
 
 
