@@ -157,9 +157,16 @@ def make_backends(name: str | None = None) -> Backends:
             synthesizer=SilentSynthesizer(),
             ocr=EchoOcr(),
         )
-    if chosen in ("local", "aws"):
+    if chosen == "local":
+        # Real CUDA STT (NeMo / WhisperX) behind the same protocols. Imported
+        # lazily so the heavy `media` extra is needed only when a local backend
+        # is actually requested — null stays dependency-free (design §10, phase 3).
+        from hdh.modules.media.local import build_local_backends
+
+        return build_local_backends()
+    if chosen == "aws":
         raise NotImplementedError(
             f"the '{chosen}' media backend is not built yet — "
-            "STT/diarization (NeMo), TTS (Kokoro) and OCR land in later phases"
+            "Transcribe Medical / Polly / Textract land in phase 7"
         )
     raise ValueError(f"unknown media backend: {chosen!r} (expected null | local | aws)")

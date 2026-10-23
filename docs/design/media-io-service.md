@@ -273,7 +273,7 @@ harness before trusting any engine or model swap.
 |---|---|---|
 | **1 · Skeleton** | `hdh.modules.media`, `hdh serve-media`, `/health`+`/capabilities`, backend protocols, null/echo backend, tests | contract + injection, no GPU |
 | **2 · Dictations** ✅ shipped | `Dictation` entity + store (owned by comprehension), `/dictations` + `/dictations/current` + `/dictations/{id}`, per-provider "last" pointer, injectable summary, agent `use_last_dictation` tool | record→save→reference, two-step "chart it now" |
-| **3 · STT async + diarization** | `/stt` on **NeMo** (ASR + Sortformer + TitaNet); **benchmark NeMo vs WhisperX on clean clinic audio (WER/DER gate)** before locking the engine; upload → saved transcript | NeMo diarization actually works on clinic audio; upload a visit recording, get a diarized transcript |
+| **3 · STT async + diarization** ✅ shipped | `/stt` on **NeMo** (primary) + **WhisperX** (baseline/fallback) behind the same `Transcriber` protocol; the **WER/DER benchmark gate** (`hdh media-benchmark`) that locks NeMo in only if it is within margin of WhisperX on both metrics; `media` optional extra (torch/nemo/whisperx); upload → saved transcript is the real `/stt` + phase-2 `/dictations`, orchestrated by the UI (service stays stateless) | NeMo diarization actually works on clinic audio; upload a visit recording, get a diarized transcript |
 | **4 · "Update the chart now"** | agent charts history **and** drafts med/lab/procedure order add/update/cancel from the current conversation | the headline workflow, end to end, as drafts |
 | **5 · STT encounter (streaming)** | WS `/stt/stream` on NeMo streaming + Sortformer (online), live diarized capture, UI record control | talk through a visit live |
 | **6 · TTS + concise answer** | assembler `spoken`; `/ask want_spoken`; `/tts` (Kokoro); UI toggle | it talks back, concisely and grounded |
@@ -334,5 +334,22 @@ complete voice in/out.
 3. **Summary generation timing** — at save (async, ready when asked) vs. lazily
    when the agent first acts on it.
 4. **Handwriting OCR** — cloud vision now vs. local VLM for full on-box privacy.
-5. **Local job/async machinery** — a lighter in-process background worker locally
-   vs. a queue+worker like the reference; decide at phase 3.
+
+**Settled (2026-10-22) — phase 3:**
+- **Base engine not yet locked — it is gated, not assumed.** NeMo and WhisperX
+  both ship behind the `Transcriber` protocol; `hdh media-benchmark <manifest>`
+  measures them on labeled clinic audio and `decide_gate` locks NeMo in for async
+  **only if** its mean WER *and* DER are within a margin (default 0.05) of
+  WhisperX. Otherwise WhisperX stays the async engine and NeMo is reserved for
+  streaming (phase 5), where it is the only option. The metric and gate logic are
+  unit-tested; the measurement runs on the GPU box, not in CI.
+- **Speaker ID (async) = heuristic, not verification.** The longest-speaking
+  voice is credited to the Provider, the rest to the Patient, reviewable/relabel-
+  able in the UI. TitaNet 1:1 verification against the signed-in provider's
+  enrolled print (§13) replaces it in the streaming encounter (phase 5).
+- **Local job/async machinery (was open #5): in-process for now.** `/stt` is
+  synchronous; a clinic runs one or two concurrent recordings, well within a
+  single GPU process. The queue+worker/KEDA scale-out shape (§9) is the AWS
+  self-hosted deployment, not the local one — adopt it only when load demands.
+- TTS (Kokoro) and local OCR stay placeholders in the `local` backend until
+  phases 6 and 7; only STT is real.
