@@ -6,19 +6,29 @@ by making the lazy boto3 import fail."""
 from __future__ import annotations
 
 import builtins
+from typing import Any
 
 import pytest
 
 from hdh.modules.media.aws import (
+    AwsStreamingTranscriber,
     PollySynthesizer,
     TextractOcr,
     TranscribeMedicalTranscriber,
+    _BufferedTranscribeStream,
     build_aws_backends,
     extraction_from_textract,
+    media_format_for,
+    require_transcribe_bucket,
+    s3_uri,
     stream_segments_from_transcribe,
+    transcript_duration,
     transcript_from_transcribe,
+    transcript_to_stream_segments,
+    transcript_uri,
+    transcription_request,
 )
-from hdh.modules.media.backends import MediaError
+from hdh.modules.media.backends import MediaError, Segment, Transcript
 
 # ── pure response-shaping ──────────────────────────────────────────────────────
 
@@ -129,6 +139,132 @@ def test_stream_segments_from_transcribe_marks_partial_and_final():
 
 def test_stream_segments_ignores_empty_results():
     assert stream_segments_from_transcribe({"Transcript": {"Results": []}}) == []
+
+
+# ── pure batch-job glue (the orchestration's building blocks) ───────────────────
+
+
+def test_media_format_for_maps_the_browser_and_upload_types():
+    assert media_format_for("audio/webm") == "webm"  # MediaRecorder
+    assert media_format_for("audio/wav") == "wav"
+    assert media_format_for("audio/mpeg") == "mp3"
+    assert media_format_for("audio/flac") == "flac"
+    assert media_format_for("audio/webm;codecs=opus") == "webm"  # parameters stripped
+
+
+def test_media_format_for_refuses_an_unknown_type():
+    with pytest.raises(MediaError, match="unsupported audio type"):
+        media_format_for("audio/basic")
+
+
+def test_transcription_request_asks_for_speaker_labels():
+    req = transcription_request("job-1", "s3://bkt/clip.webm", "webm", max_speakers=2)
+    assert req["MedicalTranscriptionJobName"] == "job-1"
+    assert req["LanguageCode"] == "en-US"
+    assert req["Media"] == {"MediaFileUri": "s3://bkt/clip.webm"}
+    assert req["MediaFormat"] == "webm"
+    assert req["Specialty"] == "PRIMARYCARE" and req["Type"] == "CONVERSATION"
+    assert req["Settings"] == {"ShowSpeakerLabels": True, "MaxSpeakerLabels": 2}
+    assert "OutputBucketName" not in req  # presigned-URL output, no output bucket
+
+
+def test_s3_uri_builds_the_input_uri():
+    assert s3_uri("my-bucket", "hdh-media/stt/job.webm") == "s3://my-bucket/hdh-media/stt/job.webm"
+
+
+def test_transcript_uri_returns_the_file_uri_on_completion():
+    job = {
+        "MedicalTranscriptionJob": {
+            "TranscriptionJobStatus": "COMPLETED",
+            "Transcript": {"TranscriptFileUri": "https://x/y.json"},
+        }
+    }
+    assert transcript_uri(job) == "https://x/y.json"
+
+
+def test_transcript_uri_raises_on_a_failed_job_with_the_reason():
+    job = {"MedicalTranscriptionJob": {"TranscriptionJobStatus": "FAILED", "FailureReason": "bad audio"}}
+    with pytest.raises(MediaError, match="bad audio"):
+        transcript_uri(job)
+
+
+def test_transcript_uri_raises_when_completed_without_a_uri():
+    job = {"MedicalTranscriptionJob": {"TranscriptionJobStatus": "COMPLETED", "Transcript": {}}}
+    with pytest.raises(MediaError, match="without a transcript URI"):
+        transcript_uri(job)
+
+
+def test_transcript_duration_takes_the_latest_end_time():
+    payload = {"results": {"items": [{"end_time": "1.2"}, {"end_time": "4.7"}, {"type": "punctuation"}]}}
+    assert transcript_duration(payload) == 4.7
+    assert transcript_duration({"results": {"items": []}}) == 0.0
+
+
+def test_transcript_to_stream_segments_flattens_finals_and_drops_empty():
+    transcript = Transcript(
+        text="hi there",
+        segments=[
+            Segment(speaker="Provider", text="hi", t0=0.0, t1=1.0, confidence=0.9),
+            Segment(speaker="Patient", text="  ", confidence=1.0),  # empty → dropped
+            Segment(speaker="Patient", text="there", t0=1.0, t1=2.0, confidence=0.3, needs_review=True),
+        ],
+    )
+    segs = transcript_to_stream_segments(transcript)
+    assert [s.text for s in segs] == ["hi", "there"]
+    assert all(s.final for s in segs)
+    assert segs[1].needs_review is True and segs[1].speaker == "Patient"
+
+
+# ── the live encounter: buffer the clips, transcribe on stop ────────────────────
+
+
+def test_buffered_stream_buffers_on_push_and_transcribes_on_finish():
+    seen: dict[str, Any] = {}
+
+    def fake_transcribe(data: bytes, content_type: str) -> Transcript:
+        seen["data"] = data
+        seen["content_type"] = content_type
+        return Transcript(
+            text="good morning",
+            segments=[Segment(speaker="Provider", text="good morning", t0=0.0, t1=1.0)],
+        )
+
+    stream = _BufferedTranscribeStream(fake_transcribe)
+    assert stream.push(b"clip-a") == []  # nothing emitted mid-visit
+    assert stream.push(b"clip-b") == []
+    segs = stream.finish()
+    assert seen["data"] == b"clip-aclip-b"  # concatenated fragments of one recording
+    assert seen["content_type"] == "audio/webm"
+    assert [s.text for s in segs] == ["good morning"] and segs[0].final is True
+
+
+def test_buffered_stream_with_no_audio_transcribes_nothing():
+    calls: list[bytes] = []
+
+    def fake_transcribe(data: bytes, content_type: str) -> Transcript:  # pragma: no cover - not reached
+        calls.append(data)
+        return Transcript(text="")
+
+    stream = _BufferedTranscribeStream(fake_transcribe)
+    stream.push(b"")  # empty clip ignored
+    assert stream.finish() == []
+    assert calls == []  # no cloud call when there is nothing to transcribe
+
+
+def test_aws_streaming_transcriber_opens_a_buffered_session():
+    session = AwsStreamingTranscriber().open(sample_rate=16000, verifier=None)
+    assert isinstance(session, _BufferedTranscribeStream)
+
+
+def test_require_transcribe_bucket_reads_the_env(monkeypatch):
+    monkeypatch.setenv("HDH_AWS_TRANSCRIBE_BUCKET", "baa-bucket")
+    assert require_transcribe_bucket() == "baa-bucket"
+
+
+def test_require_transcribe_bucket_fails_loudly_when_unset(monkeypatch):
+    monkeypatch.delenv("HDH_AWS_TRANSCRIBE_BUCKET", raising=False)
+    with pytest.raises(MediaError, match="HDH_AWS_TRANSCRIBE_BUCKET"):
+        require_transcribe_bucket()
 
 
 # ── the engines fail loudly without boto3 ──────────────────────────────────────

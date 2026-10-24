@@ -446,10 +446,20 @@ managed AWS counterpart behind the same contract.
   misconfigured box fails on use, not at boot. The response-shaping is pure and
   tested against sample Transcribe/Textract/streaming payloads
   (`transcript_from_transcribe`, `extraction_from_textract`,
-  `stream_segments_from_transcribe`); the job/stream orchestration is the cloud
-  seam. AWS reuses the local async path's longest-speaking `assign_provider`
+  `stream_segments_from_transcribe`); the cloud-bound boto3/network calls stay
+  behind `# pragma: no cover` seams built out of those pure, tested helpers.
+  AWS reuses the local async path's longest-speaking `assign_provider`
   heuristic and the same confidence floor, so the diarized output is identical in
   shape to local — the backend is a config choice, not a contract change.
+- **AWS STT is a batch Transcribe Medical job** (`_run_transcribe`): upload the
+  clip to S3 (`HDH_AWS_TRANSCRIBE_BUCKET`), start a medical job with speaker
+  labels, poll to completion, fetch the presigned transcript JSON, shape it,
+  delete the input. The live encounter can't stream (Transcribe streaming needs
+  raw PCM; the browser sends webm), so the AWS streamer buffers the clips and
+  runs that same batch job on **stop** (`_BufferedTranscribeStream`) — the
+  transcript lands on stop, not turn-by-turn. A raw-PCM capture path that feeds
+  the `amazon-transcribe` streaming SDK (for which `stream_segments_from_transcribe`
+  already shapes events) is a follow-up below.
 - **The milestone is complete.** Every protocol — `Transcriber`,
   `StreamingTranscriber`, `Synthesizer`, `OcrEngine` — now has a real local
   (CUDA) engine and a managed AWS counterpart behind one HTTP/WS contract, with
@@ -458,4 +468,6 @@ managed AWS counterpart behind the same contract.
   step, each a backend swap not a redesign): route `agent_api/notes.py`'s
   image/PDF pre-pass through `/ocr` (§4); capture/persist provider enrollment in
   agent_api (phase-5 biometric-PHI store); the self-hosted AWS scale-out
-  (KEDA/Karpenter, §9) when load demands; a local handwriting VLM (open-q #4).
+  (KEDA/Karpenter, §9) when load demands; a local handwriting VLM (open-q #4);
+  a raw-PCM browser capture path so AWS STT can stream turn-by-turn via the
+  `amazon-transcribe` streaming SDK instead of the batch-on-stop job.
