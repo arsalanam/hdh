@@ -21,10 +21,12 @@ Related: [Agent UI guide](agent-ui.md) (the browser front door), the
 > GPU) is an **echo**: it turns each audio clip's *bytes* into a stub string like
 > `[stt stub: 4096 bytes audio/webm]`, **not your words**. That is intentional —
 > it proves the whole UI path (streaming, diarization labels, edit, note, save,
-> chart-update) with no GPU and no cloud. For **real speech→text** you need the
-> **`local`** backend (NeMo, a CUDA GPU, the `hdh[media]` extra). The **`aws`**
-> backend's **Transcribe STT is not wired yet** (see
-> [AWS caveat](#cycle-c--aws-what-works-and-what-does-not)).
+> chart-update) with no GPU and no cloud. For **real speech→text** you need
+> either the **`local`** backend (NeMo, a CUDA GPU, the `hdh[media]` extra) or
+> the **`aws`** backend (Transcribe Medical, a BAA account + an S3 bucket). The
+> AWS backend transcribes with a **batch** job, so its transcript lands when you
+> **stop** recording, not turn-by-turn (see
+> [Cycle C](#cycle-c--aws-the-managed-route)).
 
 ---
 
@@ -116,8 +118,8 @@ Switch backends by restarting **terminal 2** (`serve-media`) with a different
 | Backend | Command | STT you get | Needs |
 |---|---|---|---|
 | `null` (default) | `just hdh serve-media --backend null` | **echo stub** (not your words) — plumbing only | nothing |
-| `local` | `just hdh serve-media --backend local` | **real** NeMo STT + Sortformer diarization | `hdh[media]` extra + a CUDA GPU |
-| `aws` | `just hdh serve-media --backend aws` | **TTS/OCR only** — Transcribe STT is not wired (see caveat) | `hdh[aws]` extra + AWS creds (BAA) |
+| `local` | `just hdh serve-media --backend local` | **real** NeMo STT + Sortformer diarization (live, turn-by-turn) | `hdh[media]` extra + a CUDA GPU |
+| `aws` | `just hdh serve-media --backend aws` | **real** Transcribe Medical STT (batch — transcript on **stop**) + Polly TTS + Textract OCR | `hdh[aws]` extra + AWS creds (BAA) + an S3 bucket |
 
 For `local`:
 
@@ -133,11 +135,19 @@ For `aws`, add to `.env`:
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
+HDH_AWS_TRANSCRIBE_BUCKET=my-baa-bucket   # S3 bucket Transcribe reads STT input from
 ```
 
 ```bash
 uv pip install -e '.[aws]'            # boto3 + amazon-transcribe
 ```
+
+The STT bucket is **required** for `aws` — Transcribe reads its audio from S3.
+The credentials must be able to write and delete objects in it (the media
+service uploads the clip, then deletes it — it persists nothing), and the
+Transcribe service must be able to read it. Starting `--backend aws` without
+`HDH_AWS_TRANSCRIBE_BUCKET` builds fine but any STT call fails loudly with a
+hint; Polly (TTS) and Textract (OCR) need no bucket.
 
 ---
 
@@ -199,24 +209,44 @@ Orders are **drafts** — releasing them to pharmacy/lab stays a human step
 
 ---
 
-## Cycle C — AWS: what works and what does not
+## Cycle C — AWS: the managed route
 
-> **AWS Transcribe STT is not implemented yet.** In `src/hdh/modules/media/aws.py`
-> the async `_run_transcribe` and the streaming `_open_transcribe_stream` are
-> **documented cloud seams that raise `NotImplementedError`** — only the pure
-> response-shaping is wired and unit-tested. So with `--backend aws`:
-> - **Recording an encounter** (`/stt/stream`) and **push-to-talk** (`/stt`)
->   will **error** — the encounter panel surfaces the failure; nothing is
->   transcribed.
-> - **Polly (TTS)** and **Textract (OCR)** *are* wired (real boto3 calls), so the
->   voice-output toggle and note-image upload work against AWS.
+With `--backend aws`, all three transductions run against Amazon's managed,
+HIPAA-eligible services (under a BAA): **Transcribe Medical** (STT),
+**Polly** (TTS), **Textract** (OCR).
 
-To run the full A/B cycles on AWS, the Transcribe orchestration (S3 upload +
-job poll for async, the streaming SDK for live) must be implemented in
-`_run_transcribe` / `_open_transcribe_stream` first. Until then, **`local` is the
-working real-STT backend**, and the AWS cycle is limited to confirming Polly/Textract
-and that the backend builds and is reachable (`GET http://127.0.0.1:8200/capabilities`
-with a bearer token reports `backend: "aws"`).
+**One difference from `local` to expect: STT is a *batch* job.** Transcribe
+streaming needs raw PCM and the browser sends webm, so rather than transcode
+mid-visit, the AWS backend uploads the audio to S3 and runs a batch Transcribe
+Medical job. In practice:
+
+- **Push-to-talk** (`/stt`): hold 🎤, release, then **wait** — the batch job
+  runs (upload → poll → fetch), typically tens of seconds, before the dictated
+  text appears. It is slower than `local`, but it is real transcription.
+- **Recording an encounter** (`/stt/stream`): the clips are buffered as you
+  speak and transcribed **when you click ⏹ Stop** — so the diarized turns appear
+  in the review window all at once on stop, not live. Edit / relabel / note /
+  Save / Update-chart are then identical to Cycles A and B.
+- **Polly (TTS)** and **Textract (OCR)** are direct calls, no bucket or polling —
+  the voice-output toggle and note-image upload work the same as `local`.
+
+So run **Cycle A and Cycle B exactly as above** on `--backend aws`, allowing for
+the stop-to-transcribe delay. Before you start, confirm the backend is up:
+
+```bash
+# a bearer token is required; grab one from the browser devtools (Authorization
+# header on any API call) or your Keycloak client, then:
+curl -s -H "Authorization: Bearer <token>" http://127.0.0.1:8200/capabilities
+# → {"backend": "aws", "stt": true, "streaming_stt": true, ...}
+```
+
+If an STT call errors with a bucket hint, set `HDH_AWS_TRANSCRIBE_BUCKET` (see
+setup above) and restart `serve-media`.
+
+> **True low-latency AWS streaming** (turn-by-turn, like `local`) would need the
+> browser to capture raw PCM instead of webm and feed the `amazon-transcribe`
+> streaming SDK (`stream_segments_from_transcribe` already shapes its events).
+> That is a tracked follow-up; the batch path above is the working AWS STT today.
 
 ---
 
@@ -232,4 +262,5 @@ with a bearer token reports `backend: "aws"`).
 | Agent errors about tokens/key | `ANTHROPIC_API_KEY` not visible — run via `just` (loads `.env`): `just check-env`. |
 | Media routes 404 in dev | Restart `npm run dev` after a `vite.config.ts` change; confirm `serve-media` is up on :8200. |
 | `--backend local` errors "pip install 'hdh[media]'" | The GPU extra isn't installed, or no CUDA GPU. `uv pip install -e '.[media]'` on the GPU box. |
-| `--backend aws` encounter/push-to-talk errors | Expected — Transcribe STT is an unimplemented seam (see Cycle C). |
+| `--backend aws` STT errors about a bucket | Set `HDH_AWS_TRANSCRIBE_BUCKET` to an S3 bucket the creds can write and Transcribe can read, then restart `serve-media`. |
+| `--backend aws` encounter transcript only appears on Stop | Expected — AWS STT is a batch job, so the encounter transcribes on stop, not live (see Cycle C). |
