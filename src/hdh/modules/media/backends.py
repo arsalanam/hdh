@@ -137,12 +137,16 @@ class EchoOcr:
 
 @dataclass(frozen=True)
 class Backends:
-    """The three transducers a service instance runs, plus the chosen name."""
+    """The transducers a service instance runs, plus the chosen name. ``streamer``
+    drives the live encounter (WS ``/stt/stream``, phase 5) alongside the async
+    ``transcriber``; it is a :class:`~hdh.modules.media.streaming.StreamingTranscriber`
+    (typed loosely here to keep this module free of the streaming import)."""
 
     name: str
     transcriber: Transcriber
     synthesizer: Synthesizer
     ocr: OcrEngine
+    streamer: object
 
 
 def make_backends(name: str | None = None) -> Backends:
@@ -151,11 +155,16 @@ def make_backends(name: str | None = None) -> Backends:
     fails loudly at startup rather than pretending to transduce."""
     chosen = (name or os.environ.get("HDH_MEDIA_BACKEND") or "null").lower()
     if chosen in ("null", "echo"):
+        # Imported here (not at module top) so backends.py stays free of the
+        # streaming import — streaming.py depends on this module.
+        from hdh.modules.media.streaming import EchoStreamingTranscriber
+
         return Backends(
             name="null",
             transcriber=EchoTranscriber(),
             synthesizer=SilentSynthesizer(),
             ocr=EchoOcr(),
+            streamer=EchoStreamingTranscriber(),
         )
     if chosen == "local":
         # Real CUDA STT (NeMo / WhisperX) behind the same protocols. Imported

@@ -153,3 +153,117 @@ export async function getConversation(id: string): Promise<Transcript | null> {
   const resp = await fetch(`/conversations/${encodeURIComponent(id)}`, { headers: await authHeaders() });
   return resp.ok ? ((await resp.json()) as Transcript) : null;
 }
+
+// ── the live encounter (streaming STT over the media service's WebSocket) ──────
+
+export type StreamSegment = {
+  speaker: string;
+  text: string;
+  t0: number;
+  t1: number;
+  final: boolean;
+  confidence: number;
+  needs_review: boolean;
+};
+
+export type EncounterResult = {
+  text: string;
+  speakers: string[];
+  duration_s: number;
+  needs_review: boolean;
+  enrolled: number[] | null; // the re-enrolled provider print, for us to persist
+};
+
+type EncounterHandlers = {
+  onSegment: (s: StreamSegment) => void;
+  onDone: (d: EncounterResult) => void;
+  onError: (detail: string) => void;
+};
+
+// A handle on a running encounter: call stop() when the clinician ends the
+// visit — it closes the mic and asks the server for the final transcript.
+export type Encounter = { stop: () => void };
+
+// The media service runs on its own host (design §5). VITE_MEDIA_URL points at
+// it; empty means same-origin (dev: vite proxies /stt/stream → :8200).
+function mediaWsUrl(path: string): string {
+  const base = (import.meta.env.VITE_MEDIA_URL as string) || window.location.origin;
+  const url = new URL(path, base);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+/** Record a live, diarized encounter: capture mic audio in clips, push them to
+ *  the media service, and surface the diarized segments as they return. The
+ *  bearer token rides in the `bearer` subprotocol — a WebSocket cannot set an
+ *  Authorization header, and the URL must carry no token. */
+export async function recordEncounter(handlers: EncounterHandlers): Promise<Encounter | null> {
+  const token = await accessToken();
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    handlers.onError(`microphone unavailable: ${String(err)}`);
+    return null;
+  }
+
+  const ws = new WebSocket(mediaWsUrl("/stt/stream"), token ? ["bearer", token] : undefined);
+  ws.binaryType = "arraybuffer";
+  const recorder = new MediaRecorder(stream);
+
+  const teardown = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    if (recorder.state !== "inactive") recorder.stop();
+  };
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "start", sample_rate: 16000 }));
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) e.data.arrayBuffer().then((b) => ws.send(b));
+    };
+    recorder.start(2000); // a clip every 2s — the server streams segments back
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data as string);
+    if (msg.type === "segment") handlers.onSegment(msg as StreamSegment);
+    else if (msg.type === "done") {
+      handlers.onDone(msg as EncounterResult);
+      ws.close();
+    } else if (msg.type === "error") handlers.onError(msg.detail);
+  };
+  ws.onerror = () => handlers.onError("the encounter stream failed");
+  ws.onclose = teardown;
+
+  return {
+    stop: () => {
+      teardown();
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
+    },
+  };
+}
+
+/** Persist a finished encounter as the provider's current dictation — the media
+ *  service holds nothing, so the UI saves the transcript the moment it ends. */
+export async function saveEncounter(
+  result: EncounterResult,
+  mrn: string,
+  segments: StreamSegment[],
+): Promise<{ dictation_id: number } | { error: string }> {
+  const resp = await fetch("/dictations", {
+    method: "POST",
+    headers: await authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      text: result.text,
+      mrn: mrn || null,
+      source: "encounter",
+      segments,
+      duration_s: result.duration_s,
+      needs_review: result.needs_review,
+    }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+    return { error: detail.detail || `HTTP ${resp.status}` };
+  }
+  return resp.json();
+}

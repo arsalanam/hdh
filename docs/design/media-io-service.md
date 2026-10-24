@@ -275,7 +275,7 @@ harness before trusting any engine or model swap.
 | **2 · Dictations** ✅ shipped | `Dictation` entity + store (owned by comprehension), `/dictations` + `/dictations/current` + `/dictations/{id}`, per-provider "last" pointer, injectable summary, agent `use_last_dictation` tool | record→save→reference, two-step "chart it now" |
 | **3 · STT async + diarization** ✅ shipped | `/stt` on **NeMo** (primary) + **WhisperX** (baseline/fallback) behind the same `Transcriber` protocol; the **WER/DER benchmark gate** (`hdh media-benchmark`) that locks NeMo in only if it is within margin of WhisperX on both metrics; `media` optional extra (torch/nemo/whisperx); upload → saved transcript is the real `/stt` + phase-2 `/dictations`, orchestrated by the UI (service stays stateless) | NeMo diarization actually works on clinic audio; upload a visit recording, get a diarized transcript |
 | **4 · "Update the chart now"** ✅ shipped | agent charts history (`apply_note`) **and** drafts med/lab/procedure orders from the last dictation via new `draft_order` / `update_order` / `cancel_order` / `list_orders` tools (wired into the `charting` intent); every change is an unreleased `ServiceRequest(DRAFT, origin=AGENT)` — releasing to Pharmacy stays the human `hdh orders release` act, and an already-ACTIVE order is refused | the headline workflow, end to end, as drafts |
-| **5 · STT encounter (streaming)** | WS `/stt/stream` on NeMo streaming + Sortformer (online), live diarized capture, UI record control | talk through a visit live |
+| **5 · STT encounter (streaming)** ✅ shipped | WS `/stt/stream` (provider token in the `bearer` subprotocol) streaming diarized segments; the `StreamingTranscriber`/`StreamSession` contract with a null **echo streamer** (CI) and the **NeMo streaming + Sortformer** engine (GPU seam); **TitaNet 1:1 provider verification** (`verification.py` — cosine, threshold, passive re-enrollment) resolving speakers against the signed-in provider's enrolled print, heuristic fallback when none; UI **record control** (mic → WS → live diarized transcript → auto-save as the current dictation) | talk through a visit live |
 | **6 · TTS + concise answer** | assembler `spoken`; `/ask want_spoken`; `/tts` (Kokoro); UI toggle | it talks back, concisely and grounded |
 | **7 · OCR + AWS backends** | `/ocr`; `aws` implementations behind the protocols | scanned pages; cloud deployment |
 
@@ -353,3 +353,43 @@ complete voice in/out.
   self-hosted deployment, not the local one — adopt it only when load demands.
 - TTS (Kokoro) and local OCR stay placeholders in the `local` backend until
   phases 6 and 7; only STT is real.
+
+**Settled (2026-10-23) — phase 5 (streaming encounter):**
+- **The streaming contract is `StreamingTranscriber`/`StreamSession`**, parallel
+  to the async `Transcriber`: `open(sample_rate, verifier) → session`, then
+  `push(chunk) → [StreamSegment]` and `finish() → [StreamSegment]`. A
+  `StreamSegment` adds `final` (settled vs. partial) to the async `Segment`
+  shape. The **echo streamer** (one UTF-8 turn per clip, alternating
+  Provider/Patient) drives the whole WS contract in CI; **NeMo streaming ASR +
+  Sortformer** is the real engine behind it and the GPU seam (lazy import,
+  `pragma: no cover`, install-hint on a missing extra — never a silent echo).
+- **Streaming is NeMo-only** (confirms the phase-3 gate's reservation):
+  Sortformer is stream-native, WhisperX is batch-shaped, so `build_local_backends`
+  always sets the streamer to NeMo even when the WER/DER gate keeps WhisperX for
+  async.
+- **`WS /stt/stream` carries the provider token in the `bearer` subprotocol**,
+  not the URL — a browser cannot set `Authorization` on a WebSocket and the URL
+  must hold no token or PHI. Same provider-realm gate as every other endpoint;
+  an invalid token is a `1008` close before `accept`. Frames: client `start`
+  (`sample_rate`, optional `enrolled`) → binary audio clips → `stop`; server
+  `segment` frames as they recognise, then one `done` frame with the full text,
+  speakers, duration, `needs_review`, and the re-enrolled print.
+- **Speaker ID = TitaNet 1:1 verification** (resolves §13's open mechanism):
+  each turn's embedding is a cosine check against the signed-in provider's
+  enrolled print (`MATCH_THRESHOLD` 0.6), a confirmed match passively re-enrolls
+  (slow EMA), a miss never touches the print (the patient never contaminates
+  it). No print supplied → fall back to the longest-speaking heuristic + UI
+  relabel. The pure policy (`verification.py`) is fully unit-tested; TitaNet
+  embedding extraction is the GPU seam.
+- **Enrollment persistence stays out of the stateless media service (resolves
+  the statelessness tension in §12).** The enrolled print is *supplied by the
+  caller* at `start` and the re-enrolled one is *handed back* in `done`; where
+  that biometric PHI lives — consented, revocable, tied to the Keycloak
+  subject — is agent_api's concern (it already owns the PHI stores), not the
+  transducer's. Capturing/persisting enrollment in agent_api is the remaining
+  phase-5-adjacent follow-up; the verification *mechanism* is complete.
+- **The UI record control is real plumbing, audio-format seam aside.** The SPA
+  opens the WS, streams `MediaRecorder` clips, renders the diarized transcript
+  live, and on stop auto-saves via `/dictations` (`source="encounter"`) so
+  "update the chart now" (phase 4) picks it up. The browser clip codec vs. what
+  NeMo decodes is negotiated on the GPU box — the same honest seam as the engine.

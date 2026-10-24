@@ -346,6 +346,79 @@ body {
   cursor: default;
   opacity: 0.6;
 }
+.record-btn {
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 7px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+.record-btn.recording {
+  color: #fff;
+  background: var(--error);
+  border-style: solid;
+  border-color: var(--error);
+}
+
+/* ── live encounter (streaming STT) ──────────────────────────────────── */
+.encounter {
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.encounter-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--error);
+  animation: pulse 1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot {
+    animation: none;
+  }
+}
+.turn {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 14px;
+}
+.turn .who {
+  flex: 0 0 68px;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.turn.speaker-provider .who {
+  color: var(--accent);
+}
+.turn .said {
+  color: var(--text);
+}
+.turn .flag {
+  font-size: 11px;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  padding: 0 5px;
+  align-self: center;
+}
 
 /* ── composer ────────────────────────────────────────────────────────── */
 .composer {
