@@ -113,3 +113,28 @@ def make_validator_node(deps: PipelineDeps):
         return update
 
     return validator
+
+
+def make_spoken_node(deps: PipelineDeps):
+    """Voice rendering: a concise spoken form of the *validated* answer.
+
+    The agent — not the TTS layer — decides what to say aloud, so it stays
+    grounded (design §6). Runs only when the caller asked for it (TTS is on) and
+    only on a usable answer: a rejected or unvalidated turn has nothing grounded
+    to voice, so it is left silent. ``deps.speak`` is itself constrained to the
+    answer (the containment check), so the spoken line can assert nothing the
+    screen answer does not."""
+
+    def spoken(state: AgentState) -> dict:
+        if not state.get("want_spoken"):
+            return {}
+        if state.get("rejected") or state.get("failed") or not state.get("verdict", {}).get("valid"):
+            return {}  # nothing grounded to voice
+        text, usage = deps.speak(state.get("draft", ""))
+        if text:
+            deps.trace("spoken", f"{len(text.split())}-word spoken summary")
+        else:
+            deps.trace("spoken", "no spoken summary (not contained in the answer)")
+        return {"spoken": text, "usage": add_usage(state, usage)}
+
+    return spoken

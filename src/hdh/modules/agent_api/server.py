@@ -20,9 +20,12 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-AskFn = Callable[[str, "str | None", Any], dict]
-#: A streaming backend: (question, thread_id, identity) → ("stage"|"answer"|"error", payload) events.
-StreamFn = Callable[[str, "str | None", Any], Iterator[tuple[str, dict]]]
+#: An agent backend: (question, thread_id, identity[, want_spoken]) → answer dict.
+#: `...` so a backend may accept the optional `want_spoken` keyword (the endpoint
+#: passes it only when TTS is on, keeping the 3-arg fakes valid).
+AskFn = Callable[..., dict]
+#: A streaming backend: (question, thread_id, identity[, want_spoken]) → ("stage"|"answer"|"error", payload).
+StreamFn = Callable[..., Iterator[tuple[str, dict]]]
 #: A note-ingest backend: (mrn, filename, content_type, data, identity) → result dict.
 IngestFn = Callable[[str, str, str, bytes, Any], dict]
 
@@ -62,6 +65,10 @@ class AskRequest(BaseModel):
         default=None,
         description="The conversation thread to file this run under; a new one is started if omitted.",
     )
+    want_spoken: bool = Field(
+        default=False,
+        description="Also return a concise, grounded `spoken` rendering to voice (set when TTS is on).",
+    )
 
 
 class AskResponse(BaseModel):
@@ -69,6 +76,7 @@ class AskResponse(BaseModel):
 
     answer: str
     status: str  # validated | unvalidated | rejected
+    spoken: str | None = None  # concise grounded rendering to voice, when requested
     intent: dict[str, Any] | None = None
     verdict: dict[str, Any] | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
@@ -212,6 +220,7 @@ def _normalize(state: dict, run_id: str, thread_id: str) -> dict:
     return {
         "answer": Gateway.answer_of(state),
         "status": _status_of(state),
+        "spoken": state.get("spoken") or None,
         "intent": state.get("intent"),
         "verdict": state.get("verdict"),
         "usage": state.get("usage") or {},
@@ -229,7 +238,7 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
     the SQLite file — so the API and the terminal see one chart.
     """
 
-    def ask(question: str, thread_id: str | None = None, identity=None) -> dict:
+    def ask(question: str, thread_id: str | None = None, identity=None, want_spoken: bool = False) -> dict:
         from hdh.core.models import get_engine, get_session
         from hdh.modules.agent.pipeline import Gateway
 
@@ -239,7 +248,7 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
         session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
         try:
             gateway = Gateway(session, model=model, source="ui", identity=identity, thread_id=thread_id)
-            state = gateway.ask(question)
+            state = gateway.ask(question, want_spoken=want_spoken)
             return _normalize(state, gateway.run_id, thread_id or gateway.run_id)
         finally:
             session.close()
@@ -258,7 +267,9 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
     the response validator has passed — the grounding guarantee, unchanged.
     """
 
-    def stream(question: str, thread_id: str | None = None, identity=None) -> Iterator[tuple[str, dict]]:
+    def stream(
+        question: str, thread_id: str | None = None, identity=None, want_spoken: bool = False
+    ) -> Iterator[tuple[str, dict]]:
         import queue
         import threading
 
@@ -280,7 +291,9 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
                     session, model=model, source="ui", identity=identity, trace=trace, thread_id=thread_id
                 )
                 outcome["answer"] = _normalize(
-                    gateway.ask(question), gateway.run_id, thread_id or gateway.run_id
+                    gateway.ask(question, want_spoken=want_spoken),
+                    gateway.run_id,
+                    thread_id or gateway.run_id,
                 )
             except Exception as error:  # noqa: BLE001 - surfaced to the client as an error event
                 outcome["error"] = {"detail": f"{type(error).__name__}: {error}"}
@@ -475,7 +488,12 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
         question = body.question.strip()
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
-        return run_ask(question, body.thread_id or _new_thread_id(), identity)
+        thread_id = body.thread_id or _new_thread_id()
+        # Pass want_spoken only when set, so an injected 3-arg test backend (the
+        # established fake shape) keeps working unchanged.
+        if body.want_spoken:
+            return run_ask(question, thread_id, identity, want_spoken=True)
+        return run_ask(question, thread_id, identity)
 
     @app.post("/ask/stream")
     def ask_stream(body: AskRequest, identity=Depends(require_identity)) -> Any:
@@ -490,9 +508,15 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
         thread_id = body.thread_id or _new_thread_id()
+        want_spoken = body.want_spoken
 
         def frames() -> Iterator[str]:
-            for event, data in run_stream(question, thread_id, identity):
+            events = (
+                run_stream(question, thread_id, identity, want_spoken=True)
+                if want_spoken
+                else run_stream(question, thread_id, identity)
+            )
+            for event, data in events:
                 yield _sse(event, data)
 
         return StreamingResponse(frames(), media_type="text/event-stream")

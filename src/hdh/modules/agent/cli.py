@@ -35,6 +35,11 @@ def register_cli(subparsers):
     )
     p.add_argument("--quiet", action="store_true", help="Hide the tool/stage trace")
     p.add_argument(
+        "--spoken",
+        action="store_true",
+        help="Also print the concise, grounded spoken summary (what TTS would voice)",
+    )
+    p.add_argument(
         "--compact-after",
         type=int,
         default=100,
@@ -73,7 +78,7 @@ def _run_pipeline(session, args, identity=None):
     )
     if not args.quiet:
         print(f"┌─ pipeline · model {gateway.config.model} · guard {gateway.config.guard_model}")
-    state = gateway.ask(args.question)
+    state = gateway.ask(args.question, want_spoken=getattr(args, "spoken", False))
     usage = state.get("usage") or {}
     if not args.quiet:
         print(
@@ -81,6 +86,8 @@ def _run_pipeline(session, args, identity=None):
             f"({usage.get('input_tokens', 0):,} in / {usage.get('output_tokens', 0):,} out tokens)\n"
         )
     _stream(Gateway.answer_of(state))
+    if getattr(args, "spoken", False) and state.get("spoken"):
+        print(f"🔊 {state['spoken']}\n")
 
 
 def _run_simple(session, args, identity=None):

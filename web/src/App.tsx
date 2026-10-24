@@ -6,6 +6,7 @@ import {
   listThreads,
   recordEncounter,
   saveEncounter,
+  speak,
   uploadNote,
   type Answer,
   type Encounter,
@@ -20,6 +21,7 @@ type Exchange = {
   question: string;
   answer?: string;
   status?: string;
+  spoken?: string | null;
   verdict?: { valid: boolean; reason?: string } | null;
   error?: string;
 };
@@ -50,6 +52,8 @@ export default function App() {
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [liveSegments, setLiveSegments] = useState<StreamSegment[]>([]);
   const segmentsRef = useRef<StreamSegment[]>([]); // the latest, for the save on stop
+  // voice output: when on, the agent returns a concise `spoken` line and we voice it
+  const [voiceOn, setVoiceOn] = useState(false);
 
   const refreshThreads = () => listThreads().then(setThreads).catch(() => undefined);
   useEffect(() => {
@@ -78,20 +82,26 @@ export default function App() {
     const patch = (fields: Partial<Exchange>) =>
       setExchanges((xs) => xs.map((x, i) => (i === index ? { ...x, ...fields } : x)));
 
-    await askStream(q, activeThread, {
-      onStage: (s) => setStage(s.label),
-      onAnswer: (a: Answer) => {
-        patch({ answer: a.answer, status: a.status, verdict: a.verdict });
-        setStage(null);
-        setBusy(false);
-        refreshThreads();
+    await askStream(
+      q,
+      activeThread,
+      {
+        onStage: (s) => setStage(s.label),
+        onAnswer: (a: Answer) => {
+          patch({ answer: a.answer, status: a.status, spoken: a.spoken, verdict: a.verdict });
+          setStage(null);
+          setBusy(false);
+          refreshThreads();
+          if (voiceOn && a.spoken) speak(a.spoken);
+        },
+        onError: (e) => {
+          patch({ error: e.detail });
+          setStage(null);
+          setBusy(false);
+        },
       },
-      onError: (e) => {
-        patch({ error: e.detail });
-        setStage(null);
-        setBusy(false);
-      },
-    });
+      voiceOn,
+    );
   }
 
   async function openRun(runId: string) {
@@ -271,6 +281,11 @@ export default function App() {
               {x.answer !== undefined && (
                 <div className={"bubble a status-" + (x.status ?? "")}>
                   <div className="answer-text">{x.answer}</div>
+                  {x.spoken && (
+                    <button className="spoken-line" onClick={() => speak(x.spoken as string)} title="Play">
+                      🔊 {x.spoken}
+                    </button>
+                  )}
                   {x.verdict && (
                     <div className={"verdict" + (x.verdict.valid ? " ok" : " warn")}>
                       {x.verdict.valid ? "grounded ✓" : "unvalidated — treat with caution"}
@@ -327,6 +342,15 @@ export default function App() {
             title={noteMrn.trim() ? "Record an encounter for this patient" : "Record an encounter"}
           >
             {encounter ? "⏹ Stop" : "🎙️ Record"}
+          </button>
+          <button
+            type="button"
+            className={"voice-btn" + (voiceOn ? " on" : "")}
+            onClick={() => setVoiceOn((v) => !v)}
+            aria-pressed={voiceOn}
+            title="Voice the agent's answers aloud"
+          >
+            {voiceOn ? "🔊 Voice on" : "🔈 Voice off"}
           </button>
         </div>
 

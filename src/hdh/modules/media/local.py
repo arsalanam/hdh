@@ -34,7 +34,6 @@ from hdh.modules.media.backends import (
     EchoOcr,
     MediaError,
     Segment,
-    SilentSynthesizer,
     Transcript,
 )
 
@@ -270,14 +269,15 @@ def _merge_words_and_turns(
 def build_local_backends() -> Backends:
     """The ``local`` backend set: a real STT engine (NeMo by default, WhisperX
     via ``HDH_MEDIA_STT=whisperx``) for async ``/stt``, the NeMo streaming engine
-    for the live encounter (WS ``/stt/stream``), plus placeholder TTS/OCR until
-    their models land (Kokoro in phase 6, OCR in phase 7). STT is real now; the
-    service boots and the other two still answer so the contract stays whole.
+    for the live encounter (WS ``/stt/stream``), real **Kokoro** TTS, and a
+    placeholder OCR until its model lands (phase 7). The service boots and every
+    endpoint answers so the contract stays whole.
 
     Streaming is **NeMo-only** (design §10): Sortformer is stream-native where
     WhisperX is batch-shaped, so the streamer is NeMo even when the WER/DER gate
     keeps WhisperX for async."""
     from hdh.modules.media.streaming import NeMoStreamingTranscriber
+    from hdh.modules.media.tts import KokoroSynthesizer
 
     choice = (os.environ.get("HDH_MEDIA_STT") or "nemo").lower()
     if choice in ("nemo", "sortformer"):
@@ -289,7 +289,7 @@ def build_local_backends() -> Backends:
     return Backends(
         name=f"local:{choice}",
         transcriber=transcriber,
-        synthesizer=SilentSynthesizer(),  # Kokoro TTS: phase 6
+        synthesizer=KokoroSynthesizer(),  # real TTS (phase 6)
         ocr=EchoOcr(),  # local OCR: phase 7
         streamer=NeMoStreamingTranscriber(),  # live encounter — NeMo-only
     )

@@ -66,6 +66,29 @@ or list the values you checked — a long reason risks being truncated, which
 reads as an unparseable verdict and fails a good answer. Just the outcome.\
 """
 
+# The spoken rendering is the agent's, not the TTS layer's: it is derived from
+# the already-validated ANSWER so it inherits that grounding, then checked for
+# containment below. It is what a clinician hears, so it is written for the ear.
+SPOKEN_PROMPT = """\
+Render the ANSWER as a short spoken summary a clinician will hear read aloud.
+Rules:
+- At most 40 words; one or two plain sentences, no markdown, no lists.
+- Do not read out MRNs, codes, or citations; refer to "the patient" or a name.
+- Spell numbers for the ear ("three patients", "one thirty over eighty").
+- State ONLY what the ANSWER says — add nothing, infer nothing.
+- If the ANSWER is a refusal or a question back to the user, voice that plainly.
+Reply with just the spoken sentence(s), nothing else.\
+"""
+
+# A cheap, independent containment check (design §6): the spoken line may assert
+# nothing absent from the answer. On NO (or anything unclear) we voice nothing
+# rather than risk speaking an unsupported claim.
+SPOKEN_CONTAINMENT_PROMPT = """\
+You check whether a SPOKEN summary asserts only what the ANSWER already says.
+Reply YES if every claim in SPOKEN is supported by ANSWER; reply NO otherwise.
+Answer with a single word: YES or NO.\
+"""
+
 # Schema-enforced verdict: the model cannot return unparseable output.
 VERDICT_SCHEMA = {
     "type": "object",
@@ -403,6 +426,7 @@ class Gateway:
                     run_tools=self._run_tools,
                     assemble=self._assemble,
                     validate=self._validate,
+                    speak=self._speak,
                     quota_check=lambda: self.trace_store.check_quota(
                         self.config.daily_input_tokens, self.config.daily_output_tokens
                     ),
@@ -583,10 +607,48 @@ class Gateway:
             _usage_of(message),
         )
 
+    def _speak(self, answer: str) -> tuple[str, dict]:
+        """A concise spoken rendering of the validated answer, then a containment
+        check that it asserts nothing the answer does not (design §6). The agent
+        owns what is said aloud; the TTS layer only voices it. Returns an empty
+        string (never a guess) when there is nothing grounded to say."""
+        answer = (answer or "").strip()
+        if not answer:
+            return "", {"input_tokens": 0, "output_tokens": 0}
+        gen = self.client.messages.create(
+            model=self.config.model,
+            max_tokens=256,
+            system=SPOKEN_PROMPT,
+            messages=[{"role": "user", "content": f"ANSWER:\n{answer}"}],
+        )
+        spoken = _text_of(gen).strip()
+        usage = _usage_of(gen)
+        if not spoken:
+            return "", usage
+        contained, check_usage = self._spoken_contained(spoken, answer)
+        usage = {
+            "input_tokens": usage.get("input_tokens", 0) + check_usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0) + check_usage.get("output_tokens", 0),
+        }
+        return (spoken if contained else ""), usage
+
+    def _spoken_contained(self, spoken: str, answer: str) -> tuple[bool, dict]:
+        """Cheap containment verdict on the guard model: is every claim in the
+        spoken line supported by the answer? Anything but a clear YES → no voice."""
+        message = self.client.messages.create(
+            model=self.config.guard_model,
+            max_tokens=8,
+            system=SPOKEN_CONTAINMENT_PROMPT,
+            messages=[{"role": "user", "content": f"ANSWER:\n{answer}\n\nSPOKEN:\n{spoken}"}],
+        )
+        return _text_of(message).strip().upper().startswith("YES"), _usage_of(message)
+
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def ask(self, question: str) -> dict:
-        """Run one question through the pipeline as a traced turn."""
+    def ask(self, question: str, *, want_spoken: bool = False) -> dict:
+        """Run one question through the pipeline as a traced turn. With
+        ``want_spoken`` the final state also carries a concise, grounded
+        ``spoken`` rendering for TTS (empty when the turn has nothing to voice)."""
         used_in, used_out = self.trace_store.daily_usage()
         self._trace(
             "gateway",
@@ -598,7 +660,9 @@ class Gateway:
         turn_id = self.trace_store.start_turn(self.run_id, self._turn_count, question)
         self._ctx.turn_id, self._ctx.seq, self._ctx.attempt = turn_id, 0, 0
         try:
-            state = self.graph.invoke({"question": question, "history": list(self.history)})
+            state = self.graph.invoke(
+                {"question": question, "history": list(self.history), "want_spoken": want_spoken}
+            )
         except Exception as error:
             self.trace_store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}", 0, {})
             raise

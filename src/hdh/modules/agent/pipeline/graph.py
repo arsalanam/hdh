@@ -2,9 +2,12 @@
 
 guardrails ──rejected──▶ END
     │
- intent ─▶ tool_executor ─▶ assembler ─▶ validator ──valid──▶ END
-                ▲                            │
-                └────── invalid & tries left ┘   (exhausted ─▶ END, failed)
+ intent ─▶ tool_executor ─▶ assembler ─▶ validator ──valid──▶ spoken ─▶ END
+                ▲                            │               (exhausted ─▶ spoken ─▶ END, failed)
+                └────── invalid & tries left ┘
+
+The spoken node adds a concise, grounded voice rendering when the caller asked
+for one (TTS on); on a rejected, failed, or unvalidated turn it is a no-op.
 """
 
 from langgraph.graph import END, StateGraph
@@ -14,6 +17,7 @@ from .nodes import (
     make_executor_node,
     make_guardrails_node,
     make_intent_node,
+    make_spoken_node,
     make_validator_node,
 )
 from .state import AgentState, PipelineDeps
@@ -39,11 +43,13 @@ def build_graph(deps: PipelineDeps):
     graph.add_node("tool_executor", make_executor_node(deps))
     graph.add_node("assembler", make_assembler_node(deps))
     graph.add_node("validator", make_validator_node(deps))
+    graph.add_node("spoken", make_spoken_node(deps))
 
     graph.set_entry_point("guardrails")
     graph.add_conditional_edges("guardrails", _after_guardrails, {"rejected": END, "ok": "intent"})
     graph.add_edge("intent", "tool_executor")
     graph.add_edge("tool_executor", "assembler")
     graph.add_edge("assembler", "validator")
-    graph.add_conditional_edges("validator", _after_validator, {"retry": "tool_executor", "done": END})
+    graph.add_conditional_edges("validator", _after_validator, {"retry": "tool_executor", "done": "spoken"})
+    graph.add_edge("spoken", END)
     return graph.compile()
