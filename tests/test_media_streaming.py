@@ -200,11 +200,17 @@ def test_echo_session_honours_the_supplied_verifier():
 # ── the NeMo streaming engine fails loudly without the extra ──────────────────
 
 
-def test_nemo_streaming_needs_the_media_extra():
-    # Constructible with no GPU; opening a session raises a clear install hint
-    # (never a silent echo) when nemo_toolkit is absent, as CI is.
+def test_nemo_streaming_turns_a_missing_extra_into_a_loud_error(monkeypatch):
+    # The contract: a missing GPU import surfaces as a MediaError with an install
+    # hint — never a silent echo. Asserted by forcing the import failure, so it
+    # holds whether or not nemo happens to be importable on the box (CI's is).
+    from hdh.modules.media import streaming
     from hdh.modules.media.backends import MediaError
 
+    def _missing(*_args, **_kwargs):
+        raise ImportError("No module named 'nemo'")
+
+    monkeypatch.setattr(streaming, "_build_nemo_stream_session", _missing)
     with pytest.raises(MediaError, match="pip install 'hdh\\[media\\]'"):
         NeMoStreamingTranscriber().open()
 
@@ -238,4 +244,6 @@ def test_segment_from_turn_keeps_the_raw_label_without_a_verifier():
 
 def test_segment_from_turn_flags_a_low_confidence_turn():
     seg = _segment_from_turn({"text": "…", "confidence": 0.2}, None)
-    assert seg.needs_review and not _segment_from_turn({"text": "clear", "confidence": 0.99}, None).needs_review
+    assert (
+        seg.needs_review and not _segment_from_turn({"text": "clear", "confidence": 0.99}, None).needs_review
+    )
