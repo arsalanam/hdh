@@ -118,11 +118,13 @@ def test_null_backend_is_the_default():
     assert isinstance(bk.ocr, EchoOcr)
 
 
-def test_aws_backend_fails_loudly_until_built():
-    # `local` is real as of phase 3 (NeMo/WhisperX, tests/test_media_local.py);
-    # `aws` (Transcribe Medical / Polly / Textract) still lands in phase 7.
-    with pytest.raises(NotImplementedError):
-        make_backends("aws")
+def test_aws_backend_builds_all_four_protocols():
+    # `aws` is real as of phase 7 (Transcribe Medical / Polly / Textract +
+    # streaming, tests/test_media_aws.py). Building is cheap and boto3-free; an
+    # engine only reaches AWS — and only needs boto3 — when it is actually used.
+    bk = make_backends("aws")
+    assert bk.name == "aws"
+    assert bk.transcriber and bk.synthesizer and bk.ocr and bk.streamer
 
 
 def test_unknown_backend_is_a_value_error():

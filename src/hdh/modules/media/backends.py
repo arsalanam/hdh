@@ -52,10 +52,13 @@ class Transcript(BaseModel):
 
 
 class Extraction(BaseModel):
-    """An OCR result: text off an image or PDF."""
+    """An OCR result: text off an image or PDF, with optional layout blocks."""
 
     text: str
     pages: int = 1
+    #: Optional per-region layout — {text, page, confidence?, bbox?}. Printed-page
+    #: engines (docTR, Textract) populate it; the echo placeholder leaves it empty.
+    blocks: list[dict] = Field(default_factory=list)
     model: str = ""
 
 
@@ -174,8 +177,9 @@ def make_backends(name: str | None = None) -> Backends:
 
         return build_local_backends()
     if chosen == "aws":
-        raise NotImplementedError(
-            f"the '{chosen}' media backend is not built yet — "
-            "Transcribe Medical / Polly / Textract land in phase 7"
-        )
+        # Managed, HIPAA-eligible route (Transcribe Medical / Polly / Textract).
+        # Imported lazily so boto3 is needed only when the aws backend is chosen.
+        from hdh.modules.media.aws import build_aws_backends
+
+        return build_aws_backends()
     raise ValueError(f"unknown media backend: {chosen!r} (expected null | local | aws)")

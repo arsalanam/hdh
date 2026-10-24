@@ -277,10 +277,12 @@ harness before trusting any engine or model swap.
 | **4 · "Update the chart now"** ✅ shipped | agent charts history (`apply_note`) **and** drafts med/lab/procedure orders from the last dictation via new `draft_order` / `update_order` / `cancel_order` / `list_orders` tools (wired into the `charting` intent); every change is an unreleased `ServiceRequest(DRAFT, origin=AGENT)` — releasing to Pharmacy stays the human `hdh orders release` act, and an already-ACTIVE order is refused | the headline workflow, end to end, as drafts |
 | **5 · STT encounter (streaming)** ✅ shipped | WS `/stt/stream` (provider token in the `bearer` subprotocol) streaming diarized segments; the `StreamingTranscriber`/`StreamSession` contract with a null **echo streamer** (CI) and the **NeMo streaming + Sortformer** engine (GPU seam); **TitaNet 1:1 provider verification** (`verification.py` — cosine, threshold, passive re-enrollment) resolving speakers against the signed-in provider's enrolled print, heuristic fallback when none; UI **record control** (mic → WS → live diarized transcript → auto-save as the current dictation) | talk through a visit live |
 | **6 · TTS + concise answer** ✅ shipped | a `spoken` pipeline node renders the **validated** answer into a ≤40-word grounded line (generated then containment-checked against the answer — the agent's words, never the TTS layer's); `/ask want_spoken` → `spoken`; CLI `hdh agent --spoken`; real **Kokoro** TTS behind `/tts` (GPU seam, null stays the silent WAV); UI **voice toggle** + "🔊 spoken summary" line that plays via `/tts` | it talks back, concisely and grounded |
-| **7 · OCR + AWS backends** | `/ocr`; `aws` implementations behind the protocols | scanned pages; cloud deployment |
+| **7 · OCR + AWS backends** ✅ shipped | real **docTR** printed-page OCR behind `/ocr` (`media/ocr.py`, GPU seam, null keeps the echo placeholder); the full **`aws`** backend set (`media/aws.py`) — Transcribe Medical (STT + streaming), Polly (TTS), Textract (OCR) behind the same four protocols, lazy `boto3`, pure response-shapers tested with sample responses; `make_backends("aws")` builds boto3-free and each engine fails loudly on use without the SDK; `hdh[aws]` extra | scanned pages; cloud deployment |
 
 Phases 2–4 are the clinical heart (record → reference → chart with orders); 5–6
-complete voice in/out.
+complete voice in/out; 7 adds scanned-page OCR and the managed AWS deployment.
+**All seven phases are shipped** — every protocol has a real local engine and a
+managed AWS counterpart behind the same contract.
 
 ## 12. Non-negotiables
 
@@ -333,7 +335,11 @@ complete voice in/out.
    (recommended: per provider, narrowed to the bound patient when one is open).
 3. **Summary generation timing** — at save (async, ready when asked) vs. lazily
    when the agent first acts on it.
-4. **Handwriting OCR** — cloud vision now vs. local VLM for full on-box privacy.
+4. ~~**Handwriting OCR** — cloud vision now vs. local VLM for full on-box
+   privacy.~~ **Settled (phase 7): cloud vision now.** The local `/ocr` engine
+   (docTR) does printed pages; `agent_api/notes.py`'s existing vision pre-pass
+   stays the handwriting path. A local VLM (Qwen2.5-VL int4) is a later on-box
+   upgrade behind the same `OcrEngine` protocol — a backend swap, not a redesign.
 
 **Settled (2026-10-22) — phase 3:**
 - **Base engine not yet locked — it is gated, not assumed.** NeMo and WhisperX
@@ -423,3 +429,33 @@ complete voice in/out.
   "🔊 spoken summary" line of exactly what is voiced, and the line plays through
   `/tts` (Kokoro); a click replays it. TTS absent or autoplay blocked → the text
   line still shows, the text path unaffected.
+
+**Settled (2026-10-24) — phase 7 (OCR + AWS backends), the milestone's close:**
+- **Local OCR is real: docTR for printed pages** (`media/ocr.py`), same honest
+  boundary as STT/TTS — lazy import, GPU seam (`pragma: no cover`), loud
+  `MediaError` + install hint without the `media` extra, pure shaping
+  (`to_extraction`: pages joined in reading order, per-region layout `blocks`,
+  a below-floor region flagged `needs_review`) unit-tested with no model. The
+  null backend keeps the echo OCR so the `/ocr` contract stays CI-testable.
+  `Extraction` gained an optional `blocks` field (the API contract's `blocks?`).
+  Handwriting stays the cloud vision pre-pass (open-q #4, settled above).
+- **AWS is the managed deployment, same four protocols** (`media/aws.py`):
+  Transcribe Medical (async STT + a streaming `StreamSession`), Polly (TTS),
+  Textract (OCR). `boto3` is imported lazily, so `make_backends("aws")` builds
+  boto3-free and an engine fails loudly (`hdh[aws]` hint) only when *used* — a
+  misconfigured box fails on use, not at boot. The response-shaping is pure and
+  tested against sample Transcribe/Textract/streaming payloads
+  (`transcript_from_transcribe`, `extraction_from_textract`,
+  `stream_segments_from_transcribe`); the job/stream orchestration is the cloud
+  seam. AWS reuses the local async path's longest-speaking `assign_provider`
+  heuristic and the same confidence floor, so the diarized output is identical in
+  shape to local — the backend is a config choice, not a contract change.
+- **The milestone is complete.** Every protocol — `Transcriber`,
+  `StreamingTranscriber`, `Synthesizer`, `OcrEngine` — now has a real local
+  (CUDA) engine and a managed AWS counterpart behind one HTTP/WS contract, with
+  the null/echo backend keeping all of it CI-testable with no GPU and no cloud.
+- **Remaining integration follow-ups** (capabilities exist; wiring is the next
+  step, each a backend swap not a redesign): route `agent_api/notes.py`'s
+  image/PDF pre-pass through `/ocr` (§4); capture/persist provider enrollment in
+  agent_api (phase-5 biometric-PHI store); the self-hosted AWS scale-out
+  (KEDA/Karpenter, §9) when load demands; a local handwriting VLM (open-q #4).
