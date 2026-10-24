@@ -240,13 +240,24 @@ conversation threads, or **attach a handwritten or scanned note** and have it
 charted as history. Every request goes through the *same* pipeline as the CLI —
 a front door may present differently, it may not decide differently.
 
+It also carries the **encounter workflow**: select a patient, **record a
+diarized visit** (the live transcript streams into a scrollable window), stop
+and **edit** it, add an optional **provider note**, then ask the agent to
+**update the chart** from it — and every input is reachable by typing/clicking
+**or** by push-to-talk speech-to-text. The speech runs on the local media
+service (`hdh serve-media`); see the design notes in
+[media-io-service.md](docs/design/media-io-service.md).
+
 ```bash
 just deps                    # PostgreSQL + Keycloak (with the `hdh` realm)
-cd web && npm install && npm run build && cd ..
-hdh serve-agent              # → http://127.0.0.1:8100  (sign in as dr.chen / dr.chen)
+npm --prefix web install
+just hdh serve-agent         # → http://127.0.0.1:8100  (sign in as dr.chen / dr.chen)
+just hdh serve-media         # → http://127.0.0.1:8200  (STT/TTS/OCR; null backend by default)
 ```
 
-See the [Agent UI guide](docs/guides/agent-ui.md) for the full walkthrough.
+See the [Agent UI guide](docs/guides/agent-ui.md) for the front door, and the
+[Encounter testing guide](docs/guides/encounter-testing.md) for the full
+record → edit → note → update-chart test plan (local and AWS backends).
 
 ---
 
@@ -500,7 +511,8 @@ release builds are gated by `just release-check`, see CONTRIBUTING.)
   [snomed](docs/guides/snomed.md) ·
   [ontology](docs/guides/ontology.md) · [billing](docs/guides/billing.md) ·
   [care planning with the agent](docs/guides/care-planning-with-the-agent.md) ·
-  [agent UI (browser)](docs/guides/agent-ui.md)
+  [agent UI (browser)](docs/guides/agent-ui.md) ·
+  [encounter testing (browser)](docs/guides/encounter-testing.md)
 - Chart maintenance — [chart-maintenance.md](docs/design/chart-maintenance.md)
   (symptom billing coverage + amend/void with an audit trail)
 - Design docs — [notes-comprehension-service.md](docs/design/notes-comprehension-service.md) ·
