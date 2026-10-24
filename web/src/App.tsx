@@ -14,6 +14,11 @@ import {
 } from "./api";
 import { currentUser, login, logout } from "./auth";
 import Encounter from "./Encounter";
+import MicButton from "./MicButton";
+
+// Append dictated text to a field's current value, spacing it from what's there.
+const appendText = (current: string, dictated: string) =>
+  current.trim() ? `${current.trimEnd()} ${dictated}` : dictated;
 
 // One question and what came back — the unit the chat column renders.
 type Exchange = {
@@ -349,10 +354,15 @@ export default function App() {
             placeholder={
               viewingRun
                 ? "Viewing a past run — type to ask in the current conversation"
-                : "Ask the agent…"
+                : "Ask the agent — type or hold 🎤 to dictate…"
             }
             disabled={busy}
             autoFocus
+          />
+          <MicButton
+            onText={(t) => setQuestion((q) => appendText(q, t))}
+            disabled={busy}
+            title="Hold to dictate your question"
           />
           <button type="submit" disabled={busy || !question.trim()}>
             {busy ? "…" : "Ask"}
