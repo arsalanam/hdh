@@ -7,6 +7,7 @@ import {
   type EncounterResult,
   type StreamSegment,
 } from "./api";
+import MicButton from "./MicButton";
 
 // The patient this encounter is for — the UI's selected-patient context.
 type Patient = { mrn: string; name: string };
@@ -211,11 +212,18 @@ export default function Encounter({ patient, onAsk, onNotice }: Props) {
 
       {editing && (
         <div className="encounter-note">
-          <label htmlFor="provider-note">Provider note (optional)</label>
+          <div className="encounter-note-head">
+            <label htmlFor="provider-note">Provider note (optional)</label>
+            <MicButton
+              onText={(t) => setNote((n) => (n.trim() ? `${n.trimEnd()} ${t}` : t))}
+              disabled={phase === "saving"}
+              title="Hold to dictate the note"
+            />
+          </div>
           <textarea
             id="provider-note"
             rows={2}
-            placeholder="Add a note to this encounter…"
+            placeholder="Add a note — type or hold 🎤 to dictate…"
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />

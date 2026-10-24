@@ -282,6 +282,22 @@ export async function speak(text: string): Promise<boolean> {
   }
 }
 
+/** Transcribe one recorded audio clip to text via the media service (async
+ *  /stt) — the push-to-talk path for dictating into a field. Returns "" on any
+ *  failure, so a failed dictation simply inserts nothing and typing still works. */
+export async function transcribeClip(blob: Blob): Promise<string> {
+  try {
+    const form = new FormData();
+    form.append("file", blob, "clip.webm"); // the browser sets the multipart boundary
+    const resp = await fetch(mediaUrl("/stt"), { method: "POST", headers: await authHeaders(), body: form });
+    if (!resp.ok) return "";
+    const result = (await resp.json()) as { text?: string };
+    return (result.text ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Persist a finished encounter as the provider's current dictation — the media
  *  service holds nothing, so the UI saves the transcript the moment it ends. */
 export async function saveEncounter(
