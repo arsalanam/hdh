@@ -18,6 +18,7 @@ SQLite (see the [Clinician's Guide, Part 3](practitioner-guide.md#part-3--start-
 |---|---|---|
 | [agent.md](agent.md) | The AI assistant: its tools, pipeline, and context compaction | `hdh[agent]` + API key |
 | [agent-ui.md](agent-ui.md) | The browser front door: run the SPA, sign in via Keycloak, ask/upload | `hdh[agent,api]` + Node + `just deps` |
+| [encounter-testing.md](encounter-testing.md) | Test plan: record → edit → note → update-chart in the browser, by type/click or push-to-talk (local & AWS) | `hdh[agent,api]` + Node + `just deps` (+ `hdh[media]`/GPU for real STT) |
 | [snomed.md](snomed.md) | SNOMED CT: loading, the normalize funnel, subsumption | base install + UMLS key |
 | [icd10cm.md](icd10cm.md) | ICD-10-CM knowledge graph and billing-code selection | base install |
 
