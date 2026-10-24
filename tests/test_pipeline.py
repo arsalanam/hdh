@@ -23,10 +23,13 @@ from hdh.modules.agent.pipeline.gateway import Gateway
 NO_USAGE = {"input_tokens": 10, "output_tokens": 5}
 
 
-def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None):
-    """Fake dependencies; `verdicts` is the sequence of validator outcomes."""
+def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None, spoken="Spoken summary."):
+    """Fake dependencies; `verdicts` is the sequence of validator outcomes.
+
+    `spoken` is what the fake `speak` returns (set "" to model a non-contained
+    rendering that is dropped)."""
     verdicts = list(verdicts if verdicts is not None else [(True, "grounded")])
-    calls = {"executor": 0, "validator": 0}
+    calls = {"executor": 0, "validator": 0, "speak": 0}
 
     def check_topic(question, history=None):
         return on_topic, "clinical query" if on_topic else "cooking recipes", NO_USAGE
@@ -51,6 +54,10 @@ def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None):
         valid, reason = verdicts[index]
         return valid, reason, NO_USAGE
 
+    def speak(answer):
+        calls["speak"] += 1
+        return spoken, NO_USAGE
+
     deps = PipelineDeps(
         config=config or PipelineConfig(max_attempts=3),
         check_topic=check_topic,
@@ -58,13 +65,14 @@ def make_deps(*, on_topic=True, quota_reason=None, verdicts=None, config=None):
         run_tools=run_tools,
         assemble=assemble,
         validate=validate,
+        speak=speak,
         quota_check=lambda: quota_reason,
     )
     return deps, calls
 
 
-def run_question(deps, question="Which patients have uncontrolled HTN?"):
-    return build_graph(deps).invoke({"question": question, "history": []})
+def run_question(deps, question="Which patients have uncontrolled HTN?", **state):
+    return build_graph(deps).invoke({"question": question, "history": [], **state})
 
 
 def test_happy_path_single_attempt():
@@ -74,6 +82,47 @@ def test_happy_path_single_attempt():
     assert state["attempts"] == 1
     assert calls["executor"] == 1
     assert "ANSWER" in Gateway.answer_of(state)
+
+
+def test_no_spoken_rendering_unless_requested():
+    deps, calls = make_deps()
+    state = run_question(deps)  # want_spoken defaults off
+    assert not state.get("spoken")
+    assert calls["speak"] == 0  # the node is a no-op, no extra model call
+
+
+def test_spoken_rendering_on_a_validated_answer():
+    deps, calls = make_deps(spoken="Three patients have high blood pressure.")
+    state = run_question(deps, want_spoken=True)
+    assert state["spoken"] == "Three patients have high blood pressure."
+    assert calls["speak"] == 1
+    # the spoken node's usage is folded into the running total
+    assert state["usage"]["input_tokens"] >= NO_USAGE["input_tokens"]
+
+
+def test_no_spoken_when_the_answer_failed_validation():
+    # Nothing grounded to voice: an unvalidated turn is left silent.
+    deps, calls = make_deps(verdicts=[(False, "hallucinated")], spoken="should not be produced")
+    state = run_question(deps, want_spoken=True)
+    assert state["failed"]
+    assert not state.get("spoken")
+    assert calls["speak"] == 0
+
+
+def test_no_spoken_when_off_topic_rejected():
+    deps, calls = make_deps(on_topic=False)
+    state = run_question(deps, "Best lasagna recipe?", want_spoken=True)
+    assert "rejected" in state
+    assert not state.get("spoken")
+    assert calls["speak"] == 0
+
+
+def test_an_uncontained_spoken_rendering_is_dropped():
+    # When speak returns "" (the containment check failed in the real gateway),
+    # the node voices nothing rather than an unsupported claim.
+    deps, _ = make_deps(spoken="")
+    state = run_question(deps, want_spoken=True)
+    assert state.get("spoken") == ""
 
 
 def test_validator_failure_triggers_retry_with_feedback():

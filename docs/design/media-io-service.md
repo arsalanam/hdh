@@ -276,7 +276,7 @@ harness before trusting any engine or model swap.
 | **3 · STT async + diarization** ✅ shipped | `/stt` on **NeMo** (primary) + **WhisperX** (baseline/fallback) behind the same `Transcriber` protocol; the **WER/DER benchmark gate** (`hdh media-benchmark`) that locks NeMo in only if it is within margin of WhisperX on both metrics; `media` optional extra (torch/nemo/whisperx); upload → saved transcript is the real `/stt` + phase-2 `/dictations`, orchestrated by the UI (service stays stateless) | NeMo diarization actually works on clinic audio; upload a visit recording, get a diarized transcript |
 | **4 · "Update the chart now"** ✅ shipped | agent charts history (`apply_note`) **and** drafts med/lab/procedure orders from the last dictation via new `draft_order` / `update_order` / `cancel_order` / `list_orders` tools (wired into the `charting` intent); every change is an unreleased `ServiceRequest(DRAFT, origin=AGENT)` — releasing to Pharmacy stays the human `hdh orders release` act, and an already-ACTIVE order is refused | the headline workflow, end to end, as drafts |
 | **5 · STT encounter (streaming)** ✅ shipped | WS `/stt/stream` (provider token in the `bearer` subprotocol) streaming diarized segments; the `StreamingTranscriber`/`StreamSession` contract with a null **echo streamer** (CI) and the **NeMo streaming + Sortformer** engine (GPU seam); **TitaNet 1:1 provider verification** (`verification.py` — cosine, threshold, passive re-enrollment) resolving speakers against the signed-in provider's enrolled print, heuristic fallback when none; UI **record control** (mic → WS → live diarized transcript → auto-save as the current dictation) | talk through a visit live |
-| **6 · TTS + concise answer** | assembler `spoken`; `/ask want_spoken`; `/tts` (Kokoro); UI toggle | it talks back, concisely and grounded |
+| **6 · TTS + concise answer** ✅ shipped | a `spoken` pipeline node renders the **validated** answer into a ≤40-word grounded line (generated then containment-checked against the answer — the agent's words, never the TTS layer's); `/ask want_spoken` → `spoken`; CLI `hdh agent --spoken`; real **Kokoro** TTS behind `/tts` (GPU seam, null stays the silent WAV); UI **voice toggle** + "🔊 spoken summary" line that plays via `/tts` | it talks back, concisely and grounded |
 | **7 · OCR + AWS backends** | `/ocr`; `aws` implementations behind the protocols | scanned pages; cloud deployment |
 
 Phases 2–4 are the clinical heart (record → reference → chart with orders); 5–6
@@ -393,3 +393,33 @@ complete voice in/out.
   live, and on stop auto-saves via `/dictations` (`source="encounter"`) so
   "update the chart now" (phase 4) picks it up. The browser clip codec vs. what
   NeMo decodes is negotiated on the GPU box — the same honest seam as the engine.
+
+**Settled (2026-10-23) — phase 6 (TTS + concise spoken answer):**
+- **The spoken answer is the agent's, not the TTS layer's — and it is derived
+  from the *validated* answer, not generated in parallel.** The design first
+  said "generated in the same assembler pass as `answer`"; in practice the
+  answer can change across validator retries and the spoken line must voice
+  exactly what is returned, so a new **`spoken` pipeline node** runs after the
+  validator, on the terminal path only. It calls `deps.speak(answer)` which (1)
+  renders a ≤40-word, plain-prose, numbers-for-the-ear line from the answer and
+  (2) runs an independent **containment check** (a cheap guard-model YES/NO: does
+  the spoken assert only what the answer says?). Anything but a clear YES → it
+  voices nothing. So the spoken line inherits the answer's grounding and can add
+  nothing — "never the TTS layer's invention" (§12) holds by construction.
+- **Only on a usable answer, only when asked.** The node is a no-op unless
+  `want_spoken` is set (TTS on) and the turn validated — a rejected or
+  unvalidated turn has nothing grounded to voice and is left silent. Threaded as
+  `Gateway.ask(question, want_spoken=...)`, `/ask` `want_spoken` → `spoken`, and
+  `hdh agent --spoken`. The two extra model calls (render + containment) are
+  opt-in, so a text-only turn costs nothing new.
+- **Kokoro is the real `/tts` engine, same honest boundary as STT.** Lazy import,
+  GPU seam (`pragma: no cover`), loud `MediaError` + install hint without the
+  `media` extra — never silence, never a different voice. The pure glue
+  (`float_pcm_to_wav`, clamping, duration) is unit-tested with no model. The
+  **null backend keeps the silent-WAV synthesizer** so the `/tts` contract and
+  the UI playback path stay CI-testable.
+- **UI: a single voice enable/disable toggle** (resolves §6's "enable/disable").
+  When on, `/ask/stream` carries `want_spoken`, each answer shows a visible
+  "🔊 spoken summary" line of exactly what is voiced, and the line plays through
+  `/tts` (Kokoro); a click replays it. TTS absent or autoplay blocked → the text
+  line still shows, the text path unaffected.

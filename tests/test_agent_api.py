@@ -329,6 +329,41 @@ def test_ask_threads_the_conversation():
     assert body2["thread_id"] and body2["thread_id"] != "t-42"
 
 
+def test_ask_requests_a_spoken_rendering_only_when_asked():
+    """want_spoken reaches the backend and the spoken line comes back; the
+    default request leaves the backend's 3-arg contract untouched."""
+    seen = {}
+
+    def fake_ask(question, thread_id=None, identity=None, want_spoken=False):
+        seen["want_spoken"] = want_spoken
+        return {
+            "answer": "Three patients have uncontrolled hypertension.",
+            "status": "validated",
+            "spoken": "Three patients have high blood pressure." if want_spoken else None,
+            "trace_id": "aa",
+            "thread_id": thread_id or "t",
+        }
+
+    client = TestClient(create_app(ask=fake_ask, authenticator=_ALLOW))
+    on = client.post("/ask", json={"question": "q", "want_spoken": True}).json()
+    assert seen["want_spoken"] is True
+    assert on["spoken"] == "Three patients have high blood pressure."
+    off = client.post("/ask", json={"question": "q"}).json()
+    assert seen["want_spoken"] is False  # endpoint omits it → backend default
+    assert off["spoken"] is None
+
+
+def test_ask_still_accepts_a_three_arg_backend():
+    """The default (no want_spoken) request must not break a backend written to
+    the established 3-arg shape — the endpoint passes the keyword only when set."""
+
+    def three_arg_ask(question, thread_id=None, identity=None):
+        return {"answer": "ok", "status": "validated", "trace_id": "aa", "thread_id": thread_id or "t"}
+
+    client = TestClient(create_app(ask=three_arg_ask, authenticator=_ALLOW))
+    assert client.post("/ask", json={"question": "q"}).json()["answer"] == "ok"
+
+
 def test_threads_groups_runs_newest_first():
     store = _FakeStore(
         [

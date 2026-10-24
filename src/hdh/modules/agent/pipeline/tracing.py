@@ -452,6 +452,19 @@ def instrument_deps(deps: PipelineDeps, store: TraceStore, ctx: TurnContext) -> 
         )
         return valid, reason, usage
 
+    def speak(answer):
+        t0 = perf_counter()
+        spoken, usage = deps.speak(answer)
+        record(
+            "spoken",
+            "ok" if spoken else "empty",
+            {"answer_chars": len(answer)},
+            {"spoken_words": len(spoken.split())},
+            usage,
+            t0,
+        )
+        return spoken, usage
+
     return PipelineDeps(
         config=deps.config,
         check_topic=check_topic,
@@ -459,6 +472,7 @@ def instrument_deps(deps: PipelineDeps, store: TraceStore, ctx: TurnContext) -> 
         run_tools=run_tools,
         assemble=assemble,
         validate=validate,
+        speak=speak,
         quota_check=quota_check,
         trace=deps.trace,
     )

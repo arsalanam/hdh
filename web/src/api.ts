@@ -17,6 +17,7 @@ export type Stage = { stage: string; label: string; detail?: string };
 export type Answer = {
   answer: string;
   status: string; // validated | unvalidated | rejected
+  spoken?: string | null; // concise grounded rendering to voice, when requested
   intent?: unknown;
   verdict?: { valid: boolean; reason?: string } | null;
   usage?: Record<string, number>;
@@ -66,13 +67,14 @@ export async function askStream(
   question: string,
   threadId: string,
   handlers: StreamHandlers,
+  wantSpoken = false,
 ): Promise<void> {
   let resp: Response;
   try {
     resp = await fetch("/ask/stream", {
       method: "POST",
       headers: await authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ question, thread_id: threadId }),
+      body: JSON.stringify({ question, thread_id: threadId, want_spoken: wantSpoken }),
     });
   } catch (err) {
     handlers.onError({ detail: `network error: ${String(err)}` });
@@ -240,6 +242,34 @@ export async function recordEncounter(handlers: EncounterHandlers): Promise<Enco
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
     },
   };
+}
+
+// The media service base URL (same as the streaming encounter's). Empty means
+// same-origin (dev: vite proxies /tts → :8200).
+function mediaUrl(path: string): string {
+  const base = (import.meta.env.VITE_MEDIA_URL as string) || "";
+  return base ? new URL(path, base).toString() : path;
+}
+
+/** Voice a line of text through the media service (Kokoro). The text is the
+ *  agent's grounded `spoken` rendering — the TTS layer only voices it, it
+ *  invents nothing. Returns false (and plays nothing) when TTS is unavailable. */
+export async function speak(text: string): Promise<boolean> {
+  try {
+    const resp = await fetch(mediaUrl("/tts"), {
+      method: "POST",
+      headers: await authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text }),
+    });
+    if (!resp.ok) return false;
+    const blob = await resp.blob();
+    const audio = new Audio(URL.createObjectURL(blob));
+    audio.onended = () => URL.revokeObjectURL(audio.src);
+    await audio.play();
+    return true;
+  } catch {
+    return false; // no media service, or autoplay blocked — the text line still shows
+  }
 }
 
 /** Persist a finished encounter as the provider's current dictation — the media

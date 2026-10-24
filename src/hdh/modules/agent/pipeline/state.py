@@ -51,6 +51,7 @@ class AgentState(TypedDict, total=False):
 
     question: str
     history: list[str]  # brief "Q: ... / A: ..." lines from earlier turns
+    want_spoken: bool  # caller wants a concise spoken rendering (TTS is on)
     rejected: str  # guardrail rejection reason; routes straight to END
     intent: dict  # {"intent": ..., "entities": [...], "plan": ...}
     findings: str  # tool executor's raw findings text
@@ -60,6 +61,7 @@ class AgentState(TypedDict, total=False):
     feedback: str  # validator feedback fed to the executor on retry
     attempts: int  # executor attempts so far (capped by config)
     failed: bool  # exhausted retries without a valid response
+    spoken: str  # the concise, grounded rendering to voice (when want_spoken)
     usage: dict  # {"input_tokens": n, "output_tokens": n} accumulated
 
 
@@ -96,6 +98,7 @@ class PipelineDeps:
                                       -> (findings, evidence_list, usage)
       assemble(question, findings, evidence) -> (draft, usage)
       validate(question, draft, evidence)    -> (valid, reason, usage)
+      speak(answer)                   -> (spoken, usage)  (concise, grounded)
       quota_check()                   -> rejection reason or None
       trace(stage, message)           -> None  (progress reporting)
     """
@@ -106,6 +109,10 @@ class PipelineDeps:
     run_tools: Callable
     assemble: Callable
     validate: Callable
+    # Default: no spoken rendering. Only the real gateway (and tests that want
+    # to exercise it) supply a `speak` that produces one, so a bare pipeline —
+    # and every existing deps fixture — keeps working unchanged.
+    speak: Callable = field(default=lambda answer: ("", {"input_tokens": 0, "output_tokens": 0}))
     quota_check: Callable = field(default=lambda: None)
     trace: Callable = field(default=lambda stage, message: None)
 

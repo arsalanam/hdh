@@ -9,9 +9,10 @@ import react from "@vitejs/plugin-react";
 const API_ROUTES = ["/ask", "/me", "/threads", "/conversations", "/notes", "/dictations", "/health"];
 
 // The media service runs separately (hdh serve-media, :8200). /stt covers both
-// the async upload and the /stt/stream WebSocket (ws:true), and /capabilities
-// lets the SPA show or hide voice controls. VITE_MEDIA_URL overrides in prod.
-const MEDIA_ROUTES = ["/stt", "/capabilities"];
+// the async upload and the /stt/stream WebSocket (ws:true), /tts voices the
+// agent's spoken answer, and /capabilities lets the SPA show or hide voice
+// controls. VITE_MEDIA_URL overrides in prod.
+const MEDIA_ROUTES = ["/stt", "/tts", "/capabilities"];
 
 const api = (p: string) => [p, { target: "http://127.0.0.1:8100", changeOrigin: true }] as const;
 const media = (p: string) => [p, { target: "http://127.0.0.1:8200", changeOrigin: true, ws: true }] as const;
