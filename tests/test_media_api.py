@@ -62,11 +62,11 @@ def test_stt_refused_without_token():
     assert resp.status_code == 401
 
 
-def test_capabilities_reports_backend_and_no_streaming_yet():
+def test_capabilities_reports_backend_and_streaming():
     body = _client().get("/capabilities").json()
     assert body["backend"] == "null"
     assert body["stt"] and body["ocr"] and body["tts"]
-    assert body["streaming_stt"] is False  # WS lands in phase 5
+    assert body["streaming_stt"] is True  # WS /stt/stream — the live encounter (phase 5)
 
 
 # ── transduction via the echo backend ────────────────────────────────────────

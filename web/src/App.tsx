@@ -1,12 +1,16 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   askStream,
   getConversation,
   getMe,
   listThreads,
+  recordEncounter,
+  saveEncounter,
   uploadNote,
   type Answer,
+  type Encounter,
   type Me,
+  type StreamSegment,
   type ThreadSummary,
 } from "./api";
 import { currentUser, login, logout } from "./auth";
@@ -42,6 +46,10 @@ export default function App() {
   // note upload: which patient the note is for, and whether one is in flight
   const [noteMrn, setNoteMrn] = useState("");
   const [uploading, setUploading] = useState(false);
+  // live encounter: the running recorder and the diarized turns seen so far
+  const [encounter, setEncounter] = useState<Encounter | null>(null);
+  const [liveSegments, setLiveSegments] = useState<StreamSegment[]>([]);
+  const segmentsRef = useRef<StreamSegment[]>([]); // the latest, for the save on stop
 
   const refreshThreads = () => listThreads().then(setThreads).catch(() => undefined);
   useEffect(() => {
@@ -122,6 +130,53 @@ export default function App() {
       { question: label, answer: summary, status: result.needs_review ? "review" : "validated" },
     ]);
     refreshThreads();
+  }
+
+  async function toggleRecording() {
+    if (encounter) {
+      encounter.stop(); // the done frame fires onDone, which saves and clears
+      return;
+    }
+    setViewingRun(null);
+    segmentsRef.current = [];
+    setLiveSegments([]);
+    const mrn = noteMrn.trim();
+    const session = await recordEncounter({
+      onSegment: (s) => {
+        segmentsRef.current = [...segmentsRef.current, s];
+        setLiveSegments(segmentsRef.current);
+      },
+      onDone: async (result) => {
+        setEncounter(null);
+        setLiveSegments([]);
+        const label = "🎙️ Encounter recorded";
+        if (!result.text) {
+          setExchanges((xs) => [...xs, { question: label, error: "nothing was transcribed" }]);
+          return;
+        }
+        const saved = await saveEncounter(result, mrn, segmentsRef.current);
+        if ("error" in saved) {
+          setExchanges((xs) => [...xs, { question: label, error: saved.error }]);
+          return;
+        }
+        const note =
+          `Saved as the current dictation (${Math.round(result.duration_s)}s, ` +
+          `${result.speakers.join(" + ") || "one speaker"})` +
+          (result.needs_review ? " — some turns need review" : "") +
+          '. Ask "update the chart now" to draft history and orders.';
+        setExchanges((xs) => [
+          ...xs,
+          { question: label, answer: note, status: result.needs_review ? "review" : "validated" },
+        ]);
+        refreshThreads();
+      },
+      onError: (detail) => {
+        setEncounter(null);
+        setLiveSegments([]);
+        setExchanges((xs) => [...xs, { question: "🎙️ Encounter", error: detail }]);
+      },
+    });
+    if (session) setEncounter(session);
   }
 
   function startNewConversation() {
@@ -231,6 +286,21 @@ export default function App() {
               )}
             </div>
           ))}
+          {encounter && (
+            <div className="encounter">
+              <div className="encounter-head">
+                <span className="rec-dot" /> Recording — diarized live
+              </div>
+              {liveSegments.length === 0 && <div className="placeholder">Listening…</div>}
+              {liveSegments.map((s, i) => (
+                <div key={i} className={"turn speaker-" + s.speaker.toLowerCase()}>
+                  <span className="who">{s.speaker}</span>
+                  <span className="said">{s.text}</span>
+                  {s.needs_review && <span className="flag">review</span>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="attach">
@@ -250,6 +320,14 @@ export default function App() {
               onChange={onUploadNote}
             />
           </label>
+          <button
+            type="button"
+            className={"record-btn" + (encounter ? " recording" : "")}
+            onClick={toggleRecording}
+            title={noteMrn.trim() ? "Record an encounter for this patient" : "Record an encounter"}
+          >
+            {encounter ? "⏹ Stop" : "🎙️ Record"}
+          </button>
         </div>
 
         <form className="composer" onSubmit={submit}>
