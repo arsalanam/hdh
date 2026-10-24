@@ -57,6 +57,29 @@ def _new_thread_id() -> str:
     return str(uuid.uuid4())
 
 
+def _ask_kwargs(body: AskRequest) -> dict:
+    """The optional agent-backend kwargs a request carries, included only when
+    set — so a 3-arg test backend is called with three args, and the real
+    gateway (which accepts the extras) gets them when present."""
+    extra: dict = {}
+    if body.want_spoken:
+        extra["want_spoken"] = True
+    if body.mrn:
+        extra["mrn"] = body.mrn
+    return extra
+
+
+def _patient_context(mrn: str) -> str:
+    """One history line seeding the agent's active-patient context — the UI's
+    selected patient. It is replayed to the guard/intent/executor like any prior
+    turn, so 'this patient' and `use_last_dictation(mrn)` resolve unambiguously
+    without changing the pipeline."""
+    return (
+        f"Context: the clinician has patient MRN {mrn} open. "
+        f"Resolve 'the patient'/'this patient' to MRN {mrn} unless another is named."
+    )
+
+
 class AskRequest(BaseModel):
     """One question for the agent, optionally within an existing thread."""
 
@@ -68,6 +91,10 @@ class AskRequest(BaseModel):
     want_spoken: bool = Field(
         default=False,
         description="Also return a concise, grounded `spoken` rendering to voice (set when TTS is on).",
+    )
+    mrn: str | None = Field(
+        default=None,
+        description="The UI's selected patient; seeds the agent's active-patient context for this turn.",
     )
 
 
@@ -82,6 +109,16 @@ class AskResponse(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     trace_id: str
     thread_id: str  # the thread this run was filed under
+
+
+class PatientInfo(BaseModel):
+    """A patient card for the UI's selected-patient context — just enough to
+    confirm and display the active patient, no chart contents."""
+
+    mrn: str
+    name: str
+    age: int | None = None
+    sex: str | None = None
 
 
 class NoteVerdict(BaseModel):
@@ -238,7 +275,13 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
     the SQLite file — so the API and the terminal see one chart.
     """
 
-    def ask(question: str, thread_id: str | None = None, identity=None, want_spoken: bool = False) -> dict:
+    def ask(
+        question: str,
+        thread_id: str | None = None,
+        identity=None,
+        want_spoken: bool = False,
+        mrn: str | None = None,
+    ) -> dict:
         from hdh.core.models import get_engine, get_session
         from hdh.modules.agent.pipeline import Gateway
 
@@ -248,6 +291,8 @@ def _gateway_ask(*, db_path: str, model: str | None) -> AskFn:
         session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
         try:
             gateway = Gateway(session, model=model, source="ui", identity=identity, thread_id=thread_id)
+            if mrn:
+                gateway.history.append(_patient_context(mrn))  # the UI's selected patient
             state = gateway.ask(question, want_spoken=want_spoken)
             return _normalize(state, gateway.run_id, thread_id or gateway.run_id)
         finally:
@@ -268,7 +313,11 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
     """
 
     def stream(
-        question: str, thread_id: str | None = None, identity=None, want_spoken: bool = False
+        question: str,
+        thread_id: str | None = None,
+        identity=None,
+        want_spoken: bool = False,
+        mrn: str | None = None,
     ) -> Iterator[tuple[str, dict]]:
         import queue
         import threading
@@ -290,6 +339,8 @@ def _gateway_stream(*, db_path: str, model: str | None) -> StreamFn:
                 gateway = Gateway(
                     session, model=model, source="ui", identity=identity, trace=trace, thread_id=thread_id
                 )
+                if mrn:
+                    gateway.history.append(_patient_context(mrn))  # the UI's selected patient
                 outcome["answer"] = _normalize(
                     gateway.ask(question, want_spoken=want_spoken),
                     gateway.run_id,
@@ -320,6 +371,31 @@ def _default_store():
     from hdh.modules.agent.pipeline.tracing import TraceStore
 
     return TraceStore(default_trace_url())
+
+
+def _default_patients(db_path: str):
+    """The default patient-lookup backend: resolve a patient by MRN for the UI's
+    selected-patient context. Read-only, request-scoped session per call (mirrors
+    _gateway_ask); returns a compact card or None when the MRN names no patient."""
+
+    def lookup(mrn: str, identity=None) -> dict | None:
+        from hdh.core.models import Patient, get_engine, get_session
+
+        session = get_session(get_engine(db_path))  # quality: allow(dependency-injection)
+        try:
+            patient = session.query(Patient).filter(Patient.mrn == mrn).first()
+            if patient is None:
+                return None
+            return {
+                "mrn": patient.mrn,
+                "name": patient.display_name,
+                "age": patient.age,
+                "sex": patient.sex.value if patient.sex else None,
+            }
+        finally:
+            session.close()
+
+    return lookup
 
 
 def _default_dictations(db_path: str, model: str | None):
@@ -421,6 +497,7 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
     store: Any = None,
     ingest: IngestFn | None = None,
     dictations: Any = None,
+    patients: Any = None,
     authenticator: Any = None,
     db_path: str = "family_medicine.db",
     model: str | None = None,
@@ -445,6 +522,7 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
     run_stream: StreamFn = stream or _gateway_stream(db_path=db_path, model=model)
     run_ingest: IngestFn = ingest or note_ingest(db_path=db_path, model=model)
     dictation_store = dictations or _default_dictations(db_path, model)
+    patient_lookup = patients or _default_patients(db_path)
     history = store or _default_store()
     authenticate = authenticator or keycloak_authenticator()
 
@@ -477,6 +555,15 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
             "roles": sorted(identity.roles),
         }
 
+    @app.get("/patients/{mrn}", response_model=PatientInfo)
+    def get_patient(mrn: str, identity=Depends(require_identity)) -> Any:
+        """Resolve the UI's selected patient by MRN — a small card to confirm and
+        display the active patient. 404 when the MRN names no patient."""
+        card = patient_lookup(mrn, identity=identity)
+        if card is None:
+            raise HTTPException(status_code=404, detail=f"no patient with MRN {mrn}")
+        return card
+
     @app.post("/ask", response_model=AskResponse)
     def ask_endpoint(body: AskRequest, identity=Depends(require_identity)) -> dict:
         """Ask the agent one question; get a grounded, validated answer.
@@ -489,11 +576,9 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
         thread_id = body.thread_id or _new_thread_id()
-        # Pass want_spoken only when set, so an injected 3-arg test backend (the
-        # established fake shape) keeps working unchanged.
-        if body.want_spoken:
-            return run_ask(question, thread_id, identity, want_spoken=True)
-        return run_ask(question, thread_id, identity)
+        # Pass optional kwargs only when set, so an injected 3-arg test backend
+        # (the established fake shape) keeps working unchanged.
+        return run_ask(question, thread_id, identity, **_ask_kwargs(body))
 
     @app.post("/ask/stream")
     def ask_stream(body: AskRequest, identity=Depends(require_identity)) -> Any:
@@ -508,15 +593,10 @@ def create_app(  # quality: allow(no-god-class) — composition-root injectables
         if not question:
             raise HTTPException(status_code=422, detail="question must not be empty")
         thread_id = body.thread_id or _new_thread_id()
-        want_spoken = body.want_spoken
+        extra = _ask_kwargs(body)
 
         def frames() -> Iterator[str]:
-            events = (
-                run_stream(question, thread_id, identity, want_spoken=True)
-                if want_spoken
-                else run_stream(question, thread_id, identity)
-            )
-            for event, data in events:
+            for event, data in run_stream(question, thread_id, identity, **extra):
                 yield _sse(event, data)
 
         return StreamingResponse(frames(), media_type="text/event-stream")

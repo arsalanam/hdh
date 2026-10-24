@@ -490,3 +490,167 @@ body {
     display: none;
   }
 }
+
+/* ── patient bar (the selected-patient context) ──────────────────────── */
+.patient-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px clamp(16px, 8vw, 120px);
+  border-bottom: 1px solid var(--border);
+}
+.patient-select {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+.patient-select .mrn {
+  flex: 1;
+  max-width: 360px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+}
+.patient-select button {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.patient-select button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.patient-chip {
+  display: flex;
+  flex-direction: column;
+}
+.patient-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.patient-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.patient-clear {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+/* ── encounter workspace ─────────────────────────────────────────────── */
+.encounter-panel {
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.encounter-panel .encounter-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.encounter-title {
+  font-size: 13px;
+  color: var(--muted);
+  flex: 1;
+}
+.encounter-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+}
+.turn-edit {
+  flex: 1;
+  resize: vertical;
+  min-height: 1.7em;
+  font: inherit;
+  font-size: 14px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.who.relabel {
+  cursor: pointer;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.turn-drop {
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.turn-drop:hover {
+  color: var(--error);
+}
+.encounter-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+.encounter-note label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.encounter-note textarea {
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.encounter-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+.encounter-actions.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+.encounter-actions .confirm {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.encounter-actions .ghost {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}

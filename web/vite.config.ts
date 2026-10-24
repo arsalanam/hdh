@@ -6,7 +6,16 @@ import react from "@vitejs/plugin-react";
 // Every route the SPA calls must be here, or in dev it hits Vite and 404s:
 // /ask (+ /ask/stream), /me, /threads, /conversations (+ /{id}), /notes/upload,
 // /dictations (saves a recorded encounter).
-const API_ROUTES = ["/ask", "/me", "/threads", "/conversations", "/notes", "/dictations", "/health"];
+const API_ROUTES = [
+  "/ask",
+  "/me",
+  "/patients",
+  "/threads",
+  "/conversations",
+  "/notes",
+  "/dictations",
+  "/health",
+];
 
 // The media service runs separately (hdh serve-media, :8200). /stt covers both
 // the async upload and the /stt/stream WebSocket (ws:true), /tts voices the
