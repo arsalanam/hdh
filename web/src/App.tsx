@@ -1,20 +1,19 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   askStream,
   getConversation,
   getMe,
+  getPatient,
   listThreads,
-  recordEncounter,
-  saveEncounter,
   speak,
   uploadNote,
   type Answer,
-  type Encounter,
   type Me,
-  type StreamSegment,
+  type PatientInfo,
   type ThreadSummary,
 } from "./api";
 import { currentUser, login, logout } from "./auth";
+import Encounter from "./Encounter";
 
 // One question and what came back — the unit the chat column renders.
 type Exchange = {
@@ -45,13 +44,11 @@ export default function App() {
   // auth: who is signed in, and whether the sign-in check has completed
   const [me, setMe] = useState<Me | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  // note upload: which patient the note is for, and whether one is in flight
-  const [noteMrn, setNoteMrn] = useState("");
+  // the selected patient (the active-patient context), the MRN being typed, and lookup state
+  const [patient, setPatient] = useState<PatientInfo | null>(null);
+  const [mrnInput, setMrnInput] = useState("");
+  const [lookingUp, setLookingUp] = useState(false);
   const [uploading, setUploading] = useState(false);
-  // live encounter: the running recorder and the diarized turns seen so far
-  const [encounter, setEncounter] = useState<Encounter | null>(null);
-  const [liveSegments, setLiveSegments] = useState<StreamSegment[]>([]);
-  const segmentsRef = useRef<StreamSegment[]>([]); // the latest, for the save on stop
   // voice output: when on, the agent returns a concise `spoken` line and we voice it
   const [voiceOn, setVoiceOn] = useState(false);
 
@@ -67,23 +64,23 @@ export default function App() {
       .finally(() => setAuthReady(true));
   }, []);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const q = question.trim();
-    if (!q || busy) return;
+  // Run one agent ask and render it live. Shared by the composer and the
+  // encounter's "update the chart" action; carries the active patient's MRN so
+  // the agent resolves "this patient" and the right recorded encounter.
+  async function runAsk(q: string) {
+    const question = q.trim();
+    if (!question || busy) return;
     setViewingRun(null);
-    setQuestion("");
     setBusy(true);
     setStage("Starting…");
-    setExpanded((e) => new Set(e).add(activeThread)); // keep the active thread open
+    setExpanded((e) => new Set(e).add(activeThread));
     const index = exchanges.length;
-    setExchanges((xs) => [...xs, { question: q }]);
-
+    setExchanges((xs) => [...xs, { question }]);
     const patch = (fields: Partial<Exchange>) =>
       setExchanges((xs) => xs.map((x, i) => (i === index ? { ...x, ...fields } : x)));
 
     await askStream(
-      q,
+      question,
       activeThread,
       {
         onStage: (s) => setStage(s.label),
@@ -101,7 +98,40 @@ export default function App() {
         },
       },
       voiceOn,
+      patient?.mrn ?? null,
     );
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const q = question.trim();
+    if (!q || busy) return;
+    setQuestion("");
+    runAsk(q);
+  }
+
+  // A one-line notice in the chat stream (encounter save confirmations / errors).
+  function pushNotice(text: string, status?: string, isError = false) {
+    setViewingRun(null);
+    setExchanges((xs) => [
+      ...xs,
+      isError ? { question: "🎙️ Encounter", error: text } : { question: "🎙️ Encounter", answer: text, status },
+    ]);
+  }
+
+  async function selectPatient(event: FormEvent) {
+    event.preventDefault();
+    const mrn = mrnInput.trim();
+    if (!mrn || lookingUp) return;
+    setLookingUp(true);
+    const found = await getPatient(mrn);
+    setLookingUp(false);
+    if (!found) {
+      pushNotice(`No patient with MRN ${mrn}.`, undefined, true);
+      return;
+    }
+    setPatient(found);
+    setMrnInput("");
   }
 
   async function openRun(runId: string) {
@@ -120,12 +150,11 @@ export default function App() {
   async function onUploadNote(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = ""; // let the same file be re-picked later
-    const mrn = noteMrn.trim();
-    if (!file || !mrn) return;
+    if (!file || !patient) return;
     setViewingRun(null);
     setUploading(true);
-    const label = `📎 ${file.name} → ${mrn}`;
-    const result = await uploadNote(mrn, file);
+    const label = `📎 ${file.name} → ${patient.name}`;
+    const result = await uploadNote(patient.mrn, file);
     setUploading(false);
     if ("error" in result) {
       setExchanges((xs) => [...xs, { question: label, error: result.error }]);
@@ -140,53 +169,6 @@ export default function App() {
       { question: label, answer: summary, status: result.needs_review ? "review" : "validated" },
     ]);
     refreshThreads();
-  }
-
-  async function toggleRecording() {
-    if (encounter) {
-      encounter.stop(); // the done frame fires onDone, which saves and clears
-      return;
-    }
-    setViewingRun(null);
-    segmentsRef.current = [];
-    setLiveSegments([]);
-    const mrn = noteMrn.trim();
-    const session = await recordEncounter({
-      onSegment: (s) => {
-        segmentsRef.current = [...segmentsRef.current, s];
-        setLiveSegments(segmentsRef.current);
-      },
-      onDone: async (result) => {
-        setEncounter(null);
-        setLiveSegments([]);
-        const label = "🎙️ Encounter recorded";
-        if (!result.text) {
-          setExchanges((xs) => [...xs, { question: label, error: "nothing was transcribed" }]);
-          return;
-        }
-        const saved = await saveEncounter(result, mrn, segmentsRef.current);
-        if ("error" in saved) {
-          setExchanges((xs) => [...xs, { question: label, error: saved.error }]);
-          return;
-        }
-        const note =
-          `Saved as the current dictation (${Math.round(result.duration_s)}s, ` +
-          `${result.speakers.join(" + ") || "one speaker"})` +
-          (result.needs_review ? " — some turns need review" : "") +
-          '. Ask "update the chart now" to draft history and orders.';
-        setExchanges((xs) => [
-          ...xs,
-          { question: label, answer: note, status: result.needs_review ? "review" : "validated" },
-        ]);
-        refreshThreads();
-      },
-      onError: (detail) => {
-        setEncounter(null);
-        setLiveSegments([]);
-        setExchanges((xs) => [...xs, { question: "🎙️ Encounter", error: detail }]);
-      },
-    });
-    if (session) setEncounter(session);
   }
 
   function startNewConversation() {
@@ -269,10 +251,42 @@ export default function App() {
       </aside>
 
       <main className="chat">
+        <div className="patient-bar">
+          {patient ? (
+            <>
+              <span className="patient-chip">
+                <span className="patient-name">{patient.name}</span>
+                <span className="patient-meta">
+                  MRN {patient.mrn}
+                  {patient.age != null ? ` · ${patient.age}y` : ""}
+                  {patient.sex ? ` · ${patient.sex}` : ""}
+                </span>
+              </span>
+              <button type="button" className="patient-clear" onClick={() => setPatient(null)}>
+                Change patient
+              </button>
+            </>
+          ) : (
+            <form className="patient-select" onSubmit={selectPatient}>
+              <input
+                className="mrn"
+                placeholder="Select a patient — enter MRN"
+                value={mrnInput}
+                onChange={(e) => setMrnInput(e.target.value)}
+              />
+              <button type="submit" disabled={!mrnInput.trim() || lookingUp}>
+                {lookingUp ? "…" : "Select"}
+              </button>
+            </form>
+          )}
+        </div>
+
         <div className="stream">
           {exchanges.length === 0 && (
             <div className="placeholder">
-              Ask about a patient, the panel, or how care is being delivered.
+              {patient
+                ? `Record an encounter for ${patient.name}, attach a note, or ask the agent.`
+                : "Select a patient to begin, or ask the agent about the panel or the dataset."}
             </div>
           )}
           {exchanges.map((x, i) => (
@@ -301,58 +315,32 @@ export default function App() {
               )}
             </div>
           ))}
-          {encounter && (
-            <div className="encounter">
-              <div className="encounter-head">
-                <span className="rec-dot" /> Recording — diarized live
-              </div>
-              {liveSegments.length === 0 && <div className="placeholder">Listening…</div>}
-              {liveSegments.map((s, i) => (
-                <div key={i} className={"turn speaker-" + s.speaker.toLowerCase()}>
-                  <span className="who">{s.speaker}</span>
-                  <span className="said">{s.text}</span>
-                  {s.needs_review && <span className="flag">review</span>}
-                </div>
-              ))}
-            </div>
-          )}
+          {patient && <Encounter patient={patient} onAsk={runAsk} onNotice={pushNotice} />}
         </div>
 
-        <div className="attach">
-          <input
-            className="mrn"
-            placeholder="MRN"
-            value={noteMrn}
-            onChange={(e) => setNoteMrn(e.target.value)}
-          />
-          <label className={"attach-btn" + (!noteMrn.trim() || uploading ? " disabled" : "")}>
-            {uploading ? "Uploading…" : "📎 Attach note"}
-            <input
-              type="file"
-              hidden
-              accept="image/*,application/pdf,.txt,text/plain"
-              disabled={!noteMrn.trim() || uploading}
-              onChange={onUploadNote}
-            />
-          </label>
-          <button
-            type="button"
-            className={"record-btn" + (encounter ? " recording" : "")}
-            onClick={toggleRecording}
-            title={noteMrn.trim() ? "Record an encounter for this patient" : "Record an encounter"}
-          >
-            {encounter ? "⏹ Stop" : "🎙️ Record"}
-          </button>
-          <button
-            type="button"
-            className={"voice-btn" + (voiceOn ? " on" : "")}
-            onClick={() => setVoiceOn((v) => !v)}
-            aria-pressed={voiceOn}
-            title="Voice the agent's answers aloud"
-          >
-            {voiceOn ? "🔊 Voice on" : "🔈 Voice off"}
-          </button>
-        </div>
+        {patient && (
+          <div className="attach">
+            <label className={"attach-btn" + (uploading ? " disabled" : "")}>
+              {uploading ? "Uploading…" : "📎 Attach note"}
+              <input
+                type="file"
+                hidden
+                accept="image/*,application/pdf,.txt,text/plain"
+                disabled={uploading}
+                onChange={onUploadNote}
+              />
+            </label>
+            <button
+              type="button"
+              className={"voice-btn" + (voiceOn ? " on" : "")}
+              onClick={() => setVoiceOn((v) => !v)}
+              aria-pressed={voiceOn}
+              title="Voice the agent's answers aloud"
+            >
+              {voiceOn ? "🔊 Voice on" : "🔈 Voice off"}
+            </button>
+          </div>
+        )}
 
         <form className="composer" onSubmit={submit}>
           <input

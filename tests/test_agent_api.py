@@ -354,14 +354,67 @@ def test_ask_requests_a_spoken_rendering_only_when_asked():
 
 
 def test_ask_still_accepts_a_three_arg_backend():
-    """The default (no want_spoken) request must not break a backend written to
-    the established 3-arg shape — the endpoint passes the keyword only when set."""
+    """The default (no want_spoken, no mrn) request must not break a backend
+    written to the established 3-arg shape — the endpoint passes the optional
+    kwargs only when set."""
 
     def three_arg_ask(question, thread_id=None, identity=None):
         return {"answer": "ok", "status": "validated", "trace_id": "aa", "thread_id": thread_id or "t"}
 
     client = TestClient(create_app(ask=three_arg_ask, authenticator=_ALLOW))
     assert client.post("/ask", json={"question": "q"}).json()["answer"] == "ok"
+
+
+# ── selected patient (the UI's active-patient context) ───────────────────────
+
+
+def _patient_app(lookup):
+    return TestClient(create_app(ask=lambda q, **_: {}, patients=lookup, authenticator=_ALLOW))
+
+
+def test_get_patient_returns_a_card():
+    def lookup(mrn, identity=None):
+        return {"mrn": mrn, "name": "Jane Doe", "age": 41, "sex": "female"}
+
+    body = _patient_app(lookup).get("/patients/MRN00000001").json()
+    assert body == {"mrn": "MRN00000001", "name": "Jane Doe", "age": 41, "sex": "female"}
+
+
+def test_get_patient_unknown_mrn_is_404():
+    resp = _patient_app(lambda mrn, identity=None: None).get("/patients/NOPE")
+    assert resp.status_code == 404
+    assert "NOPE" in resp.json()["detail"]
+
+
+def test_get_patient_requires_a_token():
+    def deny(_header):
+        raise AuthError("no token")
+
+    app = create_app(ask=lambda q, **_: {}, patients=lambda m, identity=None: None, authenticator=deny)
+    assert TestClient(app).get("/patients/MRN00000001").status_code == 401
+
+
+def test_ask_threads_the_selected_patient_mrn():
+    """The UI's selected MRN reaches the backend only when present, so a 3-arg
+    fake is unaffected by a plain ask."""
+    seen = {}
+
+    def fake_ask(question, thread_id=None, identity=None, want_spoken=False, mrn=None):
+        seen["mrn"] = mrn
+        return {"answer": "ok", "status": "validated", "trace_id": "aa", "thread_id": thread_id or "t"}
+
+    client = TestClient(create_app(ask=fake_ask, authenticator=_ALLOW))
+    client.post("/ask", json={"question": "update the chart", "mrn": "MRN00000001"})
+    assert seen["mrn"] == "MRN00000001"
+    client.post("/ask", json={"question": "hello"})
+    assert seen["mrn"] is None  # endpoint omits it → backend default
+
+
+def test_patient_context_line_names_the_mrn():
+    from hdh.modules.agent_api.server import _patient_context
+
+    line = _patient_context("MRN00000001")
+    assert "MRN00000001" in line and "the patient" in line
 
 
 def test_threads_groups_runs_newest_first():

@@ -68,13 +68,14 @@ export async function askStream(
   threadId: string,
   handlers: StreamHandlers,
   wantSpoken = false,
+  mrn: string | null = null,
 ): Promise<void> {
   let resp: Response;
   try {
     resp = await fetch("/ask/stream", {
       method: "POST",
       headers: await authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ question, thread_id: threadId, want_spoken: wantSpoken }),
+      body: JSON.stringify({ question, thread_id: threadId, want_spoken: wantSpoken, mrn }),
     });
   } catch (err) {
     handlers.onError({ detail: `network error: ${String(err)}` });
@@ -139,6 +140,15 @@ export async function uploadNote(mrn: string, file: File): Promise<NoteUploadRes
 export async function getMe(): Promise<Me | null> {
   const resp = await fetch("/me", { headers: await authHeaders() });
   return resp.ok ? ((await resp.json()) as Me) : null;
+}
+
+export type PatientInfo = { mrn: string; name: string; age?: number | null; sex?: string | null };
+
+/** Resolve the UI's selected patient by MRN — a small card to confirm and show
+ *  the active patient. null when the MRN names no patient (or on any error). */
+export async function getPatient(mrn: string): Promise<PatientInfo | null> {
+  const resp = await fetch(`/patients/${encodeURIComponent(mrn)}`, { headers: await authHeaders() });
+  return resp.ok ? ((await resp.json()) as PatientInfo) : null;
 }
 
 export async function listThreads(): Promise<ThreadSummary[]> {
@@ -290,6 +300,25 @@ export async function saveEncounter(
       duration_s: result.duration_s,
       needs_review: result.needs_review,
     }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+    return { error: detail.detail || `HTTP ${resp.status}` };
+  }
+  return resp.json();
+}
+
+/** Persist a standalone provider note as its own dictation (source="note") for
+ *  provenance. Save this BEFORE the combined encounter so the encounter stays
+ *  the newest dictation — the one `use_last_dictation` pulls to chart. */
+export async function saveNote(
+  text: string,
+  mrn: string,
+): Promise<{ dictation_id: number } | { error: string }> {
+  const resp = await fetch("/dictations", {
+    method: "POST",
+    headers: await authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ text, mrn: mrn || null, source: "note" }),
   });
   if (!resp.ok) {
     const detail = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
