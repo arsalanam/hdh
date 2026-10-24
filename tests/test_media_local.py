@@ -157,6 +157,9 @@ def test_local_transcribe_without_extra_fails_with_install_hint():
         NeMoTranscriber().transcribe(_wav([0, 1, 2]), "audio/wav")
 
 
-def test_aws_backend_still_unbuilt():
-    with pytest.raises(NotImplementedError, match="phase 7"):
-        make_backends("aws")
+def test_aws_backend_is_built_as_of_phase_7():
+    # `aws` is real now (Transcribe Medical / Polly / Textract + streaming,
+    # tests/test_media_aws.py) — building is boto3-free; see that file for the
+    # loud-failure-on-use contract.
+    bk = make_backends("aws")
+    assert bk.name == "aws" and bk.transcriber and bk.synthesizer and bk.ocr and bk.streamer
