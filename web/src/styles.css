@@ -654,3 +654,45 @@ body {
   cursor: pointer;
   font-size: 13px;
 }
+
+/* ── push-to-talk mic (dictation into any field) ─────────────────────── */
+.mic-btn {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  user-select: none;
+  touch-action: none;
+}
+.mic-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.mic-btn.recording {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+  animation: pulse 1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-btn.recording {
+    animation: none;
+  }
+}
+.encounter-note-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.encounter-note-head .mic-btn {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
