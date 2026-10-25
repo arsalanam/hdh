@@ -51,7 +51,13 @@ a chart, and the tools that build one are not the tools that write a note.
 Choose 'medication' for repeats and refills: whether a medication can be
 refilled, how many refills remain, recording that one was supplied, or what
 a patient is authorised for. Also NOT 'charting': the decision is arithmetic
-over the authorisation, and it has its own tools.\
+over the authorisation, and it has its own tools.
+
+Choose 'scheduling' for anything about appointments and the provider calendar:
+finding, booking, rescheduling or cancelling an appointment, or showing who is
+booked / when a provider is free. A booked appointment is a plan to be seen, not
+an encounter that happened, so this is NOT 'charting' and NOT 'patient_lookup'
+even when an MRN is named — ask what the sentence wants DONE to the calendar.\
 """
 
 VALIDATOR_PROMPT = """\
@@ -116,6 +122,7 @@ INTENT_SCHEMA = {
                 "charting",
                 "care_plan",
                 "medication",
+                "scheduling",
                 "other",
             ],
         },
@@ -222,6 +229,17 @@ INTENT_TOOLS: dict[str, set[str]] = {
         "get_patient_chart",
         "query_database",
     },
+    # Appointments are their own intent for the same reason charting is: an
+    # MRN-bearing "book / move / cancel" otherwise misclassifies as a lookup.
+    "scheduling": {
+        "find_appointments",
+        "book_appointment",
+        "reschedule_appointment",
+        "cancel_appointment",
+        "link_encounter_to_appointment",
+        "get_patient_chart",
+        "query_database",
+    },
 }
 
 # Four tables were generated, populated, and exposed by NO intent:
@@ -287,6 +305,14 @@ INTENT_TABLES: dict[str, tuple[str, ...]] = {
         # A prescribing question is precisely when an allergy matters, and
         # this intent could not see the table.
         "allergies",
+    ),
+    "scheduling": (
+        "appointments",
+        "patients",
+        "providers",
+        "visits",
+        "locations",
+        "service_hours",
     ),
 }
 

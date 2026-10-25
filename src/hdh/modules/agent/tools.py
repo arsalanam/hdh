@@ -587,6 +587,7 @@ _ONTOLOGY_BUILDERS: tuple[tuple[str, str], ...] = (
     ("hdh.modules.careplan.agent_tools", "build_careplan_tools"),
     ("hdh.modules.agent.refill_tools", "build_refill_tools"),
     ("hdh.modules.agent.order_tools", "build_order_tools"),
+    ("hdh.modules.scheduling.agent_tools", "build_scheduling_tools"),
 )
 
 

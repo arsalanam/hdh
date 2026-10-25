@@ -725,6 +725,14 @@ class Visit(Base):
     request_id: Mapped[int | None] = mapped_column(
         ForeignKey("service_requests.id", use_alter=True, name="fk_visits_request_id")
     )
+    #: The appointment this encounter fulfils, when it was a booked visit.
+    #: Nullable: walk-ins and historical/imported visits were never booked, and
+    #: the chart must say "unknown" rather than invent an appointment to point
+    #: at. No cycle (an appointment names only patient/provider/location), so a
+    #: plain FK — unlike ``request_id`` above. No index: a visit is reached from
+    #: an appointment via the relationship, and a named index on ``visits`` would
+    #: collide when a batch migration rebuilds the table (see migration 0028).
+    appointment_id: Mapped[int | None] = mapped_column(ForeignKey("appointments.id"))
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
     provider: Mapped["Provider | None"] = relationship()
@@ -747,6 +755,10 @@ class Visit(Base):
     )
     #: The request this visit fulfils, when it fulfils one.
     request: Mapped["ServiceRequest | None"] = relationship(foreign_keys=[request_id])
+    #: The appointment this visit fulfils, when it was booked.
+    appointment: Mapped["Appointment | None"] = relationship(
+        back_populates="visit", foreign_keys=[appointment_id]
+    )
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
 
     @property
@@ -1365,6 +1377,56 @@ class VisitNote(Base):
 
     visit: Mapped["Visit"] = relationship(back_populates="notes")
     author: Mapped["Provider | None"] = relationship()
+
+
+class Appointment(Base):
+    """A booked slot on a provider's calendar — platform scheduling, so it
+    lives in core (the chart's encounters link to it) rather than a module.
+
+    An appointment is the *plan* to see a patient; the ``Visit`` it later
+    fulfils carries the clinical record and points back here via
+    ``Visit.appointment_id``. The lifecycle is a small state machine kept in a
+    plain string (PostgreSQL enum ALTERs are painful — the repo's standing
+    choice; see the identifier/functional-status notes): ``scheduled`` →
+    ``confirmed`` → ``completed``, or ``cancelled`` / ``no_show``. Reminders
+    stamp ``reminder_sent_at`` so the sweep never double-sends.
+    """
+
+    __tablename__ = "appointments"
+
+    #: Lifecycle values stored in ``status`` (documented, not a DB enum).
+    STATUSES = ("scheduled", "confirmed", "cancelled", "completed", "no_show")
+    #: The statuses that occupy a provider's calendar for conflict checks.
+    ACTIVE_STATUSES = ("scheduled", "confirmed")
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id"), index=True)
+    #: Where it will happen. Nullable — telehealth and unspecified sites exist.
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
+    start_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime)
+    #: One of STATUSES. A string, not an enum, on purpose (see the docstring).
+    status: Mapped[str] = mapped_column(String(16), default="scheduled")
+    #: Why the patient is being seen, in the booker's words.
+    reason: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    #: Who booked it (a provider/clerk). Nullable for system/seed-created rows.
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id"))
+    #: When a cancellation was recorded, and why — kept rather than voided so
+    #: the calendar can show "cancelled" history, distinct from entered-in-error.
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    #: When a reminder was emailed — NULL until the sweep sends one (phase B).
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)  # entered in error (chartedit)
+
+    patient: Mapped["Patient"] = relationship()
+    provider: Mapped["Provider"] = relationship(foreign_keys=[provider_id])
+    created_by: Mapped["Provider | None"] = relationship(foreign_keys=[created_by_id])
+    location: Mapped["Location | None"] = relationship()
+    #: The encounter that fulfilled this appointment, once the patient is seen.
+    visit: Mapped["Visit | None"] = relationship(back_populates="appointment", uselist=False)
 
 
 class ChartAuditEvent(Base):

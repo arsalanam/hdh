@@ -191,7 +191,9 @@ REGISTRY: Mapping[str, _Spec] = {
         _Spec(
             entity="Visit",
             model_name="Visit",
-            amendable_fields=frozenset({"visit_date", "visit_type", "provider_id", "chief_complaint"}),
+            amendable_fields=frozenset(
+                {"visit_date", "visit_type", "provider_id", "chief_complaint", "appointment_id"}
+            ),
             reason_required=True,
             patient_path=("patient_id",),
             label_fields=("visit_date",),
@@ -222,6 +224,31 @@ REGISTRY: Mapping[str, _Spec] = {
             reason_required=True,
             patient_path=("patient_id",),
             label_fields=("kind", "display"),
+        ),
+        _Spec(
+            # A booked slot. Rescheduling and cancelling both go through the
+            # audited edit path (status/start/end change, with a reason), so the
+            # calendar's history is as accountable as the chart's. ``patient_id``
+            # and ``created_by_id`` are deliberately NOT amendable — who the
+            # appointment is for and who booked it are its provenance.
+            entity="Appointment",
+            model_name="Appointment",
+            amendable_fields=frozenset(
+                {
+                    "status",
+                    "start_at",
+                    "end_at",
+                    "provider_id",
+                    "location_id",
+                    "reason",
+                    "cancelled_at",
+                    "cancel_reason",
+                    "reminder_sent_at",
+                }
+            ),
+            reason_required=True,
+            patient_path=("patient_id",),
+            label_fields=("start_at", "reason"),
         ),
     )
 }

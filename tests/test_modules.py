@@ -106,6 +106,12 @@ def test_agent_tools_build(db_session):
         "draft_order",
         "update_order",
         "cancel_order",
+        # appointment scheduling — built whenever the appointments table exists
+        "find_appointments",
+        "book_appointment",
+        "reschedule_appointment",
+        "cancel_appointment",
+        "link_encounter_to_appointment",
     }
 
 
