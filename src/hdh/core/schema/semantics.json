@@ -36,18 +36,81 @@
     "chart": true
   },
   "visits": {
-    "purpose": "One encounter. Most clinical rows are anchored to a visit rather than directly to a patient.",
+    "purpose": "One encounter that actually happened. Most clinical rows are anchored to a visit rather than directly to a patient. Distinct from an appointment: a visit is the record of a patient being seen, an appointment is the booked plan to see them (table `appointments`).",
     "also_called": [
-      "encounters",
-      "appointments"
+      "encounters"
     ],
     "columns": {
-      "visit_type": "Enum stored by NAME: 'ACUTE', 'FOLLOW_UP', 'PREVENTIVE', 'URGENT'."
+      "visit_type": "Enum stored by NAME: 'ACUTE', 'FOLLOW_UP', 'PREVENTIVE', 'URGENT'.",
+      "appointment_id": "The appointment this encounter fulfilled, or NULL for a walk-in / historical visit."
     },
     "joins": [
-      "visits.patient_id -> patients.id"
+      "visits.patient_id -> patients.id",
+      "visits.appointment_id -> appointments.id"
     ],
     "chart": true
+  },
+  "appointments": {
+    "purpose": "A booked slot on a provider's calendar — the PLAN to see a patient. The encounter that later fulfils it is a row in `visits` (visits.appointment_id). Use this for scheduling questions (who is booked, when is a provider free, upcoming appointments); use `visits` for what happened at a seen patient.",
+    "also_called": [
+      "calendar",
+      "schedule",
+      "bookings"
+    ],
+    "use_when": "Asked to find, book, reschedule or cancel an appointment, or to show a provider's or patient's upcoming schedule. An overlapping active appointment for the same provider is a double-booking.",
+    "columns": {
+      "status": "A string (NOT a DB enum): 'scheduled', 'confirmed', 'cancelled', 'completed', 'no_show'. Only 'scheduled' and 'confirmed' occupy the calendar for conflict checks.",
+      "start_at": "When the appointment begins (a timestamp). Order a patient's or provider's schedule by this.",
+      "end_at": "When it is scheduled to end; start_at..end_at is the slot that must not overlap another active appointment for the same provider.",
+      "reason": "Why the patient is being seen, in the booker's words.",
+      "reminder_sent_at": "When a reminder email was sent, or NULL if none yet."
+    },
+    "joins": [
+      "appointments.patient_id -> patients.id",
+      "appointments.provider_id -> providers.id",
+      "appointments.location_id -> locations.id"
+    ],
+    "chart": true
+  },
+  "providers": {
+    "purpose": "The clinicians a patient is seen by — a thin reference entity (identifier, name, specialty). A provider row is who an appointment or visit is with.",
+    "also_called": [
+      "clinicians",
+      "practitioners",
+      "doctors"
+    ],
+    "columns": {
+      "identifier": "The provider's NPI-like id, used to name them unambiguously.",
+      "specialty_id": "-> specialties.id; what the provider practises."
+    },
+    "joins": [
+      "providers.specialty_id -> specialties.id"
+    ]
+  },
+  "locations": {
+    "purpose": "A clinic site where care is delivered — where an appointment or visit happens.",
+    "also_called": [
+      "clinics",
+      "sites"
+    ],
+    "joins": [
+      "locations.organization_id -> organizations.id"
+    ]
+  },
+  "service_hours": {
+    "purpose": "A clinic's open block on one weekday, per location-specialty — the hours a patient is seen within. Used to flag an appointment booked outside clinic hours.",
+    "also_called": [
+      "clinic hours",
+      "opening hours"
+    ],
+    "columns": {
+      "day_of_week": "0 = Monday … 6 = Sunday (date.weekday()).",
+      "opens": "When the block opens; NULL means closed that day.",
+      "closes": "When the block closes."
+    },
+    "joins": [
+      "service_hours.location_specialty_id -> location_specialties.id"
+    ]
   },
   "vitals": {
     "purpose": "Measurements taken at a visit — blood pressure, pulse, weight.",

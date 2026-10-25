@@ -39,6 +39,8 @@ DEFAULT_ALLOWED_TOPICS = (
     "asking what a rubric scores, and writing a plan out for review",
     "medication repeats and refills: whether one is allowed, how many remain, "
     "and recording that a supply happened",
+    "appointments and the provider calendar: finding, booking, rescheduling or "
+    "cancelling a patient's appointment, and showing a provider's schedule",
     "clinical terminology: ICD-10-CM, SNOMED CT, RxNorm and LOINC — finding the "
     "right code for a description, lookups, hierarchy, laterality, and "
     "Excludes/code-first rules",
